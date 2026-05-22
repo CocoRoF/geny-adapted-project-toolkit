@@ -22,9 +22,26 @@
 - [x] `.editorconfig` — 기본 LF + 4 space, JS/TS/YAML/JSON은 2 space
 - [x] `README.md` — 한 줄 정의 + 시장 갭 표 + 9 원칙 + 12 docs 인덱스 + 의존 자원 + Apache-2.0 + Phase 0 상태
 - [x] `CONTRIBUTING.md` — cadence 규칙 9개 절 (cycle 흐름, PR 본문 필수 필드, 머지 체크, 우리가 안 하는 것 등)
-- *commit 대기*: 사용자 검토 후 `feat: bootstrap repo (M0-P1 PR1)` 머지 예정
+- ✅ **commit 완료** (2026-05-22):
+  - `8c7257a` docs: Phase 0 analysis (12 documents) — 13 files, 4827+
+  - `4b98946` docs: plan + progress cadence (M0/M1 detail + M2-M5 outline) — 12 files, 2077+
+  - `72dd392` chore: bootstrap repo (M0-P1 PR1) — 5 files, 675+
+- *push 대기*: 사용자가 GitHub 레포 생성 + `git remote add origin ...` 후 push
 
-### PR 2 — server/ 스켈레톤 (대기)
+### PR 2 — server/ 스켈레톤 (작성 완료, commit 대기)
+- [x] `server/pyproject.toml` — Python 3.12+, FastAPI 0.115+, uvicorn, ARQ, Redis, SQLAlchemy 2.0 asyncio, Postgres psycopg, Alembic, **geny-executor 2.1.0+**, structlog, OTel, python-ulid, PyJWT. dev deps: pytest + pytest-asyncio + pytest-cov + httpx + ruff + mypy
+- [x] `src/gapt_server/__init__.py` — `__version__ = "0.0.1"`
+- [x] `src/gapt_server/settings.py` — pydantic-settings, env prefix `GAPT_`, SeaweedFS + claude + session/daemon secrets
+- [x] `src/gapt_server/logging.py` — structlog JSON/console 토글
+- [x] `src/gapt_server/app.py` — create_app 팩토리 + lifespan, CORS optional
+- [x] `src/gapt_server/routers/health.py` — `/` + `/health` (200 ok, version)
+- [x] `src/gapt_server/py.typed` — PEP 561 마커
+- [x] `tests/conftest.py` — Settings fixture + AsyncClient via ASGITransport
+- [x] `tests/test_health.py` — 3 테스트 (200 ok / root / 404)
+- [x] `tests/test_settings.py` — 3 테스트 (defaults / env override / lru_cache)
+- [x] `server/README.md` — 로컬 개발 명령 + 환경 변수 표
+- [x] **검증 통과**: `uv sync --extra dev` OK / `ruff check` clean / `ruff format --check` clean / `mypy src` Success / `pytest` 6/6 pass / coverage 93%
+- *commit 대기*: `feat(server): FastAPI skeleton with /health (M0-P1 PR2)`
 ### PR 3 — runtime/ 스켈레톤 (대기)
 ### PR 4 — web/ 스켈레톤 (대기)
 ### PR 5 — compose/ dev 스택 (대기)

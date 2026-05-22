@@ -1,0 +1,129 @@
+[project]
+name = "gapt-server"
+version = "0.0.1"
+description = "geny-adapted-project-toolkit — control plane (FastAPI)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "CocoRoF", email = "gkfua00@gmail.com" }]
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.115,<0.120",
+    "uvicorn[standard]>=0.32,<0.36",
+    "starlette>=0.41",
+
+    # Settings + validation
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+
+    # Async jobs / cache
+    "arq>=0.26",
+    "redis>=5.2",
+
+    # DB
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+
+    # Agent engine (single source of LLM capability per
+    # feedback_extend_executor_not_adapter_layer)
+    "geny-executor>=2.1.0,<3",
+
+    # HTTP / utilities
+    "httpx>=0.27",
+
+    # Structured logging + observability
+    "structlog>=24.4",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+
+    # ID + crypto
+    "python-ulid>=2.7",
+    "pyjwt>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "httpx[testing]>=0.27",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-redis",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gapt_server"]
+
+# ---------- ruff ----------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle + pyflakes
+    "I",                # isort
+    "B",                # bugbear
+    "UP",               # pyupgrade
+    "SIM",              # simplify
+    "RUF",              # ruff-specific
+    "PL",               # pylint subset
+    "TCH",              # type-checking
+    "ASYNC",            # async pitfalls
+]
+ignore = [
+    "PLR0913",          # too many args (FastAPI deps)
+    "PLR2004",          # magic-value comparisons
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------- mypy ----------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["arq.*", "geny_executor.*"]
+ignore_missing_imports = true
+
+# ---------- pytest ----------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=gapt_server",
+    "--cov-report=term-missing:skip-covered",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:google.*",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/gapt_server"]
