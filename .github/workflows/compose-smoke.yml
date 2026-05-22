@@ -1,0 +1,54 @@
+name: compose-smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "compose/**"
+      - "server/**"
+      - "runtime/**"
+      - "web/**"
+      - ".github/workflows/compose-smoke.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dev-stack-up:
+    name: docker compose up --wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose
+        run: docker compose -f compose/docker-compose.dev.yml config --quiet
+
+      - name: Build images and bring stack up
+        run: |
+          docker compose -f compose/docker-compose.dev.yml \
+            up -d --wait --wait-timeout 300
+
+      - name: Verify control plane responds
+        run: |
+          curl -fsS http://localhost:8088/health
+          curl -fsS http://localhost:8080/health
+          curl -fsS http://localhost:9333/cluster/healthz
+
+      - name: Show service status
+        if: always()
+        run: docker compose -f compose/docker-compose.dev.yml ps
+
+      - name: Tail logs on failure
+        if: failure()
+        run: |
+          docker compose -f compose/docker-compose.dev.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose/docker-compose.dev.yml down -v

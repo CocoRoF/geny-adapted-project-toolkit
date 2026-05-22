@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs of the same PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.4.30"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10"
+
+permissions:
+  contents: read
+
+jobs:
+  python-server:
+    name: server · ruff + mypy + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Sync deps
+        working-directory: server
+        run: uv sync --frozen --extra dev
+      - name: ruff check
+        working-directory: server
+        run: uv run ruff check src tests
+      - name: ruff format check
+        working-directory: server
+        run: uv run ruff format --check src tests
+      - name: mypy
+        working-directory: server
+        run: uv run mypy src
+      - name: pytest
+        working-directory: server
+        run: uv run pytest
+
+  python-runtime:
+    name: runtime · ruff + mypy + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Sync deps
+        working-directory: runtime
+        run: uv sync --frozen --extra dev
+      - name: ruff check
+        working-directory: runtime
+        run: uv run ruff check src tests
+      - name: ruff format check
+        working-directory: runtime
+        run: uv run ruff format --check src tests
+      - name: mypy
+        working-directory: runtime
+        run: uv run mypy src
+      - name: pytest
+        working-directory: runtime
+        run: uv run pytest
+
+  node-web:
+    name: web · eslint + tsc + vitest + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: web
+        run: pnpm typecheck
+      - name: Lint
+        working-directory: web
+        run: pnpm lint
+      - name: Format check
+        working-directory: web
+        run: pnpm format:check
+      - name: Test
+        working-directory: web
+        run: pnpm test
+      - name: Build
+        working-directory: web
+        run: pnpm build

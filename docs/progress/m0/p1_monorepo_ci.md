@@ -87,7 +87,15 @@
 - [x] **검증 통과**: `docker compose config --quiet` 클린 / 5 services 인식 / 5 volumes 인식 / healthcheck 체인 + depends_on 명시
 - 실 부팅 (이미지 pull → up → healthy)은 *사용자 측 검증 단계*로 위임 — `docker compose -f compose/docker-compose.dev.yml up -d --wait` 명령은 README에
 - *commit 대기*: `feat(compose): dev stack with Postgres + Redis + SeaweedFS + Caddy (M0-P1 PR5)`
-### PR 6 — CI workflows (대기)
+### PR 6 — CI workflows (작성 완료, commit 대기)
+- [x] `.github/workflows/ci.yml` — 3 jobs (`python-server` / `python-runtime` / `node-web`), 매트릭스. uv + pnpm 캐시. concurrency cancel-in-progress. push + pull_request + workflow_dispatch 트리거. permissions read-only.
+  - server: ruff check + ruff format check + mypy --strict + pytest
+  - runtime: 동일 4 gate
+  - web: typecheck + lint --max-warnings=0 + format:check + vitest run + build
+- [x] `.github/workflows/compose-smoke.yml` — PR에서만 (path filter: compose/server/runtime/web 변경 시), `docker compose up -d --wait --wait-timeout 300` + `/health` + `/cluster/healthz` curl 검증 + 실패 시 logs --tail=200 + 무조건 down -v
+- [x] `.github/PULL_REQUEST_TEMPLATE.md` — Plan/Progress 참조 필수 + 6개 체크박스 (CI / 카드 갱신 / docs 갱신 / 시크릿 / 격리 회귀 / PolicyEngine 불변식)
+- [x] **검증 통과**: YAML 파싱 OK / 3 jobs 정상 / `permissions: contents: read`로 최소 권한 / `concurrency` cancel-in-progress 설정
+- *commit 대기*: `ci: GitHub Actions for server/runtime/web + compose-smoke + PR template (M0-P1 PR6)`
 ### PR 7 — pre-commit + 품질 도구 (대기)
 
 ## DoD 진행
