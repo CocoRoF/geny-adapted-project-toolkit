@@ -1,0 +1,97 @@
+# pre-commit hooks for GAPT — see CONTRIBUTING.md §4.
+#
+# Activate locally:
+#   uv tool install pre-commit
+#   pre-commit install
+#
+# Run on the whole tree:
+#   pre-commit run --all-files
+
+repos:
+  # ---------- generic ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+        exclude: ^web/tsconfig.*\.json$    # tsconfig uses // comments
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ---------- secret scanning ----------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  # ---------- python (server + runtime) ----------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        name: ruff (server)
+        args: [--config=server/pyproject.toml, --fix]
+        files: ^server/(src|tests)/.*\.py$
+      - id: ruff-format
+        name: ruff format (server)
+        args: [--config=server/pyproject.toml]
+        files: ^server/(src|tests)/.*\.py$
+
+      - id: ruff
+        name: ruff (runtime)
+        args: [--config=runtime/pyproject.toml, --fix]
+        files: ^runtime/(src|tests)/.*\.py$
+      - id: ruff-format
+        name: ruff format (runtime)
+        args: [--config=runtime/pyproject.toml]
+        files: ^runtime/(src|tests)/.*\.py$
+
+  # ---------- typescript / web ----------
+  - repo: local
+    hooks:
+      - id: pnpm-format-check
+        name: pnpm prettier check (web)
+        language: system
+        files: ^web/.*\.(ts|tsx|css|md)$
+        entry: |
+          bash -c '
+            cd web
+            args=()
+            for f in "$@"; do args+=("${f#web/}"); done
+            pnpm exec prettier --check "${args[@]}"
+          ' --
+        pass_filenames: true
+
+  # ---------- markdown ----------
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.42.0
+    hooks:
+      - id: markdownlint
+        args:
+          - --config
+          - .markdownlint.json
+        # All long-form prose under docs/ is reader-first; markdownlint
+        # is only applied to README/CONTRIBUTING/etc at the repo root
+        # and to docs the human writer hasn't claimed.
+        exclude: ^docs/
+
+  # ---------- shell ----------
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        files: \.(sh|bash)$
+
+ci:
+  # Skip on autoupdate PRs (handled separately)
+  autoupdate_schedule: monthly
+  autofix_commit_msg: "style: pre-commit auto-fix"

@@ -7,7 +7,7 @@
 | File | Purpose |
 |---|---|
 | `docker-compose.dev.yml` | Dev — Postgres + Redis + SeaweedFS + control plane + Caddy edge on :8080 |
-| _(future) `docker-compose.prod.yml`_ | M1-E4 — production with on-demand TLS + Sysbox runtime registration |
+| *(future) `docker-compose.prod.yml`* | M1-E4 — production with on-demand TLS + Sysbox runtime registration |
 
 ## Boot the dev stack
 

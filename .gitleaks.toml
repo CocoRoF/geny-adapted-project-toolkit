@@ -1,0 +1,31 @@
+# GAPT gitleaks config — extends the default rule set.
+# See: https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dev placeholders documented as non-production credentials"
+
+# Anchor allowed strings to the literal dev-only placeholders we ship in
+# compose/*.yml and server/settings.py. Real production deployments
+# override these via the M1-E1 SecretBackend; they are intentionally
+# obvious-fake to fail the smell test if reused.
+regexes = [
+  "gapt_dev_only",
+  "gapt-dev-secret",
+  "dev-only-secret-change-me",
+  "dev-only-daemon-secret-change-me",
+  "dev-only-session-secret",
+  "dev-only-daemon-secret",
+  "from-env",   # appears only in pytest monkeypatch fixtures
+  "test-secret",
+  "test-daemon",
+  "tok-123"
+]
+
+paths = [
+  '''\.pre-commit-config\.yaml$''',
+  '''^docs/''',
+  '''^server/tests/'''
+]

@@ -1,0 +1,16 @@
+{
+  "default": true,
+  "MD013": false,
+  "MD024": { "siblings_only": true },
+  "MD033": false,
+  "MD041": false,
+  "MD025": false,
+  "MD036": false,
+  "MD040": false,
+  "MD031": false,
+  "MD032": false,
+  "MD012": { "maximum": 2 },
+  "MD046": false,
+  "MD049": { "style": "asterisk" },
+  "MD050": { "style": "asterisk" }
+}

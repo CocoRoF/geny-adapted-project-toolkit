@@ -50,6 +50,9 @@ ignore = ["PLR0913", "PLR2004"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.ruff.lint.isort]
+known-first-party = ["gapt_runtime"]
+
 # ---------- mypy ----------
 [tool.mypy]
 python_version = "3.12"

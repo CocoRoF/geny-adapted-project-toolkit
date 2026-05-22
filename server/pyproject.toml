@@ -91,6 +91,9 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.ruff.lint.isort]
+known-first-party = ["gapt_server"]
+
 # ---------- mypy ----------
 [tool.mypy]
 python_version = "3.12"
