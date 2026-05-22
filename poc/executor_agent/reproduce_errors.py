@@ -268,7 +268,7 @@ async def main() -> int:
         "the streaming path the same heuristic. Filing this as M1-E2 "
         "follow-up against geny-executor."
     )
-    SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
+    SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print()
     print(f"audit JSONL  : {AUDIT_PATH}")

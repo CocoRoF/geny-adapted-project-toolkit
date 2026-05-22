@@ -8,9 +8,9 @@
 
 | Scenario | Expected code | Observed code | Elapsed (s) | Pass |
 |---|---|---|---|---|
-| `exec.cli.binary_not_found` | `exec.cli.binary_not_found` | `exec.cli.binary_not_found` | 0.18 | ✅ |
+| `exec.cli.binary_not_found` | `exec.cli.binary_not_found` | `exec.cli.binary_not_found` | 0.16 | ✅ |
 | `exec.cli.auth_failed` | `exec.cli.auth_failed` | `exec.cli.auth_failed` | 0.0 | ✅ |
-| `exec.cli.timeout` | `exec.cli.timeout` | `exec.cli.timeout` | 14.79 | ✅ |
+| `exec.cli.timeout` | `exec.cli.timeout` | `exec.cli.timeout` | 14.94 | ✅ |
 | `exec.cli.permission_denied` | `exec.cli.permission_denied` | `exec.cli.permission_denied` | 0.0 | ✅ |
 
 ## Per-scenario detail
