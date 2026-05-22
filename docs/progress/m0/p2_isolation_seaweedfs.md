@@ -36,8 +36,19 @@
 - [x] `poc/sysbox_isolation/teardown_sysbox.sh` — 컨테이너 정리
 - [x] `poc/sysbox_isolation/README.md` — 사용법 + B1~B5 결과 매트릭스 + 다음 PR에서 다룰 항목
 - [x] **검증 통과**: teardown → boot → check → teardown 전체 사이클 그린, inner dockerd 1초 만에 응답
-- *commit 대기*: `feat(poc): sysbox sandbox boot + basic isolation checks (M0-P2 PR1)`
-### PR 2 — SeaweedFS 단일 노드 + S3 + volume driver 결정 (대기)
+- ✅ `befec6a` feat(poc): sysbox sandbox boot + basic isolation checks (M0-P2 PR1)
+
+### PR 2 — SeaweedFS 단일 노드 + S3 + volume driver 결정 (✅ 완료)
+- [x] `seaweedfs.compose.yml` + `s3.poc.json` — 단일 SeaweedFS, 포트 19333/18888/18333 (dev stack과 +10000 shift)
+- [x] `boot_seaweedfs.sh` / `teardown_seaweedfs.sh` (--wipe 플래그)
+- [x] `check_seaweedfs.sh` — F1~F3 모두 PASS:
+  - F1: Filer HTTP PUT/GET/DELETE round-trip ✓
+  - F2: boto3 (`uv run --with boto3`) S3 round-trip (create_bucket/put/get/list/delete) ✓ — `BucketAlreadyExists`도 catch하여 idempotent
+  - F3: 컨테이너 restart 후 영속성 (filer endpoint 자체 polling으로 fix) ✓
+- [x] `decision_volume_driver.md` — **결정: 옵션 B (컨테이너 내부 `weed mount` FUSE)** M0~M2. 옵션 A (CSI)는 M4 K8s 단계에서 재검토. 사용 시 entrypoint sketch 동봉
+- [x] `perf_seaweed_vs_host.md` — PR6 측정 결과 placeholder (스키마 미리 정의)
+- [x] PoC `README.md` — F1~F3 결과 매트릭스 + decision/perf 문서 인덱스 추가
+- ✅ `4f9b229` feat(poc): SeaweedFS PoC + S3 round-trip + volume driver decision (M0-P2 PR2)
 ### PR 3 — Sysbox + SeaweedFS Mount 통합 (대기)
 ### PR 4 — inner dockerd로 외부 repo compose up (대기)
 ### PR 5 — 격리 검증 I1~I9 자동 테스트 (대기)
