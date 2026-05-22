@@ -81,7 +81,23 @@
 - [x] `check_integration.sh` I3 polling 30s → 90s (Sysbox 0.7.0 + weed mount cold remount latency 흡수) + fs type `fuse*` 확인 추가
 - [x] PR3 회귀 검증: I1~I4 4/4 PASS (mount type / write→host / restart 영속 / git clone — Sysbox 0.7.0에서도 그대로)
 - *commit 대기*: `feat(poc): KI-1 resolved by Sysbox 0.7.0 — inner compose up PASS (M0-P2 PR4)`
-### PR 5 — 격리 검증 I1~I9 자동 테스트 (대기)
+### PR 5 — 격리 검증 I1~I9 자동 테스트 (✅ 완료)
+- [x] `poc/sysbox_isolation/tests/pyproject.toml` — pytest + pytest-timeout + ruff + mypy (별개 uv 가상환경, 호스트 sysbox 환경 의존)
+- [x] `tests/conftest.py` — Sandbox 클래스 + `sandbox`/`sandbox_pair` fixture (UUID로 격리, fresh 컨테이너 자동 spawn/destroy) + docker/sysbox/image 가용성 자동 detect (skip with reason)
+- [x] `tests/test_isolation.py` — I1~I9 9개 케이스:
+  - I1: inner `docker run -v /:/host` 호스트 root marker 미노출 ✓
+  - I2: 호스트 docker.sock mount source 부재 ✓
+  - I3: 호스트 LAN IP가 컨테이너 netns에 없음 ✓
+  - I4: `--pids-limit 256` cgroup이 400-process fork bomb 차단 ✓
+  - I5: 512m memory.max에서 1 GiB bytearray alloc → SIGKILL ✓
+  - I6: tmpfs mount가 호스트 /tmp에 marker leak 안 함 ✓
+  - I7: sandbox의 `sysctl -w kernel.panic=99`이 호스트 kernel.panic 변경 안 함 ✓ (Sysbox 0.7.0의 procfs virtualization)
+  - I8: 두 sandbox 컨테이너 ping 불가 (다른 docker network) ✓
+  - I9: `/proc/1/environ`에 `GAPT_DAEMON_TOKEN` 평문 노출 — **xfail(strict=True)** (M1-E1 cycle 1.9 데몬 redaction 시까지)
+- [x] `tests/README.md` — 사용법, 9 케이스 매트릭스, I9 xfail 의도 설명
+- [x] `.github/workflows/isolation.yml` — manual dispatch + self-hosted runner (`sysbox` label) 워크플로. 일반 GitHub runner는 sysbox 없으므로 self-hosted only
+- [x] **검증 통과**: `pytest -v` 8 PASS + 1 XFAIL, 49s, 모든 ruff/format clean
+- *commit 대기*: `feat(poc): pytest-driven I1~I9 sandbox isolation matrix (M0-P2 PR5)`
 ### PR 6 — SeaweedFS git 성능 측정 + decision docs (대기)
 
 ## DoD 진행

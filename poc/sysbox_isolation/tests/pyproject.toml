@@ -1,0 +1,51 @@
+[project]
+name = "gapt-isolation-tests"
+version = "0.0.1"
+description = "Automated I1~I9 isolation matrix for M0-P2 — see docs/06_isolation_and_runtime.md §6.10"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "CocoRoF", email = "gkfua00@gmail.com" }]
+
+dependencies = [
+    "pytest>=8.3",
+    "pytest-timeout>=2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+# ---------- ruff ----------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "TCH"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.py" = ["PLR2004", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------- pytest ----------
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+timeout = 180
+markers = [
+    "isolation: I1~I9 sandbox isolation checks (requires sysbox-runc, /dev/fuse)",
+]
+filterwarnings = ["error"]

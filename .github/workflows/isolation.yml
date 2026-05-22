@@ -1,0 +1,42 @@
+name: isolation-matrix
+
+# I1~I9 sandbox isolation tests. They require sysbox-runc + /dev/fuse,
+# which GitHub-hosted runners do not provide, so this workflow is set up
+# for *manual dispatch* and *self-hosted runners* only. M0-P2 PR5 ships
+# the matrix; a self-hosted runner with sysbox-ce 0.7.0 will be added in
+# a follow-up cycle.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: poc/sysbox_isolation/tests
+    # On a self-hosted runner labelled `sysbox` so we never schedule onto
+    # vanilla GitHub-hosted infra (it would just skip the whole suite).
+    runs-on: [self-hosted, sysbox]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.30"
+      - name: Build gapt/runtime:dev (cached if unchanged)
+        run: docker build -f runtime/Dockerfile -t gapt/runtime:dev .
+      - name: Sync test deps
+        working-directory: poc/sysbox_isolation/tests
+        run: uv sync --extra dev --frozen
+      - name: ruff
+        working-directory: poc/sysbox_isolation/tests
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: pytest
+        working-directory: poc/sysbox_isolation/tests
+        run: uv run pytest -v
