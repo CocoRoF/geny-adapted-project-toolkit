@@ -75,8 +75,12 @@ fi
 
 PR3 in this milestone wires this in and proves git clone + tree readback work over it.
 
-## What this does *not* settle
+## Settled by PR6 numbers (see [`perf_seaweed_vs_host.md`](perf_seaweed_vs_host.md))
 
-- Whether `.git` should also live on FUSE or on a host-side named volume. PR6 measures and decides.
-- Whether inner dockerd's overlay2 storage (`/var/lib/docker`) goes on SeaweedFS — it almost certainly should *not* (overlay2 over FUSE has known correctness issues), and project memory `영속 파일은 무조건 SeaweedFS` carves out caches as an explicit exception.
+- **Hybrid `.git`-on-host / worktree-on-FUSE: deferred.** PR6's measurements on `pre-commit/pre-commit` show 2.5~5x slowdown on read-only ops (single-digit ms — imperceptible) and 24x on `git checkout` (437 ms vs 18 ms — sub-second, noticeable but not flow-breaking). The hybrid layout's complexity cost outweighs the win at M0~M2 scale. Revisit at M2 with real dogfood checkout cadence, and again at M4 when SeaweedFS goes multi-node.
+- **Inner dockerd's overlay2 storage stays on a host-side named volume**, not SeaweedFS. Overlay2 over FUSE has known correctness issues and the project memory ("영속 파일은 무조건 SeaweedFS") carves out caches as an explicit exception. The wiring sketch above stays as-is.
+
+## Still open (deferred to later cycles)
+
 - Per-volume quotas via SeaweedFS Filer's directory ACLs — that's an M1-E1 cycle 1.11 problem.
+- Multi-node SeaweedFS replication and the option-A CSI driver reconsideration — M4 work.

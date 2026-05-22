@@ -1,8 +1,9 @@
 # M0-P2: 격리 + SeaweedFS PoC — 진행 기록
 
 > Plan: [`../../plan/m0/p2_isolation_seaweedfs.md`](../../plan/m0/p2_isolation_seaweedfs.md)
-> Status: **in_progress**
+> Status: **done**
 > Started: 2026-05-22
+> Completed: 2026-05-22
 > Owner: gkfua00 (CocoRoF)
 > Depends on: ✅ M0-P1 (commit `a4de305`)
 
@@ -97,21 +98,76 @@
 - [x] `tests/README.md` — 사용법, 9 케이스 매트릭스, I9 xfail 의도 설명
 - [x] `.github/workflows/isolation.yml` — manual dispatch + self-hosted runner (`sysbox` label) 워크플로. 일반 GitHub runner는 sysbox 없으므로 self-hosted only
 - [x] **검증 통과**: `pytest -v` 8 PASS + 1 XFAIL, 49s, 모든 ruff/format clean
-- *commit 대기*: `feat(poc): pytest-driven I1~I9 sandbox isolation matrix (M0-P2 PR5)`
-### PR 6 — SeaweedFS git 성능 측정 + decision docs (대기)
+- ✅ `b5d0f4d` feat(poc): pytest-driven I1~I9 sandbox isolation matrix (M0-P2 PR5)
+
+### PR 6 — SeaweedFS git 성능 측정 + decision docs (✅ 완료)
+- [x] `poc/sysbox_isolation/bench_git.sh` — SeaweedFS + Sysbox 부팅 + `pre-commit/pre-commit` repo를 *3 위치*에 clone:
+  - (a) `/workspace/bench-a` (SeaweedFS FUSE)
+  - (b) `/var/lib/inner-bench/repo` (sandbox 자체 overlayfs)
+  - (c) `/host-tmp/bench-c` (호스트 /tmp bind mount)
+- [x] 5 git op × 20회 batch + bash builtin `time` (ms 해상도)
+- [x] **측정 결과** (2026-05-22T15:27Z, host kernel 6.17 / sysbox-ce 0.7.0):
+
+  | op | (a) FUSE | (b) overlay | (c) bind | a/c |
+  |---|---|---|---|---|
+  | status | 16 ms | 6 ms | 3 ms | **5.33x** |
+  | log | 9 ms | 3 ms | 3 ms | **3.00x** |
+  | diff | 10 ms | 8 ms | 4 ms | **2.50x** |
+  | switch_back | 437 ms | 20 ms | 18 ms | **24.28x** ⚠️ |
+  | commit_reset | 67 ms | 12 ms | 10 ms | **6.70x** |
+
+- [x] **결정**: Option B (단일 FUSE mount /workspace) M0~M2 유지. read-only ops 2.5~6.7x slowdown은 single-digit ms 절대값으로 imperceptible. `git checkout` 24x (437 ms)는 sub-second flow-breaking 아님. hybrid layout (.git on host, worktree on FUSE)은 *복잡도 비용 > 이득* — M2 dogfood checkout cadence + M4 multi-node SeaweedFS 시점에 재평가
+- [x] `perf_seaweed_vs_host.md` 완성: 결과 표 / Reading / Decision / Reproducing / Caveats
+- [x] `decision_volume_driver.md` "What this does not settle" → "Settled by PR6 numbers" 절로 갱신, hybrid layout deferred 처리
+- [x] `bench_git.sh` teardown: sandbox 안에서 `/host-tmp/bench-c` 먼저 rm (Sysbox user-ns remap으로 host가 못 지움 우회)
+- *commit 대기*: `feat(poc): git perf measurement (FUSE vs overlay vs host bind) + decision update (M0-P2 PR6)`
 
 ## DoD 진행
 
-[Plan 카드](../../plan/m0/p2_isolation_seaweedfs.md)의 DoD 그대로 트래킹:
+[Plan 카드](../../plan/m0/p2_isolation_seaweedfs.md)의 DoD 그대로:
 
-- [ ] `poc/sysbox_isolation/` 디렉토리에 모든 산출물
-- [ ] **9개 격리 검증 시나리오 I1~I9** 모두 자동 테스트로 통과
-- [ ] Sysbox 컨테이너 안에서 `git clone <외부 repo>` + `docker compose up -d` 정상 동작
-- [ ] **호스트 `/var/run/docker.sock`이 컨테이너 어디에도 마운트되지 않음** (script 검증)
-- [ ] SeaweedFS Mount 위 git clone 동작 + 워크스페이스 영속화 확인
-- [ ] SeaweedFS Mount 위 git 명령 성능 측정 결과 기록
-- [ ] CI에서 격리 검증 시나리오 자동 실행 (셀프호스트 runner 또는 manual workflow)
+- [x] `poc/sysbox_isolation/` 디렉토리에 모든 산출물 (boot/check/teardown/bench × 4 흐름 + tests/ pytest + decision/perf/known_issues docs)
+- [x] **9개 격리 검증 시나리오 I1~I9** 모두 자동 테스트로 통과 (8 PASS + 1 XFAIL의도)
+- [x] Sysbox 컨테이너 안에서 `git clone <외부 repo>` + `docker compose up -d` 정상 동작 (Sysbox 0.7.0 fix + KI-1 closed)
+- [x] **호스트 `/var/run/docker.sock`이 컨테이너 어디에도 마운트되지 않음** (I2 자동 검증)
+- [x] SeaweedFS Mount 위 git clone 동작 + 워크스페이스 영속화 확인 (I3/I4)
+- [x] SeaweedFS Mount 위 git 명령 성능 측정 결과 기록 (`perf_seaweed_vs_host.md`)
+- [x] CI에서 격리 검증 시나리오 자동 실행 가능 — `.github/workflows/isolation.yml` 작성 (`workflow_dispatch` + self-hosted runner label `sysbox`. 실 runner 등록은 M1-E1 cycle 1.7로 위임)
 
-## Drift (cycle 종료 시 작성)
+## Commit 기록 요약
 
-*(아직 종료되지 않음)*
+| commit | 주제 |
+|---|---|
+| `befec6a` | feat(poc): sysbox sandbox boot + basic isolation checks (PR1) |
+| `4f9b229` | feat(poc): SeaweedFS PoC + S3 round-trip + volume driver decision (PR2) |
+| `a855f37` | docs(progress): backfill PR1+PR2 SHAs |
+| `afd1c2a` | feat(runtime,poc): SeaweedFS FUSE mount in Sysbox sandbox (PR3) |
+| `e7ccef3` | style(poc): shellcheck SC2164/SC2034 + markdown emphasis (PR3 lint) |
+| `f5423b4` | feat(poc): inner dockerd verified up to image pull, compose up deferred per KI-1 (PR4 v1) |
+| `fb642e1` | feat(poc): KI-1 resolved by Sysbox 0.7.0 — inner compose up PASS (PR4 final) |
+| `b5d0f4d` | feat(poc): pytest-driven I1~I9 sandbox isolation matrix (PR5) |
+| _(pending)_ | feat(poc): git perf measurement + decision update (PR6) |
+| _(pending)_ | docs(progress): close M0-P2 |
+
+## Drift (plan ↔ 실제)
+
+**plan 카드와 일치한 부분**:
+- 6개 PR 단위 분할 그대로 (PR1 sysbox boot / PR2 SeaweedFS+decision / PR3 mount integration / PR4 inner compose / PR5 I1~I9 / PR6 perf)
+- 9개 격리 시나리오 모두 자동화
+- decision_volume_driver.md + perf_seaweed_vs_host.md 둘 다 산출
+
+**plan에 없었지만 진행 중 발견·기록한 부분 (drift)**:
+1. **Ubuntu 24.04 (noble) base 전환** — plan은 Debian bookworm-slim 가정이었으나 Python 3.12 미가용으로 Ubuntu noble로 전환. PEP 668 대응으로 daemon venv 격리.
+2. **Sysbox 0.6.7 → 0.7.0 호스트 upgrade** — plan 진입조건엔 sysbox-ce만 명시. 실제로는 docker 25+ 호환을 위해 *unpublished 0.7.0 binary* (Nestybox upstream issue #973 thread)가 필수였음. 사용자가 deb install. 발견·해결 과정을 [`known_issues.md` KI-1](../../../poc/sysbox_isolation/known_issues.md)에 기록.
+3. **docker-ce 정확 버전 pin** — host와 minor 차이가 Sysbox 0.6.7에서 문제였던 게 발견. 0.7.0에선 무관하지만 *deterministic build*를 위해 `5:29.2.1-1~ubuntu.24.04~noble` 유지.
+4. **storage-driver fallback (fuse-overlayfs|vfs)** — Sysbox + bare-spawn dockerd 조합에서 기본 overlay 권한 거부 우회. 0.7.0에선 거의 안 타지만 안전망으로 유지.
+5. **I3 polling 30s → 90s** — Sysbox 0.7.0 + weed mount cold remount latency가 30s를 종종 넘김. fs type `fuse*` 추가 검증.
+6. **(c) host bind mount 자원 정리** — Sysbox user-namespace remap으로 호스트가 못 지움. teardown은 *sandbox 안에서* 먼저 rm.
+7. **`docker cp` over FUSE 비신뢰성** ([`known_issues.md` KI-2](../../../poc/sysbox_isolation/known_issues.md)) — `tee` 우회.
+8. **isolation workflow는 self-hosted runner 대기** — vanilla GitHub runner엔 sysbox 없으므로 manual dispatch + 실 runner 등록은 M1-E1 cycle 1.7.
+
+**다음 cycle (M0-P3 — 에이전트 + MCP bridge PoC) 진입 전 사용자 검토 게이트**:
+- [ ] 사용자가 `claude` CLI 최신 설치 + 인증 (OAuth subscription 또는 ANTHROPIC_API_KEY)
+- [ ] M0-P2 결과물 검토 + 통과
+
+검토 통과 후 M0-P3 진입.
