@@ -1,0 +1,44 @@
+# Standalone SeaweedFS instance for the M0-P2 PoC.
+#
+# Independent of compose/docker-compose.dev.yml on purpose: that stack
+# binds the same ports for the *control-plane* SeaweedFS, and we want a
+# clean slate (and clean teardown) while exercising the sandbox model.
+# Ports are shifted by +10000 to avoid colliding with anyone running
+# the dev stack concurrently.
+
+name: gapt-poc-seaweed
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.99
+    container_name: gapt-poc-seaweedfs
+    command:
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=128
+      - -volume.max=0
+      - -filer
+      - -filer.maxMB=64
+      - -s3
+      - -s3.config=/config/s3.json
+    volumes:
+      - poc-seaweed-data:/data
+      - ./s3.poc.json:/config/s3.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget --no-verbose --tries=1 --spider http://127.0.0.1:9333/cluster/healthz || exit 1"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:19333:9333"   # master
+      - "127.0.0.1:18888:8888"   # filer
+      - "127.0.0.1:18333:8333"   # s3
+
+volumes:
+  poc-seaweed-data:
+
+networks:
+  default:
+    name: gapt-poc-seaweed
