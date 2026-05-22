@@ -4,13 +4,16 @@
 # Boundary: this image runs *inside* a Sysbox container per workspace.
 # Inner dockerd boots within (Sysbox safe DinD); host docker socket is
 # NEVER mounted. See docs/06_isolation_and_runtime.md.
+#
+# Base: Ubuntu 24.04 LTS (noble) — Python 3.12 is the system default,
+# avoiding the Debian bookworm 3.11 ceiling. LTS through 2029.
 
 ARG PYTHON_VERSION=3.12
 ARG NODE_MAJOR=22
 ARG UV_VERSION=0.4.30
 
 # ---------- stage: base ----------
-FROM debian:bookworm-slim AS base
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -42,10 +45,10 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 
 # Docker CE (for inner dockerd + docker CLI inside Sysbox)
 RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -75,18 +78,22 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && corepack prepare yarn@stable --activate
 
 # ---------- stage: daemon build ----------
+# Ubuntu 24.04 enforces PEP 668 (externally-managed-environment), so
+# install the daemon into its own venv at /opt/gapt-runtime-venv and
+# carry that whole tree into the final stage.
 FROM base AS daemon-build
 
 WORKDIR /opt/gapt-runtime
-COPY runtime/pyproject.toml /opt/gapt-runtime/
+COPY runtime/pyproject.toml runtime/README.md /opt/gapt-runtime/
 COPY runtime/src /opt/gapt-runtime/src
-RUN uv pip install --system --no-cache /opt/gapt-runtime
+RUN uv venv /opt/gapt-runtime-venv \
+    && uv pip install --python /opt/gapt-runtime-venv/bin/python --no-cache /opt/gapt-runtime
 
 # ---------- stage: final ----------
 FROM base AS final
 
-COPY --from=daemon-build /usr/local/lib/python${PYTHON_VERSION}/dist-packages /usr/local/lib/python${PYTHON_VERSION}/dist-packages
-COPY --from=daemon-build /usr/local/bin/toolkit-agent /usr/local/bin/toolkit-agent
+COPY --from=daemon-build /opt/gapt-runtime-venv /opt/gapt-runtime-venv
+RUN ln -s /opt/gapt-runtime-venv/bin/toolkit-agent /usr/local/bin/toolkit-agent
 COPY runtime/scripts/entrypoint.sh /usr/local/bin/gapt-entrypoint
 RUN chmod +x /usr/local/bin/gapt-entrypoint
 
