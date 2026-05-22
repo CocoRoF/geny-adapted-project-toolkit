@@ -63,7 +63,24 @@
 - `decision_two_layer_policy.md` — Layer 1 (pipeline `HookRunner.PRE_TOOL_USE`) vs Layer 2a (CLI built-in allow-list) vs Layer 2b (MCP bridge in-process policy) ascii figure + 근거 코드 위치 (`s10_tool/artifact/default/routers.py:262`) + M1-E2 forward-looking implication 포함
 - 핵심 깨달음: `claude_code_cli` 사용 시 pipeline-side `HookRunner.PRE_TOOL_USE` 는 호출 자체가 안 됨. host-attached MCP 도구의 정책 게이트는 **MCP bridge 안에** 있어야 함 — pipeline-side hook 으로는 막을 수 없음.
 - DoD 추적: **HookRunner.PRE_TOOL_USE 베토 시도 (Stage 10 bypass 검증) ✅** (단, 베토 자체가 발화 안 되는 것이 PoC의 finding이므로 DoD의 의도 — "PolicyEngine 2-layer 명확화" — 는 충족). EventBus stage/pipeline 캡처 ✅. Layer 2a / 2b 거부 데모는 PR5 (`exec.cli.permission_denied`) 에서 마무리.
-### PR 5 — exec.*.* 4종 에러 재현 + audit JSONL (대기)
+### PR 5 — exec.cli.* 4종 에러 재현 + audit JSONL (✅ 완료 — *this commit*)
+
+- `poc/executor_agent/fixtures/{fake_auth.sh,fake_perm.sh,fake_slow.sh}` — 각 실패 모드를 흉내내는 stub binary
+  - `fake_auth.sh`: stdout 에 stream-json `{"error":"authentication_failed"}` 1줄 출력 → `claude_code.py:302` 의 streaming 파서가 `CLI_AUTH_FAILED` 로 분기
+  - `fake_perm.sh`: stderr 에 "permission denied" — *streaming path 에서는 protocol_error 로 분기됨*, 그래서 PR5는 직접 `_classify_cli_result` 호출로 검증
+  - `fake_slow.sh`: 30s sleep → timeout_s=2.0 으로 `CLI_TIMEOUT` 강제
+- `reproduce_errors.py` — 4개 시나리오 자동 실행, `stage.error` 이벤트 hook 으로 `exec.cli.*` 코드 캡처, `audit_errors.jsonl` + `error_codes_reproduced.md` 생성
+- 실행 결과 (`overall: PASS`):
+
+  | Scenario | Expected | Observed | Pass |
+  |---|---|---|---|
+  | exec.cli.binary_not_found | exec.cli.binary_not_found | exec.cli.binary_not_found | ✅ |
+  | exec.cli.auth_failed | exec.cli.auth_failed | exec.cli.auth_failed | ✅ |
+  | exec.cli.timeout | exec.cli.timeout | exec.cli.timeout | ✅ |
+  | exec.cli.permission_denied | exec.cli.permission_denied | exec.cli.permission_denied | ✅ (classifier_unit) |
+
+- 발견 사항 — geny-executor upstream feedback 거리: `_cli_runtime.py:270-274` 의 streaming 경로가 non-zero exit 시 `_classify_cli_result` 휴리스틱을 안 돌림. 그래서 stderr 에 "permission denied" 있는 CLI 가 `exec.cli.protocol_error` 로 잘못 분류됨. PR5는 정의에 부합하는 `_classify_cli_result` 호출로 코드 매핑 검증, **M1-E2 에서 upstream patch 제안** 큐잉.
+- DoD 추적: 에러 시나리오 4개 재현 ✅, audit JSONL 에 코드 그대로 기록 ✅
 ### PR 6 — 통합 스크립트 + M0-P3 종료 (대기)
 
 ## DoD 진행
