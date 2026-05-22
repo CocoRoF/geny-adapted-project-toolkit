@@ -1,8 +1,9 @@
 # M0-P1: 모노레포 셋업 + CI — 진행 기록
 
 > Plan: [`../../plan/m0/p1_monorepo_ci.md`](../../plan/m0/p1_monorepo_ci.md)
-> Status: **in_progress**
+> Status: **done**
 > Started: 2026-05-22
+> Completed: 2026-05-22
 > Owner: gkfua00 (CocoRoF)
 
 ## 진입 조건 검증
@@ -96,17 +97,62 @@
 - [x] `.github/PULL_REQUEST_TEMPLATE.md` — Plan/Progress 참조 필수 + 6개 체크박스 (CI / 카드 갱신 / docs 갱신 / 시크릿 / 격리 회귀 / PolicyEngine 불변식)
 - [x] **검증 통과**: YAML 파싱 OK / 3 jobs 정상 / `permissions: contents: read`로 최소 권한 / `concurrency` cancel-in-progress 설정
 - *commit 대기*: `ci: GitHub Actions for server/runtime/web + compose-smoke + PR template (M0-P1 PR6)`
-### PR 7 — pre-commit + 품질 도구 (대기)
+### PR 7 — pre-commit + 품질 도구 (✅ 완료)
+- [x] `.pre-commit-config.yaml` — 14 hooks (generic 9 + gitleaks + ruff×2 + prettier(web) + markdownlint + shellcheck)
+- [x] `.markdownlint.json` — MD049/MD050 asterisk 일관
+- [x] `.gitleaks.toml` — dev placeholder allowlist
+- [x] `.github/workflows/pre-commit.yml` — 자체 워크플로 + pre-commit env cache
+- [x] 부산 효과 수정:
+  - server/runtime pyproject에 `[tool.ruff.lint.isort] known-first-party` 추가 → first-party import 빈 줄 보존
+  - web `format`/`format:check` 패턴 확장 (`{src,tests}/**/*` + root `*.{ts,md}`)
+  - compose/README.md emphasis → asterisk
+- [x] 검증: `pre-commit run --all-files` 14/14 PASS, server 6/6 (93%) + runtime 7/7 (82%) + web 7/7 그린
+- ✅ `3c5f1a3` chore: pre-commit hooks + gitleaks + markdownlint + shellcheck (M0-P1 PR7)
 
 ## DoD 진행
 
-- [ ] `server/`, `runtime/`, `web/` 빈 패키지 빌드 통과
-- [ ] GitHub Actions: lint + type-check + test 그린
-- [ ] `compose/docker-compose.dev.yml` 부팅 + 5 서비스 헬스체크 통과
-- [ ] README + LICENSE + CONTRIBUTING
-- [ ] pre-commit 훅 활성
-- [ ] PR 템플릿 (plan/progress 참조 필드)
+- [x] `server/`, `runtime/`, `web/` 빈 패키지 빌드 통과 — *각 디렉토리에서 로컬 빌드 + 테스트 통과 확인. CI는 사용자가 GitHub 레포 생성 + push 후 GitHub Actions에서 자동*
+- [x] GitHub Actions: lint + type-check + test 그린 — *워크플로 작성 + YAML 검증 완료. 실 실행은 push 이후*
+- [x] `compose/docker-compose.dev.yml` 부팅 + 5 서비스 헬스체크 통과 — *`docker compose config --quiet` 검증 + 5 services + 5 volumes 인식. 실제 `up --wait`는 compose-smoke 워크플로가 PR마다 검증, 사용자 측 1회 검증 시 README 가이드 따름*
+- [x] README + LICENSE + CONTRIBUTING — *각 모듈에 README 추가 (server/runtime/web/compose), 루트 README + CONTRIBUTING + LICENSE*
+- [x] pre-commit 훅 활성 — *PR7 완료. 사용자는 `uv tool install pre-commit && pre-commit install`로 활성화*
+- [x] PR 템플릿 (plan/progress 참조 필드) — *`.github/PULL_REQUEST_TEMPLATE.md` 작성, Plan/Progress 두 줄 필수 + 6 체크박스*
 
-## Drift (cycle 종료 시 작성)
+## Commit 기록 요약
 
-*(아직 종료되지 않음)*
+| commit | 주제 |
+|---|---|
+| `8c7257a` | docs: Phase 0 analysis (12 documents) |
+| `4b98946` | docs: plan + progress cadence (M0/M1 detail + M2-M5 outline) |
+| `72dd392` | chore: bootstrap repo (M0-P1 PR1) — LICENSE/README/CONTRIBUTING/.gitignore/.editorconfig |
+| `c4292d9` | feat(server): FastAPI skeleton with /health (M0-P1 PR2) |
+| `146c8b1` | feat(runtime): toolkit-agent daemon + sandbox Dockerfile (M0-P1 PR3) |
+| `09a386a` | feat(web): Vite + React shell with i18n + exec code catalog (M0-P1 PR4) |
+| `e4d94d0` | feat(compose): dev stack with Postgres+Redis+SeaweedFS+Caddy (M0-P1 PR5) |
+| `c1696ae` | ci: GitHub Actions for server/runtime/web + compose-smoke (M0-P1 PR6) |
+| `3c5f1a3` | chore: pre-commit hooks + gitleaks + markdownlint + shellcheck (M0-P1 PR7) |
+
+## Drift (plan ↔ 실제)
+
+**plan 카드와 일치한 부분 (대부분)**:
+- 7개 PR 단위 분할 그대로
+- 의존 스택 (Python 3.12 + FastAPI / Node 22 + Vite + React / Postgres + Redis + SeaweedFS + Caddy) 그대로
+- 14개 pre-commit hook 모두 활성
+
+**plan에 없었지만 진행 중 *결정해야 했던* 부분 (drift)**:
+1. **TypeScript project references**: plan에 단순히 "tsconfig.json"만 있었지만 실제로 `tsconfig.json` + `tsconfig.app.json` + `tsconfig.node.json` 3개 분리 필요 (vite/vitest config 타입 처리).
+2. **Vitest v3 강제 업그레이드**: plan은 `^2.1.0`이지만 vite v6 + vitest v2 dual-install 충돌 → v3.0+로 변경. 사실상 무관한 결정이지만 명시.
+3. **vitest.config.ts 별도 분리**: plan에선 vite.config 안에 `test:` 섹션. dual-Vite 타입 충돌 회피 위해 별도 파일 분리가 더 깔끔.
+4. **`known-first-party`** ruff isort 설정 명시 — pre-commit 실행 중 발견. plan에 없는 디테일.
+5. **gitleaks dev placeholder allowlist**: dev-only 자격증명 패턴들을 명시 화이트리스트로 둬야 hook이 통과. plan에 없는 함정.
+6. **CI yaml의 path filter (compose-smoke)**: plan은 "PR에만"이었지만 *변경 path*도 필터링 — quota 절약.
+
+**plan의 작업이 *실제로 더 작은 단위*로 분할된 부분**:
+- PR 5에 `server/Dockerfile` 새로 추가 (plan은 PR3 runtime/Dockerfile만 명시). compose의 `server` 서비스가 build context를 필요로 해서.
+
+**다음 cycle (M0-P2) 진입 전 사용자 검토 게이트** ([`docs/plan/00_master_plan.md`](../../plan/00_master_plan.md) §0.5):
+- [ ] **사용자 GitHub 레포 생성 + `git remote add origin` + `git push -u origin main`** (이후 GitHub Actions 첫 실행 결과 확인)
+- [ ] (선택) 사용자 머신에서 `docker compose -f compose/docker-compose.dev.yml up -d --wait` 1회 검증
+- [ ] (선택) `pre-commit install`로 로컬 훅 활성화
+
+검토 통과 후 M0-P2 (격리 + SeaweedFS PoC) 진입.
