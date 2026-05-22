@@ -5,7 +5,7 @@
 > Owner: gkfua00 (CocoRoF)
 > Status: **adopted**
 > Evidence: this PoC run (commit *this commit*), audits at
->   `poc/executor_agent/audit_hooks.jsonl` + `poc/mcp_bridge/bridge_audit.jsonl`
+> `poc/executor_agent/audit_hooks.jsonl` + `poc/mcp_bridge/bridge_audit.jsonl`
 
 ## Context
 
