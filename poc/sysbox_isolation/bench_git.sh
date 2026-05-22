@@ -73,11 +73,6 @@ docker exec "$NAME" bash -lc "
     git clone --quiet $REPO_URL /host-tmp/bench-c
 " 2>&1 | tail -3
 
-declare -A LABELS=(
-    [a]="(a) SeaweedFS FUSE"
-    [b]="(b) inner overlayfs"
-    [c]="(c) host bind /tmp"
-)
 declare -A PATHS=(
     [a]="/workspace/bench-a"
     [b]="/var/lib/inner-bench/repo"
@@ -144,7 +139,7 @@ log "writing $OUT"
     echo "Ratios above ~3x mean SeaweedFS FUSE has a real overhead worth carving out a hybrid layout for; ratios within 2x make a single-mount option-B layout fine. The decision in \`decision_volume_driver.md\` is revised in line with whatever this run says."
 } > "$OUT"
 
-cat "$OUT" | head -30
+head -30 "$OUT"
 
 log "tearing down sandbox + SeaweedFS"
 # Sysbox remaps uids inside the sandbox, so files created in /host-tmp
