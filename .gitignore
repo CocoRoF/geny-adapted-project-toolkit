@@ -131,6 +131,10 @@ docker-compose.local.yml
 seaweedfs-data/
 .seaweed/
 
+# ===== PoC runtime artifacts =====
+poc/executor_agent/audit.jsonl
+poc/executor_agent/audit.*.jsonl
+
 # ===== CI / coverage / build artifacts =====
 .github/coverage/
 *.lcov
