@@ -24,12 +24,12 @@ PR6 will:
 
 | Operation | (a) SeaweedFS FUSE | (b) host named volume | (c) host bind | Ratio (a/c) |
 |---|---|---|---|---|
-| `git status` | _t.b.d._ | _t.b.d._ | _t.b.d._ | — |
-| `git log --oneline -100` | _t.b.d._ | _t.b.d._ | _t.b.d._ | — |
-| `git diff HEAD~5` | _t.b.d._ | _t.b.d._ | _t.b.d._ | — |
-| `git checkout <branch>` | _t.b.d._ | _t.b.d._ | _t.b.d._ | — |
-| `git add+commit+reset` | _t.b.d._ | _t.b.d._ | _t.b.d._ | — |
+| `git status` | *t.b.d.* | *t.b.d.* | *t.b.d.* | — |
+| `git log --oneline -100` | *t.b.d.* | *t.b.d.* | *t.b.d.* | — |
+| `git diff HEAD~5` | *t.b.d.* | *t.b.d.* | *t.b.d.* | — |
+| `git checkout <branch>` | *t.b.d.* | *t.b.d.* | *t.b.d.* | — |
+| `git add+commit+reset` | *t.b.d.* | *t.b.d.* | *t.b.d.* | — |
 
 ## Hybrid layout proposal (filled in by PR6)
 
-_To be written once we have numbers._
+*To be written once we have numbers.*

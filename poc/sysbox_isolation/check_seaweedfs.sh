@@ -11,11 +11,15 @@
 
 set -uo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 NAME="gapt-poc-seaweedfs"
+# MASTER endpoint URL kept for reference; the active checks talk to
+# FILER (HTTP) and S3 (via boto3 with the endpoint hard-coded inline).
+# shellcheck disable=SC2034
 MASTER=http://127.0.0.1:19333
 FILER=http://127.0.0.1:18888
+# shellcheck disable=SC2034
 S3=http://127.0.0.1:18333
 
 FAIL=0

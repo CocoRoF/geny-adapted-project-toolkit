@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 NAME="${SYSBOX_POC_NAME:-gapt-sysbox-poc}"
 PROJECT_ID="${GAPT_PROJECT_ID:-poc}"
