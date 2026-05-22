@@ -7,7 +7,13 @@ This is the bin for upstream / environment-level snags that surfaced during PoC 
 
 ---
 
-## KI-1. docker 25+ `net.ipv4.ip_unprivileged_port_start` vs Sysbox 0.6.7 virtualised procfs
+## KI-1. docker 25+ `net.ipv4.ip_unprivileged_port_start` vs Sysbox 0.6.7 virtualised procfs (✅ resolved by Sysbox 0.7.0)
+
+**Resolution (2026-05-23):** Upgrading sysbox-ce from 0.6.7 → 0.7.0 (the binary published at `https://downloads.nestybox.com/sysbox/releases/v0.7.0/sysbox-ce_0.7.0-0.linux_amd64.deb`, ahead of the GitHub-releases listing) makes the cross-device `openat2` write succeed. Verified on this host (kernel 6.17, docker-ce 29.2.1) — `check_inner_compose.sh` C0~C4 all PASS, including inner `docker compose up` with `hashicorp/http-echo` reachable on the inner network. The original sysbox-fs commit that fixes the path is [`1302a6f`](https://github.com/nestybox/sysbox-fs/commit/1302a6f3fbe04f9c10488fe8c4195a504980cf6f) per the comment thread on nestybox/sysbox#973.
+
+The historical diagnosis is kept below for reference; any later host that ends up on an older Sysbox needs the upgrade.
+
+---
 
 **Surface:** every `docker run` / `docker compose up` issued by the *inner* dockerd fails container init with:
 

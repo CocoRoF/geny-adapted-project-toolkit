@@ -47,15 +47,15 @@ else
 fi
 
 # --- C1. inner compose up ---
-# Known to fail today on Sysbox 0.6.7 + docker 25+; see known_issues.md
-# KI-1. We still run the attempt so the failure mode is visible in
-# logs, but classify it as deferred (xfail) instead of a hard fail.
-log "C1. inner docker compose up -d --wait (deferred — see known_issues.md KI-1)"
-if docker exec -w "$SAMPLE_DIR" "$NAME" docker compose up -d --wait --wait-timeout 30 >/dev/null 2>&1; then
-    ok "inner compose up succeeded — KI-1 may be resolved upstream"
+# Sysbox 0.7.0 resolves the docker 25+ procfs cross-device crash that
+# affected 0.6.7 (see known_issues.md KI-1).
+log "C1. inner docker compose up -d --wait"
+if docker exec -w "$SAMPLE_DIR" "$NAME" docker compose up -d --wait --wait-timeout 60 >/dev/null 2>&1; then
+    ok "inner compose up succeeded"
 else
-    log "  [XFAIL] inner compose up failed (expected — Sysbox/docker 25+ procfs issue)"
-    docker exec -w "$SAMPLE_DIR" "$NAME" docker compose down >/dev/null 2>&1 || true
+    fail "inner compose up failed"
+    docker exec -w "$SAMPLE_DIR" "$NAME" docker compose ps 2>&1 | head -10
+    docker exec -w "$SAMPLE_DIR" "$NAME" docker compose logs --tail=20 2>&1 | head -30
 fi
 
 # --- C2. reachable from inside the sandbox (only meaningful when C1 passes) ---

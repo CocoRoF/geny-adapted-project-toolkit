@@ -62,9 +62,16 @@ log "I3. persistence across sandbox restart"
 persist_marker="i3-$(date +%s).txt"
 docker exec "$NAME" bash -c "echo 'persist me' > /workspace/$persist_marker"
 docker restart "$NAME" >/dev/null
-log "  waiting for /workspace to remount after restart ..."
-for _ in $(seq 1 30); do
-    if docker exec "$NAME" mountpoint -q /workspace 2>/dev/null; then break; fi
+log "  waiting for /workspace to remount after restart (up to 90s) ..."
+# Sysbox 0.7.0 + weed mount: a cold remount sometimes takes 40-50s
+# because the filer reconnect races the FUSE handle re-init. The
+# mountpoint may appear before the filesystem is fuse-ready, so we
+# also check `stat -fc %T` reports a fuse* type.
+for _ in $(seq 1 90); do
+    if docker exec "$NAME" mountpoint -q /workspace 2>/dev/null \
+        && docker exec "$NAME" stat -fc %T /workspace 2>/dev/null | grep -q '^fuse'; then
+        break
+    fi
     sleep 1
 done
 if docker exec "$NAME" cat "/workspace/$persist_marker" 2>/dev/null | grep -q 'persist me'; then

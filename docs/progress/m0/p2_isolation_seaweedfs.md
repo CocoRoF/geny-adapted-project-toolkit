@@ -67,20 +67,20 @@
 - [x] **검증 통과**: 4/4 I1~I4 PASS, mount 표시 `seaweedfs:8888:/projects/poc/workspaces/w1 fuse.seaweedfs 797G`
 - [x] PoC README에 PR3 결과 매트릭스 + integration script 인덱스 추가
 - *commit 대기*: `feat(runtime,poc): SeaweedFS FUSE mount in Sysbox sandbox (M0-P2 PR3)`
-### PR 4 — inner dockerd로 외부 repo compose up (partial — KI-1 deferred)
+### PR 4 — inner dockerd로 외부 repo compose up (✅ KI-1 resolved via Sysbox 0.7.0)
 - [x] `poc/sysbox_isolation/sample-compose/docker-compose.yml` — `hashicorp/http-echo` 작은 user-style compose (non-privileged 5678)
-- [x] `runtime/scripts/entrypoint.sh` — dockerd 부팅에 `--storage-driver=fuse-overlayfs|vfs` 자동 fallback 로직 추가
-- [x] `runtime/Dockerfile`에 `fuse-overlayfs` 패키지 추가 시도 — *edit 적용 안 됨* (다음 cycle에서 재시도, vfs fallback이 작동하므로 영향 없음)
-- [x] `check_inner_compose.sh` — C0~C4:
+- [x] `runtime/scripts/entrypoint.sh` — dockerd 부팅에 `--storage-driver=fuse-overlayfs|vfs` 자동 fallback 로직 추가 (Sysbox 0.7.0 + 호스트 docker-ce 29.2.1 환경에선 fallback 거의 안 탐 — 안전망)
+- [x] `runtime/Dockerfile` docker-ce 버전 pin `5:29.2.1-1~ubuntu.24.04~noble` (host와 minor 정확 매칭 — deterministic)
+- [x] `check_inner_compose.sh` — C0~C4 모두 PASS:
   - C0: inner dockerd 응답 + `docker pull hashicorp/http-echo` 성공 ✓
-  - C1: **XFAIL** — `docker run/compose up`이 runc init에서 `unsafe procfs (ip_unprivileged_port_start cross-device link)` 거부. docker 25+ 신 동작 vs Sysbox 0.6.7 비호환 ([`known_issues.md` KI-1](../../../poc/sysbox_isolation/known_issues.md))
-  - C2: skipped — C1 미통과로 inner service 없음
+  - C1: ✅ **inner `docker compose up` 정상** (Sysbox 0.7.0 fix) — 첫 시도는 0.6.7 + docker 25+ procfs 충돌로 XFAIL이었으나 사용자가 upstream-published 0.7.0 deb (https://downloads.nestybox.com/sysbox/releases/v0.7.0/) 설치 후 통과
+  - C2: ✅ inner http-echo 응답 (`curl 127.0.0.1:8089` → expected body)
   - C3: ✅ 호스트 docker에 inner-side image 0개 (격리 본질 작동)
   - C4: ✅ compose down idempotent
-- [x] `known_issues.md` 작성 — KI-1 (docker 25+ procfs vs Sysbox) + KI-2 (`docker cp` over FUSE)
-- [x] PoC `README.md`에 PR4 결과 + known_issues 참조 추가
-- *plan §5 DoD "compose up 정상 동작"은 KI-1 해결 시까지 deferred* — M1-E1 cycle 1.7 SandboxBackend 진입 전 후속 cycle 필요
-- *commit 대기*: `feat(poc): inner dockerd verified up to image pull; compose up deferred per KI-1 (M0-P2 PR4)`
+- [x] `known_issues.md` 업데이트 — KI-1 ✅ resolved 표시 + 해결 단서 (sysbox-fs commit `1302a6f`, sysbox 0.7.0 deb URL), KI-2는 유지
+- [x] `check_integration.sh` I3 polling 30s → 90s (Sysbox 0.7.0 + weed mount cold remount latency 흡수) + fs type `fuse*` 확인 추가
+- [x] PR3 회귀 검증: I1~I4 4/4 PASS (mount type / write→host / restart 영속 / git clone — Sysbox 0.7.0에서도 그대로)
+- *commit 대기*: `feat(poc): KI-1 resolved by Sysbox 0.7.0 — inner compose up PASS (M0-P2 PR4)`
 ### PR 5 — 격리 검증 I1~I9 자동 테스트 (대기)
 ### PR 6 — SeaweedFS git 성능 측정 + decision docs (대기)
 
