@@ -134,6 +134,8 @@ seaweedfs-data/
 # ===== PoC runtime artifacts =====
 poc/executor_agent/audit.jsonl
 poc/executor_agent/audit.*.jsonl
+poc/executor_agent/audit_mcp.jsonl
+poc/mcp_bridge/bridge_audit.jsonl
 
 # ===== CI / coverage / build artifacts =====
 .github/coverage/
