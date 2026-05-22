@@ -1,0 +1,36 @@
+# GAPT Caddy dev config — simple reverse proxy to the control plane.
+#
+# Production version (M1-E4 cycle 4.4): on-demand TLS + dynamic
+# subdomain registration for per-workspace previews. Here we keep
+# everything on plain HTTP at :8080 so a fresh `docker compose up`
+# Just Works without certificate provisioning headaches.
+
+{
+    # Dev only: turn off automatic HTTPS so :8080 stays plain HTTP.
+    auto_https off
+    admin :2019
+}
+
+:8080 {
+    log {
+        output stderr
+        format console
+    }
+
+    encode gzip zstd
+
+    # API surface — anything under /api goes straight through.
+    handle /api/* {
+        reverse_proxy server:8088
+    }
+
+    handle /health {
+        reverse_proxy server:8088
+    }
+
+    # Future home of the web bundle (M0-P1 PR4 ships dev-only via vite).
+    # In production we'll serve the built dist from this same edge.
+    handle {
+        respond "GAPT dev edge. Open the Vite dev server directly on :5173 during PR4." 200
+    }
+}

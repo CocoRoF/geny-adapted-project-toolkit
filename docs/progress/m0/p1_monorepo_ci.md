@@ -73,7 +73,20 @@
 - [x] `web/README.md` — 명령 + i18n contract + plan/code 매핑
 - [x] **검증 통과**: `pnpm install` OK / `pnpm typecheck` clean / `pnpm lint --max-warnings=0` clean / `pnpm format:check` clean / `pnpm test` 7/7 pass / `pnpm build` 198 KB (gzip 62 KB)
 - *commit 대기*: `feat(web): Vite + React shell with i18n + exec code catalog (M0-P1 PR4)`
-### PR 5 — compose/ dev 스택 (대기)
+### PR 5 — compose/ dev 스택 (작성 완료, commit 대기)
+- [x] `compose/docker-compose.dev.yml` — 5 services:
+  - **postgres** 16-alpine + healthcheck (`pg_isready`)
+  - **redis** 7-alpine AOF + healthcheck (`redis-cli ping`)
+  - **seaweedfs** 3.99 단일 프로세스 (`server -filer -s3`) + healthcheck `/cluster/healthz`, 4 포트 노출 (9333/8888/8333/8080)
+  - **server** (gapt/server) build from `server/Dockerfile`, depends_on healthcheck chain, env 모두 명시 (Postgres DSN / Redis DSN / SeaweedFS URLs + S3 credentials / 세션 / 데몬 시크릿)
+  - **caddy** 2.10 edge :8080, dev plain HTTP
+- [x] `compose/seaweed/s3.json` — dev identity `gapt-dev` + Admin/Read/Write/List/Tagging actions
+- [x] `compose/caddy/Caddyfile.dev` — `/api/*` + `/health` → server:8088, placeholder root
+- [x] `server/Dockerfile` — multi-stage, uv lock-based deps install, non-root `gapt:1000` user, expose 8088
+- [x] `compose/README.md` — 부팅 명령, 서비스 맵, 볼륨 표, 시크릿 설명, plan 매핑
+- [x] **검증 통과**: `docker compose config --quiet` 클린 / 5 services 인식 / 5 volumes 인식 / healthcheck 체인 + depends_on 명시
+- 실 부팅 (이미지 pull → up → healthy)은 *사용자 측 검증 단계*로 위임 — `docker compose -f compose/docker-compose.dev.yml up -d --wait` 명령은 README에
+- *commit 대기*: `feat(compose): dev stack with Postgres + Redis + SeaweedFS + Caddy (M0-P1 PR5)`
 ### PR 6 — CI workflows (대기)
 ### PR 7 — pre-commit + 품질 도구 (대기)
 

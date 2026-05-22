@@ -1,0 +1,138 @@
+# GAPT dev stack — single-node, no Sysbox (per-project sandbox containers
+# come later via M1-E1 SandboxBackend). This compose boots the *control
+# plane* dependencies + a hello-world server/web so a developer can verify
+# the toolchain end-to-end on PR1.
+#
+# Real production wiring (Caddy on-demand TLS, SeaweedFS replication,
+# Postgres HA) lands in M1-E1 / M1-E4 / M4-E2.
+
+name: gapt-dev
+
+services:
+  # ---------- data plane ----------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gapt
+      POSTGRES_PASSWORD: gapt_dev_only
+      POSTGRES_DB: gapt
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gapt -d gapt"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  # SeaweedFS — persistent file core. host FS는 cache only.
+  # Single binary serves master + volume + filer + s3 in dev.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.99
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=128
+      - -volume.max=0
+      - -filer
+      - -filer.maxMB=64
+      - -s3
+      - -s3.config=/config/s3.json
+    volumes:
+      - seaweed-data:/data
+      - ./seaweed/s3.json:/config/s3.json:ro
+    healthcheck:
+      # /cluster/healthz returns 200 when master+volume+filer are up
+      test:
+        - CMD-SHELL
+        - "wget --no-verbose --tries=1 --spider http://localhost:9333/cluster/healthz || exit 1"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:9333:9333" # master
+      - "127.0.0.1:8888:8888" # filer http
+      - "127.0.0.1:8333:8333" # s3
+      - "127.0.0.1:8080:8080" # volume
+
+  # ---------- control plane ----------
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      GAPT_ENV: dev
+      GAPT_LOG_FORMAT: console
+      GAPT_PORT: "8088"
+      GAPT_POSTGRES_DSN: postgresql+psycopg://gapt:gapt_dev_only@postgres:5432/gapt
+      GAPT_REDIS_DSN: redis://redis:6379/0
+      GAPT_SEAWEED_FILER_URL: http://seaweedfs:8888
+      GAPT_SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
+      GAPT_SEAWEED_S3_ACCESS_KEY: gapt-dev
+      GAPT_SEAWEED_S3_SECRET_KEY: gapt-dev-secret
+      GAPT_SEAWEED_BUCKET: gapt
+      GAPT_SESSION_SECRET: dev-only-session-secret
+      GAPT_DAEMON_JWT_SECRET: dev-only-daemon-secret
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8088/health'').status==200 else 1)"'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:8088:8088"
+
+  # ---------- edge ----------
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    volumes:
+      - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "127.0.0.1:8080:8080" # main entry
+    # No 443 in dev — TLS happens at host level on the real domain.
+
+volumes:
+  postgres-data:
+  redis-data:
+  seaweed-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  default:
+    name: gapt-dev

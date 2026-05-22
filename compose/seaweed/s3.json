@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "gapt-dev",
+      "credentials": [
+        {
+          "accessKey": "gapt-dev",
+          "secretKey": "gapt-dev-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
