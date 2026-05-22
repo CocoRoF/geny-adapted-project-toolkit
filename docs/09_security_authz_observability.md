@@ -134,6 +134,8 @@ class PolicyEngine:
 1. CLI의 `settings_path` permission allow-list — 1차 거부.
 2. GAPT MCP bridge 안에서 PolicyEngine 재평가 — `mcp__gapt__*` 호출에 audit/policy 유효.
 
+> **M0-P3 PR4 PoC 검증 완료**: `poc/executor_agent/decision_two_layer_policy.md` 에 실측 데이터(`pipeline-side PRE_TOOL_USE fires: 0` 확인 + `s10_tool/artifact/default/routers.py:262` 코드 인용 + Layer 1/2a/2b ascii 다이어그램) 정리. PolicyEngine 구현 시 이 결정문이 1차 근거.
+
 **Policy config 위치** — 4계층 (병합 시 위→아래):
 
 ```

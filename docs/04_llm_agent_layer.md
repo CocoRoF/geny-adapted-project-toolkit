@@ -355,6 +355,8 @@ pipeline.attach_runtime(hook_runner=runner)
 
 이 2단계가 *CLI provider에서도 정책이 유효*한 이유.
 
+> **M0-P3 PR4 empirical verification**: `poc/executor_agent/decision_two_layer_policy.md` 에 실제 PoC 실행 trace + `s10_tool/artifact/default/routers.py:262` 의 단일 `PRE_TOOL_USE.fire` 호출 위치 인용 + ascii 게이트 다이어그램 (Layer 1 / 2a / 2b) 정리. 후속 cycle 의 PolicyEngine 구현 시 이 문서를 1차 참고.
+
 ---
 
 ## 4.7 ProjectAwareSessionManager — 라이프사이클
