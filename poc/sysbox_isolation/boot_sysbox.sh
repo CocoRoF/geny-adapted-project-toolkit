@@ -34,9 +34,13 @@ log "removing any existing $NAME"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 log "booting $NAME (runtime=sysbox-runc, image=$IMAGE)"
+# /dev/fuse is exposed unconditionally so that the basic boot script
+# can later be reused with a SeaweedFS mount (PR3+). It's harmless when
+# no GAPT_SEAWEED_FILER_URL is set — the entrypoint just skips weed.
 docker run -d \
     --name "$NAME" \
     --runtime=sysbox-runc \
+    --device /dev/fuse:/dev/fuse \
     "$IMAGE" \
     /usr/local/bin/gapt-entrypoint sleep infinity >/dev/null
 

@@ -49,7 +49,24 @@
 - [x] `perf_seaweed_vs_host.md` — PR6 측정 결과 placeholder (스키마 미리 정의)
 - [x] PoC `README.md` — F1~F3 결과 매트릭스 + decision/perf 문서 인덱스 추가
 - ✅ `4f9b229` feat(poc): SeaweedFS PoC + S3 round-trip + volume driver decision (M0-P2 PR2)
-### PR 3 — Sysbox + SeaweedFS Mount 통합 (대기)
+### PR 3 — Sysbox + SeaweedFS Mount 통합 (작성 완료, commit 대기)
+- [x] `runtime/Dockerfile`에 `fuse3` 패키지 + SeaweedFS `weed` 클라이언트 (v3.99) 동봉
+- [x] `runtime/scripts/entrypoint.sh`에 `mount_seaweedfs_workspace()` 추가:
+  - `GAPT_SEAWEED_FILER_URL` env 있으면 `/workspace`에 `weed mount` FUSE
+  - URL → host:port 변환 (`-filer`는 URL이 아닌 host:port만 받음)
+  - 백그라운드 spawn + 최대 15초 mountpoint polling
+  - mount 실패해도 컨테이너는 계속 (로그에만 기록)
+- [x] `boot_sysbox.sh` + `boot_integrated.sh`에 `--device /dev/fuse:/dev/fuse` 추가 — Sysbox 컨테이너에 FUSE 디바이스 노출
+- [x] `boot_integrated.sh` — SeaweedFS + Sysbox 함께 부팅 + 같은 docker network + filer 사전 path 생성
+- [x] `check_integration.sh` — I1~I4:
+  - I1: `/workspace = fuseblk` filesystem ✓
+  - I2: sandbox write → host Filer 읽음 ✓
+  - I3: 컨테이너 restart 후 영속 ✓
+  - I4: `git clone --depth 1 octocat/Hello-World` 30 files + host Filer가 디렉토리 listing ✓
+- [x] `teardown_integrated.sh` (--wipe 옵션)
+- [x] **검증 통과**: 4/4 I1~I4 PASS, mount 표시 `seaweedfs:8888:/projects/poc/workspaces/w1 fuse.seaweedfs 797G`
+- [x] PoC README에 PR3 결과 매트릭스 + integration script 인덱스 추가
+- *commit 대기*: `feat(runtime,poc): SeaweedFS FUSE mount in Sysbox sandbox (M0-P2 PR3)`
 ### PR 4 — inner dockerd로 외부 repo compose up (대기)
 ### PR 5 — 격리 검증 I1~I9 자동 테스트 (대기)
 ### PR 6 — SeaweedFS git 성능 측정 + decision docs (대기)

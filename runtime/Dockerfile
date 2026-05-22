@@ -11,6 +11,7 @@
 ARG PYTHON_VERSION=3.12
 ARG NODE_MAJOR=22
 ARG UV_VERSION=0.4.30
+ARG SEAWEED_VERSION=3.99
 
 # ---------- stage: base ----------
 FROM ubuntu:24.04 AS base
@@ -76,6 +77,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && corepack enable \
     && corepack prepare pnpm@latest --activate \
     && corepack prepare yarn@stable --activate
+
+# SeaweedFS client (weed) + fuse3 — mounts /workspace via FUSE per
+# option B (poc/sysbox_isolation/decision_volume_driver.md). fuse3
+# is the userland; the mount itself happens unprivileged inside Sysbox.
+ARG SEAWEED_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fuse3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/linux_amd64.tar.gz \
+        | tar -xz -C /usr/local/bin weed \
+    && /usr/local/bin/weed version | head -1
 
 # ---------- stage: daemon build ----------
 # Ubuntu 24.04 enforces PEP 668 (externally-managed-environment), so
