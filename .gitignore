@@ -135,6 +135,7 @@ seaweedfs-data/
 poc/executor_agent/audit.jsonl
 poc/executor_agent/audit.*.jsonl
 poc/executor_agent/audit_mcp.jsonl
+poc/executor_agent/audit_hooks.jsonl
 poc/mcp_bridge/bridge_audit.jsonl
 
 # ===== CI / coverage / build artifacts =====

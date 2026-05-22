@@ -52,7 +52,17 @@
 - 알려진 한계: pipeline-side audit_mcp.jsonl은 `stage.*` + `pipeline.*`만 캡처. `tool.*` 이벤트는 CLI 서브프로세스 내부 MCP 디스패치이기 때문에 pipeline EventBus가 못 봄. → **PR4에서 HookRunner 와이어업**으로 처리할 작업.
 - DoD 추적: MCP stdio bridge ✅ (~110 LoC), `mcp__gapt__gapt_hello` 호출 + 응답 ✅, `tool_result.isError`-equivalent 경로 (`exec.tool.access_denied` 텍스트) ✅, EventBus stage/pipeline 캡처 ✅. **HookRunner.PRE_TOOL_USE 베토 + pipeline-side tool 캡처는 PR4로 이월.**
 
-### PR 4 — HookRunner PolicyEngine 2-layer 게이트 검증 (대기)
+### PR 4 — HookRunner PolicyEngine 2-layer 게이트 검증 (✅ 완료 — *this commit*)
+
+- `poc/executor_agent/policy_hook.py` — `HookRunner` 빌더 (`HookConfig(enabled=True)`, in-process `PRE_TOOL_USE` 핸들러로 `gapt_unsafe` 명시적 거부, `set_audit_callback` 으로 모든 hook fire 기록)
+- `poc/executor_agent/run_hooks.py` — `pipeline.attach_runtime(hook_runner=runner)` 로 wiring, run 후 핸들러 fire 횟수 카운트
+- 실행 결과:
+  - LLM이 `gapt_hello` + `gapt_unsafe` 양쪽 모두 호출 (bridge_audit.jsonl: `tools/call.ok gapt_hello` + `tools/call.denied gapt_unsafe`)
+  - **pipeline-side PRE_TOOL_USE fires: 0** — Stage 10 9× bypass로 확인
+  - hook audit callback 도 한번도 발화 안 함 → Stage 10 외부에서 fire 호출 없음 검증
+- `decision_two_layer_policy.md` — Layer 1 (pipeline `HookRunner.PRE_TOOL_USE`) vs Layer 2a (CLI built-in allow-list) vs Layer 2b (MCP bridge in-process policy) ascii figure + 근거 코드 위치 (`s10_tool/artifact/default/routers.py:262`) + M1-E2 forward-looking implication 포함
+- 핵심 깨달음: `claude_code_cli` 사용 시 pipeline-side `HookRunner.PRE_TOOL_USE` 는 호출 자체가 안 됨. host-attached MCP 도구의 정책 게이트는 **MCP bridge 안에** 있어야 함 — pipeline-side hook 으로는 막을 수 없음.
+- DoD 추적: **HookRunner.PRE_TOOL_USE 베토 시도 (Stage 10 bypass 검증) ✅** (단, 베토 자체가 발화 안 되는 것이 PoC의 finding이므로 DoD의 의도 — "PolicyEngine 2-layer 명확화" — 는 충족). EventBus stage/pipeline 캡처 ✅. Layer 2a / 2b 거부 데모는 PR5 (`exec.cli.permission_denied`) 에서 마무리.
 ### PR 5 — exec.*.* 4종 에러 재현 + audit JSONL (대기)
 ### PR 6 — 통합 스크립트 + M0-P3 종료 (대기)
 
