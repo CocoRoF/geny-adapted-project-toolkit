@@ -24,7 +24,21 @@ start_inner_dockerd() {
         return 0
     fi
     log "starting inner dockerd ..."
-    nohup dockerd --host=unix:///var/run/docker.sock \
+    # Storage driver: Sysbox's recommended path is shiftfs + overlay2,
+    # but that requires the sysbox-managed mount setup which only kicks
+    # in for systemd-launched dockerd. Our bare-spawn path falls back
+    # to the user-namespace-friendly `fuse-overlayfs` snapshotter when
+    # available, else plain `vfs` (slow but always works).
+    local storage_args=()
+    if command -v fuse-overlayfs >/dev/null 2>&1; then
+        storage_args=(--storage-driver=fuse-overlayfs)
+        log "  using fuse-overlayfs storage driver"
+    else
+        storage_args=(--storage-driver=vfs)
+        log "  using vfs storage driver (fuse-overlayfs not installed)"
+    fi
+    nohup dockerd "${storage_args[@]}" \
+        --host=unix:///var/run/docker.sock \
         > /var/log/dockerd.log 2>&1 &
     for i in {1..30}; do
         if docker info >/dev/null 2>&1; then

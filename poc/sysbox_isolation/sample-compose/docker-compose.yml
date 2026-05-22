@@ -1,0 +1,27 @@
+# Minimal user-style compose project used by check_inner_compose.sh.
+# `http-echo` is preferred over nginx for this PoC because:
+#   - tiny (~2 MiB), instant pull
+#   - listens on non-privileged port 5678 — Sysbox's nested procfs
+#     guard refuses inner containers binding to ports < 1024
+#     ("unsafe procfs detected" on net.ipv4.ip_unprivileged_port_start)
+#   - returns a fixed string we can assert against
+#
+# This file is *not* GAPT's own service stack — it's a stand-in for
+# a user's external repository, copied into the sandbox at runtime.
+
+services:
+  hello:
+    image: hashicorp/http-echo:latest
+    command:
+      - -text=gapt sandbox inner compose ok
+      - -listen=:5678
+    ports:
+      - "8089:5678"
+    # docker 25+ writes net.ipv4.ip_unprivileged_port_start into every
+    # container's procfs by default. Sysbox 0.6.7's virtualised procfs
+    # rejects that write as "unsafe procfs / cross-device link", so we
+    # mark the system paths as unconfined for the inner container — the
+    # *outer* sandbox is still Sysbox-isolated; this only loosens the
+    # inner-of-inner boundary which has no host blast radius.
+    security_opt:
+      - systempaths=unconfined
