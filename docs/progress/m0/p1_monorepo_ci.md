@@ -55,7 +55,24 @@
 - [x] `runtime/README.md` — 빌드/실행/env vars
 - [x] **검증 통과**: `uv sync --extra dev` OK / `ruff check` clean / `ruff format --check` clean / `mypy src` Success / `pytest` 7/7 pass / coverage 82% (cli `serve` 부분은 통합 테스트 영역)
 - *commit 대기*: `feat(runtime): toolkit-agent daemon skeleton + sandbox Dockerfile (M0-P1 PR3)`
-### PR 4 — web/ 스켈레톤 (대기)
+### PR 4 — web/ 스켈레톤 (작성 완료, commit 대기)
+- [x] `package.json` — React 19 + react-router-dom 7 + Vite 6 + Vitest 3 + TypeScript 5.7 + eslint 9 (flat config, typescript-eslint typed-checking) + prettier 3 + @testing-library/react 16 + happy-dom
+- [x] `tsconfig.{json,app,node}.json` — project references, strict + noUncheckedIndexedAccess + verbatimModuleSyntax + exactOptionalPropertyTypes
+- [x] `vite.config.ts` — react plugin, `@/*` alias to `src/*`
+- [x] `vitest.config.ts` — happy-dom 환경 + setup, vite/vitest 타입 충돌 회피 위해 분리
+- [x] `eslint.config.js` — flat config + typescript-eslint typed rules
+- [x] `.prettierrc.json` — 100 col, trailing comma, double quote
+- [x] `index.html` — `<div id="root">` + `lang="ko"` + meta description
+- [x] `src/main.tsx` — StrictMode + createRoot, root element 검증
+- [x] `src/app/App.tsx` — placeholder shell (title + 언어 스위처 + repo 링크)
+- [x] `src/i18n/{index,en,ko,LanguageSwitcher}.ts(x)` — `t(key, locale)`, en source of truth + ko parity, **exec.*.* 안정 식별자 12개 미리 등록**
+- [x] `src/styles/index.css` — 미니멀 다크 토큰 (CSS vars, M1-E3에서 Tailwind+shadcn로 교체)
+- [x] `tests/setup.ts` — jest-dom matchers
+- [x] `tests/i18n.test.ts` — 키 parity + exec.* 커버리지 검증
+- [x] `tests/App.test.tsx` — title/로케일 스위처/repo 링크 렌더
+- [x] `web/README.md` — 명령 + i18n contract + plan/code 매핑
+- [x] **검증 통과**: `pnpm install` OK / `pnpm typecheck` clean / `pnpm lint --max-warnings=0` clean / `pnpm format:check` clean / `pnpm test` 7/7 pass / `pnpm build` 198 KB (gzip 62 KB)
+- *commit 대기*: `feat(web): Vite + React shell with i18n + exec code catalog (M0-P1 PR4)`
 ### PR 5 — compose/ dev 스택 (대기)
 ### PR 6 — CI workflows (대기)
 ### PR 7 — pre-commit + 품질 도구 (대기)

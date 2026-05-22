@@ -1,0 +1,83 @@
+/* Minimal Phase 0 styles. Tailwind + shadcn/ui land in M1-E3. */
+
+:root {
+  --bg: #0b0d10;
+  --fg: #e8eaed;
+  --muted: #9aa3ad;
+  --accent: #6ea8fe;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Inter",
+    sans-serif;
+  color-scheme: dark light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body,
+html,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.app-header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.app-body p {
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.app-body a {
+  color: var(--accent);
+}
+
+.app-footer {
+  color: var(--muted);
+}
+
+.lang-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.lang-switcher__label {
+  color: var(--muted);
+}
+
+.lang-switcher select {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}

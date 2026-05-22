@@ -71,6 +71,9 @@ out/
 # Vitest / coverage
 coverage/
 
+# TypeScript project references build info
+*.tsbuildinfo
+
 # ===== IDE / Editor =====
 .vscode/
 !.vscode/extensions.json
