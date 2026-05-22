@@ -42,7 +42,19 @@
 - [x] `server/README.md` — 로컬 개발 명령 + 환경 변수 표
 - [x] **검증 통과**: `uv sync --extra dev` OK / `ruff check` clean / `ruff format --check` clean / `mypy src` Success / `pytest` 6/6 pass / coverage 93%
 - *commit 대기*: `feat(server): FastAPI skeleton with /health (M0-P1 PR2)`
-### PR 3 — runtime/ 스켈레톤 (대기)
+### PR 3 — runtime/ 스켈레톤 (작성 완료, commit 대기)
+- [x] `runtime/pyproject.toml` — Python 3.12+, aiohttp, pydantic, PyJWT, structlog, python-ulid. dev: pytest + ruff + mypy. `toolkit-agent` console script
+- [x] `src/gapt_runtime/__init__.py` — `__version__`
+- [x] `src/gapt_runtime/settings.py` — `DaemonSettings.from_env()` (`GAPT_AGENT_SOCKET` / `GAPT_DAEMON_TOKEN` / `GAPT_{PROJECT,WORKSPACE,SESSION}_ID` / `GAPT_WORKSPACE_ROOT`)
+- [x] `src/gapt_runtime/daemon.py` — aiohttp `create_app(settings)` + `/health` + `/info`. **typed `web.AppKey`** 사용 (NotAppKeyWarning 회피)
+- [x] `src/gapt_runtime/cli.py` — `toolkit-agent {version|serve}` 진입점, unix socket으로 부팅
+- [x] `src/gapt_runtime/py.typed` — PEP 561
+- [x] `tests/` — daemon smoke 3개, settings 2개, cli 2개 (총 7개)
+- [x] `Dockerfile` (multi-stage) — Debian bookworm-slim + git/git-lfs/gh + docker-ce + docker-compose-plugin + Python 3.12 + uv 0.4.30 + Node 22 + pnpm/yarn + `toolkit-agent` 동봉. `gapt-entrypoint`가 inner dockerd 부팅 후 daemon spawn
+- [x] `scripts/entrypoint.sh` — inner dockerd 헬스 대기 30s + exec
+- [x] `runtime/README.md` — 빌드/실행/env vars
+- [x] **검증 통과**: `uv sync --extra dev` OK / `ruff check` clean / `ruff format --check` clean / `mypy src` Success / `pytest` 7/7 pass / coverage 82% (cli `serve` 부분은 통합 테스트 영역)
+- *commit 대기*: `feat(runtime): toolkit-agent daemon skeleton + sandbox Dockerfile (M0-P1 PR3)`
 ### PR 4 — web/ 스켈레톤 (대기)
 ### PR 5 — compose/ dev 스택 (대기)
 ### PR 6 — CI workflows (대기)
