@@ -62,10 +62,12 @@ services:
       - seaweed-data:/data
       - ./seaweed/s3.json:/config/s3.json:ro
     healthcheck:
-      # /cluster/healthz returns 200 when master+volume+filer are up
+      # /cluster/healthz returns 200 when master+volume+filer are up.
+      # Explicit 127.0.0.1 avoids BusyBox wget resolving localhost to
+      # [::1] (SeaweedFS only binds IPv4).
       test:
         - CMD-SHELL
-        - "wget --no-verbose --tries=1 --spider http://localhost:9333/cluster/healthz || exit 1"
+        - "wget --no-verbose --tries=1 --spider http://127.0.0.1:9333/cluster/healthz || exit 1"
       interval: 5s
       timeout: 3s
       retries: 20
@@ -73,7 +75,8 @@ services:
       - "127.0.0.1:9333:9333" # master
       - "127.0.0.1:8888:8888" # filer http
       - "127.0.0.1:8333:8333" # s3
-      - "127.0.0.1:8080:8080" # volume
+      # volume :8080 is internal-only — master proxies all reads/writes,
+      # and exposing it would collide with caddy on the host.
 
   # ---------- control plane ----------
   server:

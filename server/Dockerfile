@@ -12,7 +12,8 @@ FROM python:${PYTHON_VERSION}-slim-bookworm AS deps
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 ARG UV_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,10 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         | tar -xz -C /usr/local/bin --strip-components=1 uv-x86_64-unknown-linux-gnu/uv
 
 WORKDIR /opt/gapt-server
-COPY server/pyproject.toml server/uv.lock ./
+# Deps first for layer-cache friendliness; then the project itself.
+COPY server/pyproject.toml server/uv.lock server/README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv --python python${PYTHON_VERSION} /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv sync --frozen --no-install-project
+    uv sync --frozen --no-install-project --no-dev
+COPY server/src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # ---------- stage: runtime ----------
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
@@ -40,9 +44,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --create-home --uid 1000 gapt
 
 COPY --from=deps /opt/venv /opt/venv
-WORKDIR /app
-COPY --chown=gapt:gapt server/pyproject.toml ./
-COPY --chown=gapt:gapt server/src ./src
+# Keep the project at the same path the deps stage's editable install
+# resolved against, so the venv's .pth still points to a real src tree.
+COPY --from=deps --chown=gapt:gapt /opt/gapt-server /opt/gapt-server
+WORKDIR /opt/gapt-server
 
 USER gapt
 EXPOSE 8088

@@ -132,6 +132,39 @@
 | `c1696ae` | ci: GitHub Actions for server/runtime/web + compose-smoke (M0-P1 PR6) |
 | `3c5f1a3` | chore: pre-commit hooks + gitleaks + markdownlint + shellcheck (M0-P1 PR7) |
 
+## 자체 검증 (2026-05-22 push 후 보고)
+
+GitHub push 완료 후 *호스트에서 직접* 검증한 결과:
+
+### GitHub 측 (gh CLI)
+- 워크플로 `CI`: 3 jobs 모두 success (runtime 13s / web 27s / server 16s)
+- 워크플로 `pre-commit`: 14 hooks success in 56s
+- 워크플로 `compose-smoke`: push에선 미실행 (path filter — 정상)
+- 레포: public · main · 10 commits · 3 workflow files 모두 반영
+
+### 로컬 ↔ CI parity 재검증
+- server: ruff/format/mypy/pytest 6/6 (cov 93%) ✓
+- runtime: 동일 7/7 (cov 82%) ✓
+- web: typecheck/lint/format/test 7/7 + build 198 KB ✓
+
+### compose smoke (사용자 docker 그룹 가입 후 진행)
+이 검증 도중 **3개 hotfix가 필요**해서 PR8(hotfix)로 별도 commit:
+
+1. **SeaweedFS healthcheck IPv6 함정** — BusyBox `wget`이 `localhost`를 `[::1]:9333`로 resolve해서 connection refused. SeaweedFS는 IPv4만 listen. → `127.0.0.1` 명시.
+2. **server image — `uv sync`가 `/opt/venv`에 deps 미설치** — `VIRTUAL_ENV` env만 설정한 게 uv에 안 통함. → `UV_PROJECT_ENVIRONMENT=/opt/venv` 환경변수로 명시.
+3. **server image — `gapt_server` 패키지가 venv에 미설치** — deps만 받고 project install 안 함 + multistage에서 editable .pth가 가리키는 경로(`/opt/gapt-server/src`)가 runtime stage에 없음. → (a) 두 단계 `uv sync` (deps → src → project install) + (b) `README.md` build context에 포함 (hatchling 요구) + (c) runtime stage가 deps stage의 `/opt/gapt-server` 디렉토리를 그대로 복사 (editable 경로 유지).
+4. **caddy ↔ seaweedfs port 8080 충돌** — seaweedfs volume server (8080)를 호스트에 노출했더니 caddy edge와 충돌. → volume :8080은 *내부 전용*으로 (master가 자동 라우팅 — 호스트 노출 불필요).
+
+수정 후 검증 통과 매트릭스:
+
+| endpoint | 결과 |
+|---|---|
+| `http://127.0.0.1:8088/health` (server 직접) | `{"status":"ok","version":"0.0.1"}` ✓ |
+| `http://127.0.0.1:8080/health` (caddy → server reverse proxy) | 동일 응답 — Caddy 라우팅 작동 ✓ |
+| `http://127.0.0.1:9333/cluster/healthz` (SeaweedFS master) | `OK` ✓ |
+| `http://127.0.0.1:8080/` (caddy 루트 placeholder) | 200 OK ✓ |
+| `docker compose ps` | postgres + redis + seaweedfs + server + caddy 모두 Up (4개 healthy + caddy는 healthcheck 미정의) ✓ |
+
 ## Drift (plan ↔ 실제)
 
 **plan 카드와 일치한 부분 (대부분)**:
