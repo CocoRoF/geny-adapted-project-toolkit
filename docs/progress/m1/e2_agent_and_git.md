@@ -194,7 +194,27 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 
 - **`gh` 가 호스트에서 실행**: plan §2.6 는 "컨테이너 데몬에서 실행". 본 cycle 의 `GithubProvider` 는 *control-plane 측* — 컨트롤 플레인이 직접 PR 상태 조회 등 read-only 작업 시 사용. Sandbox 안의 git/gh 실행은 `gapt_git` / `gapt_pr` 도구 (Cycle 2.7) 가 daemon `/exec` 로 위임 — 같은 GithubProvider 인터페이스 재사용, 다만 `runner` 가 daemon RPC 로 swap.
 - **token 평문이 env 에 있음**: gh CLI 의 documented behavior. 프로세스 부모/자식 외부에서 token 노출 안 됨 — 같은 보안 모델 (askpass + 단명).
-### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)
+### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR
+
+#### PR 1 (2.7a) — gapt_git (8 action) (✅ 완료 — *this commit*)
+
+- `runtime/src/gapt_runtime/tools/git_tool.py` `GaptGit`:
+  - 8 action: `status` / `log` / `diff` / `branch` / `checkout` / `add` / `commit` / `push`
+  - Action-별 narrow schema — **arbitrary `--flag` passthrough 불가** (LLM 우회 차단)
+  - `commit` 가 자동 `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer 추가 (이미 있으면 중복 안 함)
+  - `push` 가 protected branch (`main` / `master` / `release` / `production`) → **`git.push.protected` 코드로 hard refuse** (deployment config 로 확장 가능)
+  - `--force` 자체 schema 부재. `--force-with-lease` 만 `force_with_lease=true` 로
+  - `add` / `diff` path 인자는 `resolve_under_root` 통과 — workspace escape 0
+  - subprocess `runner` 주입 가능 → 실 git 안 띄우고 테스트
+- registry 에 GaptGit 등록 → /tools/list 가 5개 도구 (gapt_edit / gapt_git / gapt_glob / gapt_grep / gapt_read)
+- 24 신규 테스트 + `test_tools_http.py` names assertion 도 5개 반영:
+  - dispatch (unknown action / action required)
+  - status, log default+custom+invalid, diff with paths + cached + traversal, branch, checkout create + missing ref, add 2 path + empty + traversal
+  - commit auto-trailer + already-present 중복 방지 + empty 거부
+  - push feat 행복 + main 거부 + master 거부 + force_with_lease only + 실패 → `git.push.failed` + custom protected branches override
+- 결과: runtime 89 PASS (+24), server 186 유지, 합 275 PASS. ruff + mypy strict 그린.
+
+#### PR 2 (2.7b) — gapt_pr (3 action) — 대기
 ### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
 ### Cycle 2.10 — 세션 API + SSE (대기)

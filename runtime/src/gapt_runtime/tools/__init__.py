@@ -15,6 +15,7 @@ read-only.
 """
 
 from gapt_runtime.tools.edit import GaptEdit
+from gapt_runtime.tools.git_tool import GaptGit
 from gapt_runtime.tools.glob import GaptGlob
 from gapt_runtime.tools.grep import GaptGrep
 from gapt_runtime.tools.protocol import (
@@ -29,6 +30,7 @@ from gapt_runtime.tools.registry import ToolRegistry, build_default_registry
 
 __all__ = [
     "GaptEdit",
+    "GaptGit",
     "GaptGlob",
     "GaptGrep",
     "GaptRead",

@@ -85,13 +85,14 @@ async def test_tools_call_requires_token(daemon: tuple[TestClient, Path]) -> Non
 
 
 @pytest.mark.asyncio
-async def test_tools_list_returns_four_tools(daemon: tuple[TestClient, Path]) -> None:
+async def test_tools_list_returns_registered_tools(daemon: tuple[TestClient, Path]) -> None:
     client, _ = daemon
     resp = await client.get("/tools/list", headers=_auth())
     assert resp.status == 200
     payload = await resp.json()
     names = sorted(t["name"] for t in payload["tools"])
-    assert names == ["gapt_edit", "gapt_glob", "gapt_grep", "gapt_read"]
+    # gapt_git joined the registry in Cycle 2.7a.
+    assert names == ["gapt_edit", "gapt_git", "gapt_glob", "gapt_grep", "gapt_read"]
     for tool in payload["tools"]:
         assert "input_schema" in tool
         assert tool["input_schema"]["type"] == "object"
