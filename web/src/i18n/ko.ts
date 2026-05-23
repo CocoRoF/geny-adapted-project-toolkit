@@ -102,6 +102,24 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.editor.saving": "저장 중…",
   "ide.editor.saved": "저장됨",
 
+  // --- chat panel ---
+  "chat.empty": "세션이 없습니다. *세션 시작* 을 눌러 에이전트와 대화하세요.",
+  "chat.start": "세션 시작",
+  "chat.send": "전송",
+  "chat.interrupt": "중단",
+  "chat.archive": "세션 종료",
+  "chat.placeholder": "에이전트에게 질문…",
+  "chat.connecting": "세션 스트림에 연결 중…",
+  "chat.error": "스트림 오류.",
+  "chat.done": "완료.",
+  "chat.invoke_failed": "에이전트 턴을 시작할 수 없습니다.",
+  "chat.session_failed": "세션을 생성할 수 없습니다.",
+  "chat.tool_call": "도구: {tool}",
+  "chat.tool_result": "결과",
+  "chat.cost.live": "라이브 비용",
+  "chat.cost.tokens": "{input}/{output} 토큰",
+  "chat.cost.usd": "${amount}",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

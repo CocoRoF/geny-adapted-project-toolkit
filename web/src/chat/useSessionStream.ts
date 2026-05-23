@@ -1,0 +1,115 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { type MessageReplayEntry, type SessionEventKind, streamUrl } from "@/api/sessions";
+
+/** Live SSE consumer for `GET /api/sessions/{sid}/stream`.
+ *
+ * Browser `EventSource` doesn't send cookies cross-origin by default
+ * but our SSE endpoint sits on the same origin (or behind the Vite
+ * proxy in dev), so `withCredentials: true` is enough to forward the
+ * session cookie. The hook auto-reconnects with `?since=<lastSeq>` on
+ * unexpected disconnects.
+ *
+ * Returns `{ events, status, lastSeq, reset }`. `events` is the live
+ * + replayed list in seq order. `status` is one of:
+ *   `idle` (no session bound), `connecting`, `open`, `closed`,
+ *   `error`. `reset()` clears `events` (e.g. when the parent flips
+ *   to a new session). */
+
+export type SessionStreamEvent = MessageReplayEntry;
+
+export type StreamStatus = "idle" | "connecting" | "open" | "closed" | "error";
+
+interface UseSessionStreamReturn {
+  events: SessionStreamEvent[];
+  status: StreamStatus;
+  lastSeq: number;
+  errorReason: string | null;
+  reset: () => void;
+}
+
+export function useSessionStream(sessionId: string | null): UseSessionStreamReturn {
+  const [events, setEvents] = useState<SessionStreamEvent[]>([]);
+  const [status, setStatus] = useState<StreamStatus>("idle");
+  const [errorReason, setErrorReason] = useState<string | null>(null);
+  const lastSeqRef = useRef(0);
+  const sourceRef = useRef<EventSource | null>(null);
+
+  const reset = useCallback(() => {
+    setEvents([]);
+    lastSeqRef.current = 0;
+    setErrorReason(null);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setStatus("idle");
+      reset();
+      sourceRef.current?.close();
+      sourceRef.current = null;
+      return;
+    }
+
+    setStatus("connecting");
+    const url = streamUrl(sessionId, lastSeqRef.current > 0 ? lastSeqRef.current : undefined);
+    const source = new EventSource(url, { withCredentials: true });
+    sourceRef.current = source;
+
+    function attach(kind: SessionEventKind) {
+      source.addEventListener(kind, (event: MessageEvent<string>) => {
+        const seq = Number(event.lastEventId);
+        let data: Record<string, unknown> = {};
+        try {
+          data = JSON.parse(event.data) as Record<string, unknown>;
+        } catch {
+          // Malformed frame — surface it as a raw text event so the
+          // user still sees something instead of a silent drop.
+          data = { raw: event.data };
+        }
+        if (Number.isFinite(seq)) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+        setEvents((prev) => [
+          ...prev,
+          {
+            seq: Number.isFinite(seq) ? seq : prev.length + 1,
+            kind,
+            data,
+            ts: new Date().toISOString(),
+          },
+        ]);
+      });
+    }
+
+    for (const kind of ["text", "tool_call", "tool_result", "cost", "error", "done"] as const) {
+      attach(kind);
+    }
+
+    source.onopen = () => {
+      setStatus("open");
+      setErrorReason(null);
+    };
+    source.onerror = () => {
+      // EventSource transitions to readyState=2 (CLOSED) for terminal
+      // errors and readyState=0 (CONNECTING) when it's about to retry.
+      // The browser handles reconnects for us; we just surface state.
+      if (source.readyState === EventSource.CLOSED) {
+        setStatus("closed");
+      } else {
+        setStatus("error");
+        setErrorReason("Stream interrupted — attempting to reconnect.");
+      }
+    };
+
+    return () => {
+      source.close();
+      sourceRef.current = null;
+    };
+  }, [sessionId, reset]);
+
+  return {
+    events,
+    status,
+    lastSeq: lastSeqRef.current,
+    errorReason,
+    reset,
+  };
+}

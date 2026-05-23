@@ -9,7 +9,7 @@ import {
 import { useI18n } from "@/app/providers/i18n-context";
 import { EditorBus, EditorBusContext } from "@/ide/editor-store";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
-import { EditorPanel, FileTreePanel, PanelPlaceholder } from "@/ide/panels";
+import { ChatPanelDock, EditorPanel, FileTreePanel, PanelPlaceholder } from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
 
@@ -44,18 +44,22 @@ const components = {
   placeholder: (props: IDockviewPanelProps<{ kind: string }>) => <PanelPlaceholder {...props} />,
   tree: (props: IDockviewPanelProps<{ workspaceId: string }>) => <FileTreePanel {...props} />,
   editor: (props: IDockviewPanelProps<{ workspaceId: string }>) => <EditorPanel {...props} />,
+  chat: (props: IDockviewPanelProps<{ workspaceId: string; projectId: string }>) => (
+    <ChatPanelDock {...props} />
+  ),
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor"]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat"]);
 
 interface Props {
   workspaceId: string;
+  projectId: string;
 }
 
 /** Full IDE shell: dockview component + preset switcher. Real panel
  * implementations land in Cycles 3.4–3.10; today every leaf renders
  * `<PanelPlaceholder>`. */
-export function DockviewShell({ workspaceId }: Props) {
+export function DockviewShell({ workspaceId, projectId }: Props) {
   const { t } = useI18n();
   const initial = useMemo<StoredLayout>(
     () => readStored(workspaceId) ?? { preset: "focus" },
@@ -91,7 +95,7 @@ export function DockviewShell({ workspaceId }: Props) {
               id,
               {
                 ...panel,
-                params: { ...panel.params, workspaceId },
+                params: { ...panel.params, workspaceId, projectId },
               },
             ];
           }),
@@ -99,7 +103,7 @@ export function DockviewShell({ workspaceId }: Props) {
       };
       api.fromJSON(hydrated);
     },
-    [workspaceId],
+    [workspaceId, projectId],
   );
 
   // Apply preset whenever it changes (after the dockview has mounted).

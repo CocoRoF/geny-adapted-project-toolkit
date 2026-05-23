@@ -63,7 +63,7 @@ export function WorkspaceIde() {
           {error}
         </p>
       ) : null}
-      {state === "ready" && wid ? <DockviewShell workspaceId={wid} /> : null}
+      {state === "ready" && wid && pid ? <DockviewShell workspaceId={wid} projectId={pid} /> : null}
     </section>
   );
 }

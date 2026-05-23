@@ -215,7 +215,48 @@
 - **언어 자동 감지 16종**: plan 은 "언어 자동 감지 (path → mime)" 명시. 본 구현은 ext-only 매핑 (mime 검색 안 함). 미지 ext → plaintext fallback.
 ### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
 ### Cycle 3.7 — xterm.js 터미널 (대기)
-### Cycle 3.8 — 채팅 패널 SSE 스트리밍 (대기, 2 PR)
+### Cycle 3.8 — 채팅 패널 SSE 스트리밍 (✅ 완료 — *this commit*, 순서 조정)
+
+[plan §3.8](../../plan/m1/e3_web_ide_shell.md#cycle-38-——-채팅-패널-——-sse-스트리밍-2-pr).
+
+**순서 조정 사유**: plan 카드 순서는 3.6 (DiffEditor) → 3.7 (xterm) → 3.8 (chat) 이지만:
+- 3.6 (DiffEditor) 는 LLM 의 `gapt_edit` 도구 호출이 SSE 로 도착해야 의미. 채팅 SSE 가 선행되어야 함.
+- 3.7 (xterm) 은 backend PTY endpoint (`WS /api/workspaces/{wid}/pty/{ptyId}`) 가 필요한데 아직 없음.
+- 3.8 (SSE chat) 은 backend Cycle 2.10 (sessions API + SSE) 이 이미 완료되어 dependency 충족.
+→ 3.8 → 3.6 → 3.9 → 3.7 순서가 자연스러움.
+
+**구성 (4 module + 1 test):**
+- `src/api/sessions.ts` — `SessionResponse`, `MessageReplayEntry`, `SessionEventKind` (text/tool_call/tool_result/cost/error/done), `createSession`, `listSessions`, `getSession`, `invokeSession`, `interruptSession`, `replaySessionMessages`, `archiveSession`, `streamUrl(sid, since?)`.
+- `src/chat/useSessionStream.ts` — `useSessionStream(sessionId | null)` hook. `EventSource(url, {withCredentials: true})` 를 마운트 후 생성, 6 SSE event listener (`text/tool_call/tool_result/cost/error/done`) 등록 + `lastEventId` 로 seq 추적, `onopen / onerror` 로 status (`idle | connecting | open | closed | error`) 전환. cleanup 에서 `source.close()`. JSON 파싱 실패 → `{raw: <bytes>}` fallback (silent drop 안 함).
+- `src/chat/ChatPanel.tsx`:
+  - 마운트 시 `listSessions(pid)` 호출 → workspace 매칭 active 세션 자동 attach (페이지 새로고침 후에도 끊기지 않음)
+  - 없으면 empty-state + "Start session" 버튼 → `createSession(pid, {workspace_id})` → stream subscribe
+  - composer: textarea (Enter 전송, Shift+Enter 줄바꿈), Send / Interrupt / End session
+  - cost header: 최근 `cost` 이벤트 reduce 로 `cost.cost_usd / input_tokens / output_tokens` 표시
+  - event list: text 는 `<pre>`, tool_call 은 `Tool: <name>`, tool_result 는 raw JSON, error 는 `role="alert" + exec_code + reason`, done 은 완료 배지. cost 는 헤더 fold-in (리스트에서 skip).
+  - 모든 액션 에러 → `ApiError.code` inline alert
+- `src/ide/panels.tsx` — `<ChatPanelDock>` (dockview wrapper, `projectId + workspaceId` params). FileTree/Editor 와 같은 `useEditorBus` 패턴은 사용 안 함 (chat 은 standalone).
+- `src/ide/DockviewShell.tsx` — `chat` component 추가, `HYDRATED_PANEL_KINDS = {tree, editor, chat}` 로 확장, `loadPreset` 가 `projectId` 도 panel params 에 주입. Shell 시그니처 `{ workspaceId, projectId }`.
+- `src/ide/layouts.ts` — `chatPanel()` helper, focus/review preset 의 chat panel 을 `contentComponent: "chat"` 으로 교체.
+- `src/routes/WorkspaceIde.tsx` — `DockviewShell` 에 `projectId={pid}` 전달.
+- i18n 17 키 추가 (en/ko): chat.empty / start / send / interrupt / archive / placeholder / connecting / error / done / invoke_failed / session_failed / tool_call / tool_result / cost.live / cost.tokens / cost.usd.
+
+**테스트 (`tests/ChatPanel.test.tsx`, 3 case):**
+- empty-state 에 Start session 버튼 노출
+- Start session → POST → composer + cost header 노출
+- 마운트 시 active 세션 자동 attach
+
+**EventSource stub**: happy-dom 미구현. tests/ChatPanel.test.tsx 가 `StubEventSource` (open/close + emit helper) 정의 후 `globalThis.EventSource` 패치. 실제 SSE 이벤트 dispatching 은 M1-E4 통합 테스트에 위임.
+
+**Gate:** lint clean (5 issue → 수정), typecheck clean, 41 web test pass (+3), build 성공 (652 kB / 168 kB gz), format clean.
+
+#### Plan 카드 대비 변경
+
+- **2 PR → 1 PR**: plan 이 2 PR (SSE 스트림 + 패널) 명시. 본 구현은 stream 훅 + 패널 + dockview wiring 을 함께 ship (양쪽 모두 짧음). DiffCard 의 receive 측은 Cycle 3.6 에서 분리.
+- **react-markdown / react-virtuoso 미적용**: plan 이 markdown render + virtual scroll 명시. 본 구현은 `<pre>` 단순 표시 + 일반 스크롤. markdown 은 Cycle 3.9 (Plan/Act 도구 카드) 에서 도구 결과 표시할 때 추가. virtuoso 는 대량 토큰 스트림 (1000+ chunks) 시 추가.
+- **`@file` / `@tool` / slash commands 미구현**: plan 이 명령 자동완성 + 슬래시 명령 명시. Cycle 3.11 (명령 팔레트) 가 키맵 binding 으로 wire-up.
+- **자동 스크롤 정지 미구현**: plan 이 "사용자가 위로 올린 상태면 자동 스크롤 정지" 명시. 본 구현은 unconditional auto-scroll. scroll-position 추적은 Cycle 3.11 에서 추가.
+- **cost 헤더 = 마지막 cost 이벤트**: plan 이 "1초 디바운스" 명시. backend 는 POST_TOOL_USE 빈도 (~1 Hz max) 로 자연 디바운스 (Cycle 2.9/2.10). 클라이언트는 마지막 cost 이벤트만 reduce — 추가 throttle 불필요.
 ### Cycle 3.9 — Plan/Act 모드 + 도구 호출 카드 (대기, 2 PR)
 ### Cycle 3.10 — 비용 / 컨텍스트 라이브 패널 (대기)
 ### Cycle 3.11 — 명령 팔레트 + 단축키 (대기)

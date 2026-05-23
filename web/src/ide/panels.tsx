@@ -2,6 +2,7 @@ import { type IDockviewPanelProps } from "dockview";
 import { useEffect, useState } from "react";
 
 import { useI18n } from "@/app/providers/i18n-context";
+import { ChatPanel } from "@/chat/ChatPanel";
 import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { FileTree } from "@/ide/FileTree";
@@ -28,6 +29,19 @@ export function FileTreePanel(props: IDockviewPanelProps<{ workspaceId: string }
   return (
     <div className="ide-panel-tree" data-panel-kind="tree">
       <FileTree workspaceId={props.params.workspaceId} onOpenFile={(path) => bus.emit(path)} />
+    </div>
+  );
+}
+
+/** Chat panel — wraps `<ChatPanel>` with the dockview panel
+ * contract. Needs projectId + workspaceId so it can create / list
+ * sessions against the right project. */
+export function ChatPanelDock(
+  props: IDockviewPanelProps<{ workspaceId: string; projectId: string }>,
+) {
+  return (
+    <div className="ide-panel-chat" data-panel-kind="chat">
+      <ChatPanel projectId={props.params.projectId} workspaceId={props.params.workspaceId} />
     </div>
   );
 }

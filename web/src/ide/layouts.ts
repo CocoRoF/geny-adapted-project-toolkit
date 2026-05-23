@@ -41,6 +41,15 @@ function editorPanel(id: string = "editor", title: string = "Editor") {
   };
 }
 
+function chatPanel(id: string = "chat", title: string = "Chat") {
+  return {
+    id,
+    contentComponent: "chat",
+    title,
+    params: { workspaceId: "", projectId: "", kind: "chat" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -70,7 +79,7 @@ const FOCUS: SerializedDockview = {
   panels: {
     tree: treePanel(),
     editor: editorPanel(),
-    chat: placeholder("chat", "Chat", "chat"),
+    chat: chatPanel(),
   },
   activeGroup: "editor-group",
 };
@@ -115,7 +124,7 @@ const REVIEW: SerializedDockview = {
   panels: {
     tree: treePanel(),
     diff: placeholder("diff", "Diff", "diff"),
-    chat: placeholder("chat", "Chat", "chat"),
+    chat: chatPanel(),
     ci: placeholder("ci", "CI", "ci"),
   },
   activeGroup: "diff-group",

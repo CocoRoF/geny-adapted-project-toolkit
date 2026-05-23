@@ -103,6 +103,24 @@ export const en = {
   "ide.editor.saving": "Saving…",
   "ide.editor.saved": "Saved",
 
+  // --- chat panel ---
+  "chat.empty": "No session yet. Click *Start session* to talk to the agent.",
+  "chat.start": "Start session",
+  "chat.send": "Send",
+  "chat.interrupt": "Interrupt",
+  "chat.archive": "End session",
+  "chat.placeholder": "Ask the agent…",
+  "chat.connecting": "Connecting to the session stream…",
+  "chat.error": "Stream error.",
+  "chat.done": "Done.",
+  "chat.invoke_failed": "Could not start the agent turn.",
+  "chat.session_failed": "Could not create the session.",
+  "chat.tool_call": "Tool: {tool}",
+  "chat.tool_result": "Result",
+  "chat.cost.live": "Live cost",
+  "chat.cost.tokens": "{input}/{output} tokens",
+  "chat.cost.usd": "${amount}",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",
