@@ -7,7 +7,6 @@ when `GAPT_TEST_POSTGRES_DSN` is unset.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -117,8 +116,9 @@ async def _exercise(async_dsn: str) -> None:
         await engine.dispose()
 
 
-def test_orm_roundtrip() -> None:
+@pytest.mark.asyncio
+async def test_orm_roundtrip() -> None:
     sync_dsn = _dsn_sync()
     async_dsn = _dsn_async(sync_dsn)
     _reset_and_upgrade(sync_dsn)
-    asyncio.run(_exercise(async_dsn))
+    await _exercise(async_dsn)

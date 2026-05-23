@@ -42,6 +42,9 @@ dependencies = [
     # ID + crypto
     "python-ulid>=2.7",
     "pyjwt>=2.9",
+
+    # Auth
+    "email-validator>=2.2",
 ]
 
 [project.optional-dependencies]

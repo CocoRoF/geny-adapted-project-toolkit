@@ -65,7 +65,34 @@
 
 - **`opentelemetry` 미사용**: pyproject 에 의존성은 있으나 본 cycle 에서는 structlog 만으로 trace_id 처리. OTel exporter 와이어업은 Cycle 1.12 (관측 통합) 또는 후속 PR 로 이월.
 - **per-request `AsyncSession` factory 만 노출**: `get_db_session` 가 async generator yield 패턴. 별도 transactional middleware 는 추가 안 함 — endpoint 가 명시적 `session.commit()` 호출 (도메인 서비스 패턴 일관성).
-### Cycle 1.3 — D2 Auth: MagicLink IDP (대기)
+### Cycle 1.3 — D2 Auth: MagicLink IDP (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/auth/` 신규 패키지:
+  - `session.py` — `TokenStore` + `SessionStore` Protocols + 인메모리 구현 (asyncio.Lock 으로 동시 접근 안전, TTL 기반 자동 만료). Redis-backed 구현은 후속 cycle 에서 wire-up.
+  - `idp.py` — `AuthIdp` Protocol + `MagicLinkIdp` (token-by-email, one-shot consume, 첫 사용자 OWNER 자동 승격 + `default` org 자동 생성). `MagicLinkDelivery` Protocol 로 SMTP/콘솔 swap 가능 (M1 dev = `ConsoleDelivery`, 로그에 callback URL 출력). `build_memory_idp()` 헬퍼.
+- `routers/auth.py` — 4 endpoints:
+  - `POST /api/auth/magic-link` (202, EmailStr 검증)
+  - `GET /api/auth/magic-link/callback?token=` → 토큰 소비, user/org 시드, session cookie 발급
+  - `POST /api/auth/logout` (204 + cookie clear)
+  - `GET /api/auth/me` (인증 검증 + 사용자 반환)
+  - `get_current_user` Depends — 다른 라우터가 인증 강제 시 재사용
+  - `_DEFAULT_IDP` module-level singleton + `set_auth_idp` 훅 (테스트 / 부팅 시 swap)
+- `app.py` 가 auth 라우터 include
+- `email-validator>=2.2` 의존성 추가 (pydantic `EmailStr`)
+- 테스트 5개 (`tests/auth/test_magic_link_flow.py`):
+  - 전체 플로우 happy-path (magic-link → callback → cookie → /me → token replay 401)
+  - 잘못된 토큰 → 401
+  - cookie 없이 /me → `auth.session.missing` 401
+  - logout → 204 + cookie 클리어 → /me 401
+  - 두 번째 사용자 등록 → 첫 번째와 다른 user_id
+  - **pytest-asyncio fixture** 패턴으로 fixture teardown 시 `container.aclose()` 가 engine dispose — 이전 테스트의 unraisable ResourceWarning 누수 방지
+- 결과: 23 PASS (auth 5 + 누적 18), ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **Redis 미사용**: plan §1.3 는 "Redis 세션 store" 명시. 본 cycle 은 in-memory 만 ship — Redis 와이어업은 Redis 의존 도입 시점 (Cycle 1.7 sandbox 가 ARQ 큐로 Redis 쓰기 시작) 까지 연기. 모든 store 가 Protocol 뒤에 있어서 swap-in 비용 거의 0.
+- **SMTP delivery 미와이어**: plan 은 "SMTP 발송 (개발은 콘솔 출력 모드)". 본 cycle 은 `ConsoleDelivery` 만 — SMTP 어댑터는 SMTP 의존 도입 시 추가, `MagicLinkDelivery` Protocol 인터페이스는 이미 안정.
+- **세션 cookie `secure` 가드**: `settings.env != "dev"` 일 때만 secure flag. prod 에서는 강제. plan 명시 안 됐지만 [09](../../09_security_authz_observability.md) §9.2 의 cookie hardening 일관성.
 ### Cycle 1.4 — D7 Secret Vault (대기)
 ### Cycle 1.5 — D8 Audit Sink (대기)
 ### Cycle 1.6 — D1 Project Service CRUD (대기)
