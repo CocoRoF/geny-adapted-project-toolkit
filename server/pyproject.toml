@@ -51,6 +51,9 @@ dependencies = [
 
     # Sandbox (D4)
     "docker>=7.1",
+
+    # Deploy (D6) — Remote SSH target.
+    "asyncssh>=2.18",
 ]
 
 [project.optional-dependencies]
