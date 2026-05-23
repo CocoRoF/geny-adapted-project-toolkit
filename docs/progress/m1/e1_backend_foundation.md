@@ -237,7 +237,29 @@
 - 기존 smoke tests (`test_daemon_smoke.py`) 가 JWT 통과하도록 갱신 (secret 32+ chars + Bearer header)
 - 결과: 22 PASS (runtime), ruff + mypy strict 그린.
 
-#### PR 2 (1.9b) — PTY + WebSocket — 대기
+#### PR 2 (1.9b) — PTY + WebSocket (✅ 완료 — *this commit*)
+
+- `runtime/src/gapt_runtime/pty_manager.py`:
+  - `PtyManager` — `pty.openpty` + `os.fork` 로 shell 스폰, master_fd non-blocking + `loop.add_reader` 로 async read, async write/resize/close, `aclose()` 가 shutdown 시 모든 세션 SIGHUP + reap zombie
+  - `PtySession` 데이터클래스 (id, master_fd, pid, shell, cwd, rows, cols, closed)
+  - `_set_winsize` ioctl wrapper, `_write_all` partial write retry
+- `runtime/src/gapt_runtime/handlers_pty.py`:
+  - `POST /open_pty` — argv shell + cwd (default `workspace_root`) + rows/cols/env, ID + PID 반환
+  - `WS /pty/{id}` — xterm.js 컨벤션: binary = raw PTY bytes 양방향, text = JSON `{"type":"resize","rows":int,"cols":int}` 메시지 처리. `_pump_pty_to_ws` background task 가 PTY → WS 한 방향 펌프, finally 블록이 task cleanup + WS close.
+  - `POST /pty/{id}/close` — idempotent kill+close
+- `daemon.create_app()` 이 `PtyManager` 를 app state 에 hold, shutdown hook 으로 `aclose()` 호출, 3 route 추가
+- 테스트 5개 (`test_daemon_pty.py`):
+  - `/open_pty` → ID/PID/사이즈 반환
+  - WS 연결 후 `echo gapt-ok\n` 전송 → master 출력에 sentinel 포함
+  - resize JSON 메시지 → PtySession.rows/cols 갱신
+  - 존재하지 않는 PTY ID → WS 404
+  - close 두번 호출 → 둘 다 200 (idempotent)
+- 결과: 27 PASS (runtime, 이전 22 → +5), ruff + mypy strict 그린.
+
+##### Plan 카드 대비 변경
+
+- **JWT 토큰 회전 (사용자 세션 수명마다)**: plan §1.9 명시. 본 cycle 은 토큰 발급/검증만, 자동 회전 로직 미구현 — server 측 컨트롤 플레인이 새 토큰 발급 후 컨테이너 env 갱신하는 흐름은 M1-E2 의 agent session lifecycle 와 연계 (현재는 컨테이너 boot 시 단일 토큰).
+- **`AgentDaemonClient`**: plan §1.9 "컨트롤 측 클라이언트". server 가 daemon 을 호출할 때 쓰는 httpx wrapper — 본 cycle 미구현, server side 가 실제로 daemon 호출하는 첫 cycle 인 M1-E2 에 합류.
 ### Cycle 1.10 — PolicyEngine 골격 (대기)
 ### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (대기)
 ### Cycle 1.12 — 통합 + 검증 (대기)
