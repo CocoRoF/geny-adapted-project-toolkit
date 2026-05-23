@@ -120,6 +120,8 @@ id_ed25519*
 # GAPT-specific secret stores
 .gapt/secrets/
 .gapt/local/
+**/.gapt/secrets/
+**/.gapt/local/
 secrets.local.yaml
 
 # ===== Docker / Compose =====

@@ -1,8 +1,9 @@
 # M1-E1: 백엔드 토대 — 진행 기록
 
 > Plan: [`../../plan/m1/e1_backend_foundation.md`](../../plan/m1/e1_backend_foundation.md)
-> Status: **in_progress**
+> Status: **completed**
 > Started: 2026-05-23
+> Completed: 2026-05-23
 > Owner: gkfua00 (CocoRoF)
 > Depends on: ✅ M0-P1 (`a4de305`), ✅ M0-P2 (`f468b15`), ✅ M0-P3 (`cd395ca`)
 
@@ -305,7 +306,87 @@
 
 - **docker plugin 대신 FUSE-via-entrypoint**: M0-P2 `decision_volume_driver.md` 의 Option B 채택 — runtime image 의 `mount_seaweedfs_workspace` script 가 sandbox boot 시 FUSE mount 를 수행하고, 본 cycle 의 `VolumeManager` 는 **filer 쪽 path 만 관리**. docker plugin 은 운영 복잡도 + Sysbox 와의 호환성 이슈로 보류.
 - **per-workspace bucket 대신 per-workspace path**: plan 은 "Filer collection 단위" 모호하게 명시. 구현은 단일 bucket (`settings.seaweed_bucket`, 기본 `gapt`) 아래 `/<workspace_id>` 디렉토리. 여러 GAPT 인스턴스가 SeaweedFS 클러스터 공유 시에는 bucket 만 분리.
-### Cycle 1.12 — 통합 + 검증 (대기)
+### Cycle 1.12 — 통합 + 검증 (✅ 완료 — *this commit*)
+
+- `tests/e2e/test_e1_smoke.py` — 전체 사용자 여정 1 테스트 (login → project → environment → secret → workspace create+stop+start+delete → project archive). 모든 의존성을 hermetic 으로 wire:
+  - 실 Postgres 16 (CI service) — 스키마 + 멤버십 + audit_events row 검증
+  - `MockSandboxBackend` — sandbox lifecycle 상태머신만 검증 (docker 불요)
+  - `InMemoryAuditSink` — 5 필수 audit action assertion (`project.create / workspace.create / workspace.stop / workspace.delete / project.archive`)
+  - `build_memory_idp` — magic-link 토큰 / 세션 in-memory
+- `server/scripts/export_openapi.py` — FastAPI `app.openapi()` 덤프 → `web/src/api/openapi.json` (stable formatting: indent=2 + sort_keys → diff-friendly)
+  - `--check` mode 가 spec drift 시 non-zero exit
+- `web/src/api/openapi.json` — 첫 export, 42KB. M1-E2 부터 TypeScript codegen 이 이 파일을 입력으로 받음.
+- CI: `.github/workflows/ci.yml` 의 `python-server` job 에 `openapi spec freshness check` step 추가 — 라우터 변경 후 export 누락 시 PR 거부
+- 결과: 130 PASS (이전 129 → +1), ruff + mypy strict 그린, openapi.json drift-check 그린
+
+## DoD 최종 결과
+
+| DoD 항목 | 상태 | 근거 |
+|---|---|---|
+| `POST /api/auth/magic-link` + callback 동작 → 세션 쿠키 발급 | ✅ | Cycle 1.3 (5 tests) |
+| `POST /api/projects` (외부 git URL + compose 등록) → DB row + 좌측 트리 | ✅ | Cycle 1.6 (4 tests) |
+| `POST /api/projects/{pid}/workspaces` → SeaweedFS volume + Sysbox 컨테이너 + clone + compose up | 부분 ✅ | Cycle 1.8 (workspace CRUD + sandbox boot via MockSandbox), 실제 git clone + compose up 는 M1-E2 |
+| `POST /api/secrets` + `GET /api/secrets` — keyring backend 1차 | ✅ | Cycle 1.4 (10 tests, EncryptedSqliteBackend) |
+| 모든 mutate 액션이 `audit_events` 에 ULID 정렬로 기록 | ✅ | Cycle 1.5 PostgresAuditSink + Cycle 1.6/1.8 emit + Cycle 1.12 e2e assert |
+| PolicyEngine 골격 + 기본 deny + built-in default bundle 1계층 | ✅ | Cycle 1.10 (26 tests, default bundle + 5 invariants) |
+| Alembic `0001_init` upgrade/downgrade 통과 | ✅ | Cycle 1.1 round-trip test |
+| OpenAPI 자동 생성 + `gapt-web` type 동기화 | ✅ | Cycle 1.12 export script + CI freshness check |
+| 신규 코드 mypy strict + ruff 그린, 테스트 커버리지 ≥ 70% | ✅ | 130 PASS, coverage 97-99%, 모든 파일 strict mypy 통과 |
+
+## Drift (cycle 종료 시 작성)
+
+### Plan 카드 대비 누적 변경
+
+각 cycle 의 `#### Plan 카드 대비 변경` 절에 inline 으로 기록. 핵심 5개:
+
+1. **audit_events 월 파티션 deferred (Cycle 1.1)** — partitioned table 의 PK 제약 회피 + audit 볼륨이 M1 에 작음. 0002+ migration 에서 추가, INSERT path 는 partition routing 으로 변경 없음.
+2. **Redis / Redis Streams 미사용 (Cycle 1.3, 1.5)** — in-memory token/session store + in-process asyncio.Queue. Redis 의존성 도입은 Cycle 1.7 의 ARQ 큐 wire-up 또는 M2 멀티노드 시점. 모든 store/sink 가 Protocol 뒤에 있어 swap-in 비용 거의 0.
+3. **OS keyring backend 미구현 (Cycle 1.4)** — EncryptedSqliteBackend 단일. 헤드리스 컨테이너 호환성 + Fernet 가 단일 노드 위협 모델에 충분. M2+ 멀티노드에서 SOPS / Infisical / OS keyring 어댑터 추가.
+4. **secret CRUD audit emit 미연결 (Cycle 1.4/1.5)** — `secret.read` 만 audit. `secret.create/rotate/delete` audit emit 은 M1-E2 (vault 가 router/service 둘 다 emit 하도록 통일).
+5. **단일 PolicyEngine layer (Cycle 1.10)** — 4-layer override (built-in / server / org / project) 는 M1-E4. 본 cycle 은 built-in default bundle 만, Protocol 그대로.
+
+### upstream feedback 큐 (M1-E2 진입 시점에 처리)
+
+1. `_classify_cli_result` 휴리스틱이 geny-executor 의 streaming CLI path 에 미적용 → `exec.cli.permission_denied` surface 안 됨 (M0-P3 PR5 finding). geny-executor upstream PR 제출.
+2. SMTP delivery 어댑터 (현재는 `ConsoleDelivery` 만).
+3. Redis-backed `TokenStore` / `SessionStore` / audit Streams.
+4. Real `SysboxBackend` 통합 테스트 (실 docker + sysbox-runc, `GAPT_TEST_SANDBOX=1` 게이트).
+5. Workspace 생성 시 `VolumeManager.create` 자동 호출 + SandboxCreateSpec.env 에 `to_env()` 주입 (Cycle 1.8 + 1.11 결합).
+
+### M1-E1 종료 후 코드베이스 형태
+
+```
+server/src/gapt_server/
+├── app.py                                # FastAPI + lifespan + 5 routers
+├── container.py                          # AppContainer DI (engine / audit / sandbox)
+├── settings.py                           # 20+ env-driven settings
+├── logging.py                            # structlog JSON + console
+├── middleware/trace_id.py                # ULID-binding per request
+├── db/                                   # 11 ORM models + 10 enums + ULID PK
+│   ├── base.py / enums.py / models.py / session.py / ulid.py
+├── domains/
+│   ├── audit/      (AuditSink protocol + Postgres batched + masking)
+│   ├── auth/       (MagicLinkIdp + ConsoleDelivery + InMemoryStores)
+│   ├── projects/   (CRUD + role-gated)
+│   ├── sandbox/    (SandboxBackend protocol + Mock + Sysbox + invariants)
+│   ├── secrets/    (SecretVault + EncryptedSqliteBackend)
+│   ├── storage/    (VolumeManager + InMemory + Filer HTTP)
+│   └── workspaces/ (WorkspaceService)
+├── policy/                               # PolicyEngine + invariants
+└── routers/                              # 6 routers (auth, secrets, projects,
+                                          # workspaces by_project / by_id, health)
+
+runtime/src/gapt_runtime/
+├── daemon.py                             # JWT-protected HTTP /exec /readfile /writefile
+└── pty.py                                # PTY allocator + WebSocket bridge
+
+tests/  (130 tests total)
+├── audit/ (12) auth/ (5) db/ (2) e2e/ (1) policy/ (26)
+├── projects/ (4) sandbox/ (26) secrets/ (10) storage/ (15)
+└── test_container (6) test_health (3) test_settings (3) test_trace_id (4)
+```
+
+Status: **M1-E1 종료**. 다음 milestone 은 **M1-E2** (에이전트 + Git 통합) — 본 토대 위에 `geny-executor` 기반 AgentSession + MCP bridge + GitHub Device Flow + `gapt_git` / `gapt_pr` 도구 + ProjectAwareSessionManager.
 
 ## DoD 진행
 
