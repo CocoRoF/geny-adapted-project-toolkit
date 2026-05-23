@@ -214,7 +214,30 @@
 
 - **SSE 진행 스트림 deferred**: plan §1.8 "진행 SSE". sandbox boot 가 동기 + (Mock 백엔드 환경) 매우 빠른 경우, SSE 가치 낮음. SysboxBackend 가 prod 환경에서 부팅 시간 측정 후 (Cycle 1.9 데몬 healthcheck 통합 시점) 가산. 현재는 201 / 409 에 모든 상태가 담김.
 - **ARQ 좀비 정리 task deferred**: plan §1.8 "ARQ 작업: 좀비 정리 (1시간마다)". Redis/ARQ 의존이 도입되지 않았으므로 미구현. M1-E2 가 agent_sessions 쪽 freshness ARQ 와 함께 통합 — Mock 환경에서는 좀비 자체가 생기지 않음.
-### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR (대기)
+### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR
+
+#### PR 1 (1.9a) — JWT 미들웨어 + /exec + /readfile + /writefile (✅ 완료 — *this commit*)
+
+- `runtime/src/gapt_runtime/auth.py` — `jwt_middleware` aiohttp 미들웨어:
+  - HS256 검증, `aud=gapt-runtime` / `iss=gapt-server` / `exp` / `iat` require
+  - `sub` 가 `settings.session_id` 와 일치해야 함 (session pinning)
+  - `/health` 만 exempt (호스트 healthcheck 가 토큰 없이 ping)
+  - `GAPT_DAEMON_TOKEN` 미설정 → 500 (silent accept 금지)
+- `runtime/src/gapt_runtime/handlers.py` — 3 endpoint:
+  - `POST /exec` — argv 실행, base64 stdout/stderr/exit_code/duration 반환, `timeout_s` wall-clock guard (1~600s)
+  - `POST /readfile` — `workspace_root` 하위 강제 (symlink resolve 포함), `max_bytes` cap (default 1MiB, max 64MiB)
+  - `POST /writefile` — 같은 path guard, `create_parents` flag, `mode` chmod
+  - `_resolve_under_root` 가 absolute / relative / `..` traversal / symlink-escape 모두 거부
+- `runtime/src/gapt_runtime/daemon.py` 가 미들웨어 + 3 라우터 wire-up
+- 테스트 12개 추가 (`test_daemon_handlers.py`):
+  - JWT — /health exempt, /info 401 without token, expired/wrong-secret/session-mismatch 모두 401
+  - /exec — echo round trip, sleep timeout → 408, cwd outside workspace → 403
+  - /readfile + /writefile — round trip, `..` traversal 403, `/etc/passwd` 403, missing → 404, 큰 파일 + 작은 `max_bytes` → 413
+  - GAPT_DAEMON_TOKEN 빈 값 → /info 500, /health 200
+- 기존 smoke tests (`test_daemon_smoke.py`) 가 JWT 통과하도록 갱신 (secret 32+ chars + Bearer header)
+- 결과: 22 PASS (runtime), ruff + mypy strict 그린.
+
+#### PR 2 (1.9b) — PTY + WebSocket — 대기
 ### Cycle 1.10 — PolicyEngine 골격 (대기)
 ### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (대기)
 ### Cycle 1.12 — 통합 + 검증 (대기)

@@ -2,6 +2,12 @@ import structlog
 from aiohttp import web
 
 from gapt_runtime import __version__
+from gapt_runtime.auth import jwt_middleware
+from gapt_runtime.handlers import (
+    handle_exec,
+    handle_readfile,
+    handle_writefile,
+)
 from gapt_runtime.settings import DaemonSettings
 
 logger = structlog.get_logger(__name__)
@@ -27,8 +33,11 @@ async def handle_info(request: web.Request) -> web.Response:
 
 
 def create_app(settings: DaemonSettings) -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[jwt_middleware])
     app[SETTINGS_KEY] = settings
     app.router.add_get("/health", handle_health)
     app.router.add_get("/info", handle_info)
+    app.router.add_post("/exec", handle_exec)
+    app.router.add_post("/readfile", handle_readfile)
+    app.router.add_post("/writefile", handle_writefile)
     return app
