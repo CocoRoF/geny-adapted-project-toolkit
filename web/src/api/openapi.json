@@ -423,6 +423,14 @@
             "title": "Email",
             "type": "string"
           },
+          "orgs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OrgMembershipResponse"
+            },
+            "title": "Orgs",
+            "type": "array"
+          },
           "user_id": {
             "title": "User Id",
             "type": "string"
@@ -463,6 +471,29 @@
           "ts"
         ],
         "title": "MessageReplayEntry",
+        "type": "object"
+      },
+      "OrgMembershipResponse": {
+        "properties": {
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "org_slug": {
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "org_slug",
+          "role"
+        ],
+        "title": "OrgMembershipResponse",
         "type": "object"
       },
       "ProjectResponse": {

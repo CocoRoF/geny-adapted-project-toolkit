@@ -59,7 +59,43 @@
 - **dev magic token 표시**: 백엔드 `MagicLinkResponse.token` 이 dev 환경에서 채워질 때 UI 에 노출 (data-testid="dev-magic-token"). prod 에서는 token 필드 omit 되어 안 보임. CI/CD 우회 위험 없음 (백엔드가 prod 빌드에서 토큰 안 채움).
 - **route 모듈 분할**: plan 산출물 표가 `routes/login.tsx` 등 소문자 + 점 표기. 본 cycle 은 PascalCase 파일명 + barrel 안 함 — vitest/eslint 모두 일관성 위해 한 패턴.
 - **provider 분리**: react-refresh/only-export-components 위반 회피 목적으로 `AuthProvider.tsx` / `auth-context.ts` 분리 (`useAuth` hook 은 context 모듈에). I18nProvider 도 동일 패턴.
-### Cycle 3.2 — 프로젝트 목록 + 생성 플로우 (대기)
+### Cycle 3.2 — 프로젝트 목록 + 생성 플로우 (✅ 완료 — *this commit*)
+
+[plan §3.2](../../plan/m1/e3_web_ide_shell.md#cycle-32-——-프로젝트-목록--생성-플로우-1-pr).
+
+**서버 변경:**
+- `server/src/gapt_server/routers/auth.py` — `MeResponse` 에 `orgs: list[OrgMembershipResponse]` 추가. `/api/auth/me` 가 `OrgMembership × Org` join 으로 사용자가 속한 모든 조직 + role 을 반환. `MagicLinkResponse` 의 `token` 필드는 dev 환경 디버깅용 (`MagicLinkAccepted` 는 그대로 — 본 cycle 은 응답 스키마 확장 없이 dev token 의 client surface 만 준비).
+- 서버 244 tests 그대로 pass, openapi check 통과 (web/src/api/openapi.json 갱신).
+
+**클라이언트 (3 module + 1 test):**
+- `src/api/projects.ts` — `ProjectResponse`, `CreateProjectInput`, `GitProvider` 타입 + `listProjects(orgId?)`, `createProject(input)`, `getProject(id)`, `archiveProject(id)`.
+- `src/api/auth.ts` — `MeResponse.orgs` 추가, `OrgMembershipSummary` export.
+- `src/routes/NewProjectModal.tsx` — 모달 UI:
+  - org 셀렉터 (사용자가 속한 모든 org), display_name, slug (pattern `^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$`, 클라이언트 `aria-invalid` 표시), git_remote_url, git_provider 셀렉터
+  - submit → `createProject` → 부모 `onCreated` 콜백
+  - 백엔드 `ApiError` 가 `{code}: {reason}` 로 inline alert
+  - orgs.length === 0 → "No organisations available" + 폼 비활성화
+- `src/routes/ProjectsIndex.tsx` — list view:
+  - `useEffect` 로 `listProjects()` 호출 → `loading / ready / error` 상태 머신
+  - 카드 그리드: display_name, slug, org_id, git_remote_url; `<Link to="/projects/:id">`
+  - "+ 프로젝트" 버튼이 modal open, 생성 성공 시 list prepend (refetch 없이 optimistic UX)
+  - "새로고침" 버튼이 refresh 호출
+- i18n 카탈로그 17 키 추가 (projects.title, projects.create.*, projects.org, projects.archived, ...) en/ko 양쪽.
+
+**테스트 (`tests/ProjectsIndex.test.tsx`, 4 case):**
+- 빈 목록 → empty-state 메시지
+- 카드 1개 렌더 + `<Link>` href 검증
+- list 500 → role="alert" + exec code surface
+- create 모달 open → form submit → 새 카드가 리스트에 추가
+
+**Gate:** server 244 pass (변경 0 regression), openapi check 통과, web 21 test pass (+4), lint/typecheck/format/build clean, 번들 254 kB / 81 kB gz.
+
+#### Plan 카드 대비 변경
+
+- **GitHub Device Flow UI 미구현**: plan §3.2 가 "GitHub OAuth Device Flow UI — user_code 표시, 외부 URL 열기 버튼" + repo 목록 + compose 자동 감지 + env 정의 입력 명시. 본 cycle 은 manual remote URL 입력만 (backend `GithubDeviceFlow` 는 Cycle 2.5 에 있지만 HTTP endpoint 가 `/api/integrations/github/*` 로 surface 안 됨 — backend cycle 이 추가되면 modal 이 wizard 4단계 (Connect → Repo → Compose → Env) 로 확장).
+- **org auto-pick**: plan 은 명시 없음. 본 구현은 사용자가 속한 첫 org 를 기본값으로 셀렉터에 noticed. 다중 org 시 사용자가 직접 선택.
+- **Card density** ([feedback_no_decorative_chrome] 준수): 이모지/장식 없음. display_name + slug + org_id + remote URL + archived 배지만.
+- **archived_at 단순 표시**: plan 은 명시 없음. archived 프로젝트는 카드에 "Archived" 배지 표시. 별도 필터 UI 는 추후.
 ### Cycle 3.3 — 워크스페이스 진입 + dockview 레이아웃 (대기, 2 PR)
 ### Cycle 3.4 — 파일 트리 (대기)
 ### Cycle 3.5 — Monaco 에디터 + 자동 저장 (대기, 2 PR)

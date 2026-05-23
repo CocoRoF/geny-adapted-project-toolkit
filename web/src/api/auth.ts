@@ -1,9 +1,16 @@
 import { apiFetch, apiGet, apiPost } from "@/api/client";
 
+export interface OrgMembershipSummary {
+  org_id: string;
+  org_slug: string;
+  role: string;
+}
+
 export interface MeResponse {
   user_id: string;
   email: string;
   display_name: string | null;
+  orgs: OrgMembershipSummary[];
 }
 
 export interface MagicLinkResponse {

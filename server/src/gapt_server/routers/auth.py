@@ -125,10 +125,17 @@ async def logout(
     return response
 
 
+class OrgMembershipResponse(BaseModel):
+    org_id: str
+    org_slug: str
+    role: str
+
+
 class MeResponse(BaseModel):
     user_id: str
     email: str
     display_name: str | None = None
+    orgs: list[OrgMembershipResponse] = []
 
 
 async def _resolve_current_session(
@@ -170,5 +177,22 @@ async def get_current_user(
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: models.User = Depends(get_current_user)) -> MeResponse:  # noqa: B008
-    return MeResponse(user_id=user.id, email=user.email, display_name=user.display_name)
+async def me(
+    user: models.User = Depends(get_current_user),  # noqa: B008
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+) -> MeResponse:
+    rows = (
+        await db.execute(
+            select(models.OrgMembership, models.Org)
+            .join(models.Org, models.Org.id == models.OrgMembership.org_id)
+            .where(models.OrgMembership.user_id == user.id)
+            .order_by(models.Org.created_at.asc())
+        )
+    ).all()
+    orgs = [
+        OrgMembershipResponse(org_id=org.id, org_slug=org.slug, role=membership.role.value)
+        for membership, org in rows
+    ]
+    return MeResponse(
+        user_id=user.id, email=user.email, display_name=user.display_name, orgs=orgs
+    )
