@@ -17,12 +17,20 @@ from gapt_server.agent.environment_service import (
     ManifestNotFoundError,
     ManifestResolution,
 )
+from gapt_server.agent.session_manager import (
+    AgentSessionHandle,
+    ProjectAwareSessionManager,
+    SessionManagerError,
+)
 
 __all__ = [
+    "AgentSessionHandle",
     "GaptEnvironmentService",
     "ManifestNotFoundError",
     "ManifestResolution",
+    "ProjectAwareSessionManager",
     "SecretRefMap",
+    "SessionManagerError",
     "build_claude_code_cli_creds",
     "build_for_session",
     "claude_binary",

@@ -236,7 +236,33 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 
 - **`--admin` 옵션 미노출**: plan §2.7 가 "merge: PolicyEngine `git.pr.merge` 통과". 본 cycle 은 PolicyEngine wire 전이지만 *schema level 에서 admin override 차단* — code 강제 floor. Cycle 2.9 의 HookRunner 가 protected base 이외의 PolicyEngine 평가 (예: org/project override) 를 추가하면 추가 차단 layered.
 - **`labels` 가 review_request 액션 내에 포함**: plan 은 "review_request: 라벨/리뷰어 지정" 합쳐서 표현. 본 cycle 동일하게 단일 action 으로 통합 — separate `labels` action 분리 안 함. gh pr edit 한 번에 처리.
-### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
+### Cycle 2.8 — ProjectAwareSessionManager — 2 PR
+
+#### PR 1 (2.8a) — basic create / archive + audit (✅ 완료 — *this commit*)
+
+- `server/src/gapt_server/agent/session_manager.py`:
+  - `ProjectAwareSessionManager` (stateless orchestrator — DB row 이 source of truth)
+  - `create_session(db, *, user, workspace_id, env_id?, secret_refs?, workspace_root_override?, vault?, mcp_config?, settings_path?)`:
+    1. workspace fetch → not_found → `workspace.not_found`
+    2. `ProjectMembership` 검증 → 없으면 `project.forbidden`
+    3. vault 미주어진 경우 claude_code_cli host OAuth 만 wire; 주어진 경우 `build_for_session` 으로 SDK provider 단명 read
+    4. `env_service.instantiate_pipeline(env_id, credentials=bundle)` (default `gapt_default`) — 실패 시 `session.pipeline_boot_failed`
+    5. `agent_sessions` row INSERT + `session.create` audit emit
+    6. `AgentSessionHandle(session_id, project_id, workspace_id, user_id, env_manifest_id, pipeline, status)` 반환
+  - `archive(db, *, user, session_id)` — `agent_sessions.status = ARCHIVED` + `session.archive` audit
+  - `SessionManagerError` 안정 코드: `workspace.not_found` / `session.not_found` / `session.pipeline_boot_failed`
+- `agent/__init__.py` 가 `ProjectAwareSessionManager`, `AgentSessionHandle`, `SessionManagerError` 재수출
+- 7 신규 테스트 (`tests/agent/test_session_manager.py`):
+  - happy path — pipeline 21 stage + DB row + audit emit 검증
+  - custom env_id (gapt_review) 부팅
+  - unknown workspace → `workspace.not_found`
+  - non-member user → `project.forbidden`
+  - unknown manifest → `session.pipeline_boot_failed`
+  - archive — status → ARCHIVED + audit emit
+  - archive unknown → `session.not_found`
+- 결과: server 193 PASS (+7), runtime 104 유지, 합 297 PASS. ruff + mypy strict + openapi 그린.
+
+#### PR 2 (2.8b) — freshness policy ARQ jobs — 대기
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
 ### Cycle 2.10 — 세션 API + SSE (대기)
 
