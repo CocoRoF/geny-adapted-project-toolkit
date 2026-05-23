@@ -195,7 +195,7 @@ class ProjectService:
         return [_project_view(r) for r in rows]
 
     async def get(self, db: AsyncSession, *, actor: models.User, project_id: str) -> ProjectView:
-        row = await _fetch_project_for(db, actor=actor, project_id=project_id)
+        row = await fetch_project_for(db, actor=actor, project_id=project_id)
         return _project_view(row)
 
     async def update(
@@ -209,7 +209,7 @@ class ProjectService:
         compose_profile_dev: str | None = None,
         compose_profile_prod: str | None = None,
     ) -> ProjectView:
-        row = await _fetch_project_for(
+        row = await fetch_project_for(
             db, actor=actor, project_id=project_id, min_role=enums.Role.EDITOR
         )
         if display_name is not None:
@@ -241,7 +241,7 @@ class ProjectService:
         actor: models.User,
         project_id: str,
     ) -> ProjectView:
-        row = await _fetch_project_for(
+        row = await fetch_project_for(
             db, actor=actor, project_id=project_id, min_role=enums.Role.ADMIN
         )
         row.archived_at = datetime.now(tz=UTC)
@@ -274,7 +274,7 @@ class ProjectService:
         cost_multiplier: float = 1.0,
         hooks: dict[str, Any] | None = None,
     ) -> EnvironmentView:
-        await _fetch_project_for(db, actor=actor, project_id=project_id, min_role=enums.Role.ADMIN)
+        await fetch_project_for(db, actor=actor, project_id=project_id, min_role=enums.Role.ADMIN)
         env = models.Environment(
             id=new_ulid(),
             project_id=project_id,
@@ -299,7 +299,7 @@ class ProjectService:
     async def list_environments(
         self, db: AsyncSession, *, actor: models.User, project_id: str
     ) -> list[EnvironmentView]:
-        await _fetch_project_for(db, actor=actor, project_id=project_id)
+        await fetch_project_for(db, actor=actor, project_id=project_id)
         rows = (
             (
                 await db.execute(
@@ -340,7 +340,7 @@ async def _ensure_org_member(db: AsyncSession, *, actor: models.User, org_id: st
         )
 
 
-async def _fetch_project_for(
+async def fetch_project_for(
     db: AsyncSession,
     *,
     actor: models.User,

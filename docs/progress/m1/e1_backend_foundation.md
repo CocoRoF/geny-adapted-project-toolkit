@@ -193,7 +193,27 @@
 
 - **integration smoke 미작성**: plan §1.7 가 "실제 docker daemon 위에서 컨테이너 부팅" 를 함의. 본 cycle 은 *unit + mock* 만. 실제 Sysbox 통합은 `GAPT_TEST_SANDBOX=1` env 로 gating 하고 별도 `test_sysbox_real.py` 에 (생성 deferred) — CI 가 sysbox-runc 미설치 환경이므로 의도적 분리. M0-P2 의 `poc/sysbox_isolation/` 가 이미 sysbox 부팅 자체는 검증함.
 - **events stream 미구현**: plan 의 `events() — docker events 스트림`. 워크스페이스 lifecycle 코드 (Cycle 1.8) + ARQ 좀비 정리가 실제로 events 를 요구할 때 추가 — 현재 API surface 가 비어있으니 deferred.
-### Cycle 1.8 — Workspace 라이프사이클 (대기)
+### Cycle 1.8 — Workspace 라이프사이클 (✅ 완료 — *this commit*)
+
+- `container.py` 가 `SandboxBackend` 를 1급 의존성으로 hold. `settings.sandbox_use_real_docker=true` 일 때만 `SysboxBackend(client=make_default_client())`, 기본은 `MockSandboxBackend` (단일 노드 dev / CI 친화). `get_sandbox_backend` Depends 추가.
+- `gapt_server/domains/workspaces/service.py`:
+  - `WorkspaceService` — `create/list_for_project/get/start/stop/delete`
+  - `create` 가 DB row 를 CREATING 으로 먼저 commit → `SandboxBackend.create+start` → 성공 시 RUNNING + `Sandbox` row 동시 commit. 실패 시 row FAILED 로 마킹 + audit `outcome=error` + `WorkspaceError("workspace.sandbox_boot_failed")` 던짐 (사용자가 진단/재시도 가능).
+  - `stop/start/delete` 가 sandbox 동작 + audit emit + role 가드 (`EDITOR` for stop/start, `ADMIN` for delete) + `last_activity_at` 갱신
+  - `delete` 는 sandbox 가 이미 없으면 swallow (테어다운 시 race 허용)
+- `gapt_server/routers/workspaces.py` — 2 라우터 (`by_project` for create/list, `by_id` for get/start/stop/delete). `WorkspaceError` → HTTP status 매핑 (404 not_found, 409 sandbox_*).
+- `projects.service.fetch_project_for` underscore 제거 (cross-domain 공용 헬퍼로 승격). `projects.http_from_project_error` 도 마찬가지.
+- 테스트 4개:
+  - 전체 lifecycle (create → list → get → stop → start → delete) + audit 3 이벤트 검증
+  - 비-멤버 가 워크스페이스 생성 시도 → 403 `project.forbidden`
+  - sandbox boot 실패 → row 가 FAILED 로 commit + 409 + audit `outcome=error` 기록
+  - 존재하지 않는 workspace_id → 404 `workspace.not_found`
+- 결과: 88 PASS (이전 84 → +4), ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **SSE 진행 스트림 deferred**: plan §1.8 "진행 SSE". sandbox boot 가 동기 + (Mock 백엔드 환경) 매우 빠른 경우, SSE 가치 낮음. SysboxBackend 가 prod 환경에서 부팅 시간 측정 후 (Cycle 1.9 데몬 healthcheck 통합 시점) 가산. 현재는 201 / 409 에 모든 상태가 담김.
+- **ARQ 좀비 정리 task deferred**: plan §1.8 "ARQ 작업: 좀비 정리 (1시간마다)". Redis/ARQ 의존이 도입되지 않았으므로 미구현. M1-E2 가 agent_sessions 쪽 freshness ARQ 와 함께 통합 — Mock 환경에서는 좀비 자체가 생기지 않음.
 ### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR (대기)
 ### Cycle 1.10 — PolicyEngine 골격 (대기)
 ### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (대기)

@@ -28,6 +28,12 @@ from gapt_server.domains.audit.sink import (
     NullAuditSink,
     PostgresAuditSink,
 )
+from gapt_server.domains.sandbox import (
+    MockSandboxBackend,
+    SandboxBackend,
+    SysboxBackend,
+    make_default_client,
+)
 from gapt_server.settings import Settings, get_settings
 
 
@@ -37,6 +43,7 @@ class AppContainer:
     engine: AsyncEngine | None
     session_factory: async_sessionmaker[AsyncSession] | None
     audit_sink: AuditSink
+    sandbox_backend: SandboxBackend
 
     async def aclose(self) -> None:
         await self.audit_sink.aclose()
@@ -48,6 +55,7 @@ def build_container(
     settings: Settings,
     *,
     audit_sink: AuditSink | None = None,
+    sandbox_backend: SandboxBackend | None = None,
 ) -> AppContainer:
     """Construct the container without performing any I/O.
 
@@ -58,13 +66,21 @@ def build_container(
     Pass `audit_sink` to inject a custom sink (tests use
     `InMemoryAuditSink`). When unset, a `PostgresAuditSink` is built
     against the same engine (or `NullAuditSink` when no DSN).
+
+    Pass `sandbox_backend` to inject a custom backend (tests use
+    `MockSandboxBackend`). Otherwise the backend is picked based on
+    `settings.sandbox_use_real_docker`.
     """
+    if sandbox_backend is None:
+        sandbox_backend = _build_default_sandbox(settings)
+
     if settings.postgres_dsn is None:
         return AppContainer(
             settings=settings,
             engine=None,
             session_factory=None,
             audit_sink=audit_sink or NullAuditSink(),
+            sandbox_backend=sandbox_backend,
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
@@ -79,7 +95,19 @@ def build_container(
             max_batch_size=settings.audit_max_batch_size,
         )
         sink = pg_sink
-    return AppContainer(settings=settings, engine=engine, session_factory=factory, audit_sink=sink)
+    return AppContainer(
+        settings=settings,
+        engine=engine,
+        session_factory=factory,
+        audit_sink=sink,
+        sandbox_backend=sandbox_backend,
+    )
+
+
+def _build_default_sandbox(settings: Settings) -> SandboxBackend:
+    if settings.sandbox_use_real_docker:
+        return SysboxBackend(client=make_default_client())
+    return MockSandboxBackend()
 
 
 def _coerce_async_dsn(dsn: str) -> str:
@@ -113,6 +141,12 @@ def get_app_settings(container: AppContainer = Depends(get_container)) -> Settin
 
 def get_audit_sink(container: AppContainer = Depends(get_container)) -> AuditSink:  # noqa: B008
     return container.audit_sink
+
+
+def get_sandbox_backend(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> SandboxBackend:
+    return container.sandbox_backend
 
 
 async def get_db_session(

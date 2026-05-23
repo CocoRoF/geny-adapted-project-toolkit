@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     sandbox_daemon_token_ttl_s: int = 900  # 15 minutes
     sandbox_idle_pause_s: int = 1800  # 30 minutes → paused
     sandbox_idle_archive_s: int = 86_400  # 24 hours → archive
+    # When true, container boots use the real docker SDK + sysbox-runc.
+    # Default false keeps unit/CI runs hermetic (MockSandboxBackend).
+    sandbox_use_real_docker: bool = False
 
     # --- arq / background jobs ---
     arq_queue_name: str = "gapt:default"

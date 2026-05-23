@@ -114,7 +114,7 @@ class EnvironmentResponse(BaseModel):
 # ─────────────────────────────────────────────────── helpers ──
 
 
-def _http_from_project_error(exc: ProjectError) -> HTTPException:
+def http_from_project_error(exc: ProjectError) -> HTTPException:
     if exc.code in {"project.not_found"}:
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -162,7 +162,7 @@ async def create_project(
         )
         await db.commit()
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return ProjectResponse.from_view(view)
 
 
@@ -190,7 +190,7 @@ async def get_project(
     try:
         view = await svc.get(db, actor=user, project_id=project_id)
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return ProjectResponse.from_view(view)
 
 
@@ -214,7 +214,7 @@ async def update_project(
         )
         await db.commit()
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return ProjectResponse.from_view(view)
 
 
@@ -229,7 +229,7 @@ async def archive_project(
         view = await svc.archive(db, actor=user, project_id=project_id)
         await db.commit()
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return ProjectResponse.from_view(view)
 
 
@@ -260,7 +260,7 @@ async def create_environment(
         )
         await db.commit()
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return EnvironmentResponse.from_view(view)
 
 
@@ -274,5 +274,5 @@ async def list_environments(
     try:
         views = await svc.list_environments(db, actor=user, project_id=project_id)
     except ProjectError as exc:
-        raise _http_from_project_error(exc) from exc
+        raise http_from_project_error(exc) from exc
     return [EnvironmentResponse.from_view(v) for v in views]
