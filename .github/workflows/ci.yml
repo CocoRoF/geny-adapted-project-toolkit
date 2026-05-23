@@ -26,6 +26,22 @@ jobs:
     name: server · ruff + mypy + pytest
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gapt
+          POSTGRES_PASSWORD: gapt
+          POSTGRES_DB: gapt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gapt -d gapt"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      GAPT_TEST_POSTGRES_DSN: postgresql://gapt:gapt@127.0.0.1:5432/gapt
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
