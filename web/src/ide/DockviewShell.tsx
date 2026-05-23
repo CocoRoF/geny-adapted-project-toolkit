@@ -10,7 +10,13 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
 import { EditorBus, EditorBusContext } from "@/ide/editor-store";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
-import { ChatPanelDock, EditorPanel, FileTreePanel, PanelPlaceholder } from "@/ide/panels";
+import {
+  ChatPanelDock,
+  EditorPanel,
+  FileTreePanel,
+  PanelPlaceholder,
+  PreviewPanelDock,
+} from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
 
@@ -48,9 +54,10 @@ const components = {
   chat: (props: IDockviewPanelProps<{ workspaceId: string; projectId: string }>) => (
     <ChatPanelDock {...props} />
   ),
+  preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat"]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "preview"]);
 
 interface Props {
   workspaceId: string;

@@ -171,6 +171,17 @@ export const ko: Record<keyof typeof en, string> = {
   "palette.action.sign_out": "로그아웃",
   "palette.shortcut.hint": "⌘K 열기 · Esc 닫기",
 
+  // --- Preview iframe ---
+  "preview.title": "프리뷰",
+  "preview.empty": "여기서 미리 보려면 URL 을 설정하세요.",
+  "preview.url_label": "URL",
+  "preview.url_placeholder": "https://localhost:3000",
+  "preview.open_external": "새 탭에서 열기",
+  "preview.refresh": "새로고침",
+  "preview.device.desktop": "데스크탑",
+  "preview.device.tablet": "태블릿",
+  "preview.device.phone": "폰",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

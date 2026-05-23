@@ -172,6 +172,17 @@ export const en = {
   "palette.action.sign_out": "Sign out",
   "palette.shortcut.hint": "⌘K to open · Esc to close",
 
+  // --- Preview iframe ---
+  "preview.title": "Preview",
+  "preview.empty": "Set a preview URL to load it here.",
+  "preview.url_label": "URL",
+  "preview.url_placeholder": "https://localhost:3000",
+  "preview.open_external": "Open in new tab",
+  "preview.refresh": "Refresh",
+  "preview.device.desktop": "Desktop",
+  "preview.device.tablet": "Tablet",
+  "preview.device.phone": "Phone",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

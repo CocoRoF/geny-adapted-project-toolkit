@@ -409,7 +409,38 @@
 - **shortcut 표시 = visual only**: `kbd` 가 액션 옆에 표시되지만 실제 키 처리는 dockview-shell 안에서. cmdk 의 `shortcut` prop 은 visual hint only — global 키 dispatch 는 우리가 직접 wire-up 해야 함. dockview shell 의 Ctrl+Alt+1-4 가 그 예.
 - **action registration = render time**: 액션 등록이 컴포넌트 mount 동안만 유효 → 다른 페이지에 가면 그 페이지의 액션은 사라짐. 의도적 — context-aware 팔레트. plan 의 "모든 액션이 팔레트에서 도달 가능" 은 *현재 컨텍스트의* 모든 액션을 의미.
 - **cmdk Dialog 의 a11y title**: cmdk 가 Radix Dialog 위에 빌드 → `<DialogTitle>` 요구. `title` prop 사용 (cmdk 가 visually-hidden 으로 wrap). `description` prop 은 cmdk 1.x 에서 지원 안 됨 — 경고는 dev-only warning 으로 무시 가능.
-### Cycle 3.12 — 프리뷰 iframe + 외부 공유 (대기)
+### Cycle 3.12 — 프리뷰 iframe + 외부 공유 (✅ 완료 — *this commit*)
+
+[plan §3.12](../../plan/m1/e3_web_ide_shell.md#cycle-312-——-프리뷰-iframe--외부-공유-1-pr).
+
+**구성 (1 module + 1 test, 4 case):**
+- `src/ide/PreviewPanel.tsx`:
+  - URL 입력 (localStorage key `gapt.ide.preview.{workspaceId}` 영속, workspace 별 격리)
+  - `<iframe src={url}>` 마운트 (URL 없으면 empty-state)
+  - Refresh 버튼 → `reloadKey++` → React key change 로 iframe 재마운트
+  - "Open in new tab" `<a target="_blank" rel="noopener noreferrer">`
+  - Device chips (radio): desktop (parent 100%) / tablet (768px) / phone (390px) → 인라인 `style.width` 변경
+  - iframe **sandbox 미설정**: 사용자 자신의 sandbox dev server 가 대상이므로 capability 제한 안 함. 외부 untrusted 콘텐츠가 아님.
+- `src/ide/panels.tsx` 에 `<PreviewPanelDock>` 추가 (dockview wrapper)
+- `src/ide/DockviewShell.tsx` components 에 `preview: PreviewPanelDock` 등록, `HYDRATED_PANEL_KINDS` 에 `preview` 추가
+- `src/ide/layouts.ts` 에 `previewPanel()` helper, `debug` preset 의 preview 패널 contentComponent `placeholder` → `preview` 로 교체
+- i18n 9 키 추가 (en/ko): preview.title / empty / url_label / url_placeholder / open_external / refresh / device.{desktop,tablet,phone}
+
+**테스트 (`tests/PreviewPanel.test.tsx`, 4 case):**
+- URL 미설정 → empty-state, iframe 없음
+- URL 입력 → iframe.src 반영
+- LocalStorage 영속 (`gapt.ide.preview.ws1` 키)
+- Device chip "Phone" 클릭 → iframe.style.width === "390px"
+
+**Gate:** lint clean (1 issue → generic getByTestId 으로 수정), typecheck clean, 69 web test pass (+4), build 성공 (842 kB / 197 kB gz — 추가 의존성 없음, PreviewPanel 자체는 vanilla React).
+
+#### Plan 카드 대비 변경
+
+- **`{slug}.preview.{domain}` 서브도메인 미적용**: plan 이 "iframe src=`https://{slug}.preview.{domain}/`" 명시. M1-E1 의 Caddy + DNS wildcard 가 production 단계에서 wire-up 됨. 현재 구현은 사용자가 직접 URL 입력 — Vite 의 "Network: http://localhost:5173/" 출력을 그대로 복붙하는 UX. M1-E4 dogfood 단계에서 `https://{slug}.preview.{host}` 자동 채움.
+- **QR 코드 미구현**: plan 의 "QR 코드 (모바일 테스트)" → `qrcode.react` 의존성 추가 비용 대비 가치 작음. 모바일 테스트는 `Open in new tab` + 폰에서 같은 URL 입력. 필요 시 Cycle 3.14 에서 추가.
+- **자동 리프레시 미구현**: plan 의 "watch 재기동 시 트리거" — backend webhook 또는 file watcher 가 필요. 현재는 manual Refresh. M1-E4 에서 backend 가 build/watch 이벤트 emit 시 wire-up.
+- **외부 공유 (cloudflared) 미구현**: plan 의 "외부 공유 토글" — backend cloudflared/ngrok 통합 의존. 별도 cycle / M2.
+- **iframe sandbox 결정**: plan 명시 없음. 사용자의 자신의 sandbox dev server 만 대상이라 capability 제한 불필요 — file:// 또는 untrusted URL 입력 시 브라우저 자체 same-origin 정책이 작동.
 ### Cycle 3.13 — CI / Audit / Logs 패널 (대기)
 ### Cycle 3.14 — PWA + 다크 모드 + 접근성 (대기)
 

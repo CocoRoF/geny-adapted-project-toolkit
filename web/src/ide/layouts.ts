@@ -50,6 +50,15 @@ function chatPanel(id: string = "chat", title: string = "Chat") {
   };
 }
 
+function previewPanel(id: string = "preview", title: string = "Preview") {
+  return {
+    id,
+    contentComponent: "preview",
+    title,
+    params: { workspaceId: "", kind: "preview" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -170,7 +179,7 @@ const DEBUG: SerializedDockview = {
     tree: treePanel(),
     editor: editorPanel(),
     terminal: placeholder("terminal", "Terminal", "terminal"),
-    preview: placeholder("preview", "Preview", "preview"),
+    preview: previewPanel(),
   },
   activeGroup: "editor-group",
 };
