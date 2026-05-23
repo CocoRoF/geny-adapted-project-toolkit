@@ -8,7 +8,7 @@ import {
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
-import { PanelPlaceholder } from "@/ide/panels";
+import { FileTreePanel, PanelPlaceholder } from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
 
@@ -41,6 +41,9 @@ function writeStored(workspaceId: string, value: StoredLayout): void {
 
 const components = {
   placeholder: (props: IDockviewPanelProps<{ kind: string }>) => <PanelPlaceholder {...props} />,
+  tree: (
+    props: IDockviewPanelProps<{ workspaceId: string; onOpenFile?: (path: string) => void }>,
+  ) => <FileTreePanel {...props} />,
 };
 
 interface Props {
@@ -66,7 +69,24 @@ export function DockviewShell({ workspaceId }: Props) {
       const stored = readStored(workspaceId);
       const layout =
         next === "custom" && stored?.customSnapshot ? stored.customSnapshot : PRESETS[next];
-      api.fromJSON(layout);
+      // Inject the live workspaceId into any tree-typed panel before
+      // hydration — the layout snapshot was authored with a blank id.
+      const hydrated = {
+        ...layout,
+        panels: Object.fromEntries(
+          Object.entries(layout.panels).map(([id, panel]) => {
+            if (panel.contentComponent !== "tree") return [id, panel];
+            return [
+              id,
+              {
+                ...panel,
+                params: { ...panel.params, workspaceId },
+              },
+            ];
+          }),
+        ),
+      };
+      api.fromJSON(hydrated);
     },
     [workspaceId],
   );

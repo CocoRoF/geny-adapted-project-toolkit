@@ -193,6 +193,4 @@ async def me(
         OrgMembershipResponse(org_id=org.id, org_slug=org.slug, role=membership.role.value)
         for membership, org in rows
     ]
-    return MeResponse(
-        user_id=user.id, email=user.email, display_name=user.display_name, orgs=orgs
-    )
+    return MeResponse(user_id=user.id, email=user.email, display_name=user.display_name, orgs=orgs)

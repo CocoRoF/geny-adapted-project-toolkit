@@ -142,7 +142,41 @@
 - **헤더 cost/sandbox 미구현**: plan 이 "헤더: Project ▼ / Workspace ▼ / env: dev / cost: $0.42 (라이브)" 명시. 비용 표시는 Cycle 3.10 (cost panel), sandbox status 는 Cycle 3.13 (CI/Audit).
 - **status bar 미구현**: plan 이 "상태바: CPU / Mem / sandbox status" 명시. Cycle 3.10/3.13 에서 추가.
 - **번들 크기 경고**: dockview 가 ~330 kB 차지하여 빌드 chunk 가 500 kB 초과. Cycle 3.14 (PWA) 에서 dynamic import + manual chunking 으로 분할 예정. M1 dogfood 단계에서는 single-bundle 로 충분.
-### Cycle 3.4 — 파일 트리 (대기)
+### Cycle 3.4 — 파일 트리 (✅ 완료 — *this commit*)
+
+[plan §3.4](../../plan/m1/e3_web_ide_shell.md#cycle-34-——-파일-트리-1-pr).
+
+**서버 신규 (3 module + 1 test, 8 case):**
+- `server/src/gapt_server/domains/workspaces/files.py` — `WorkspaceFileError` + `TreeEntry` / `FileContent` 데이터클래스 + `list_tree` / `read_file` / `write_file` / `delete_path`. 모두 `SandboxBackend.exec_in` 으로 sandbox 내부에서 실행 → 호스트 FS 노출 없음.
+  - 경로 traversal: `_normalise_relative` 가 `..` 세그먼트 거부, root prefix 검증. `find -P` 로 심볼릭 링크 추적 안 함.
+  - 자원 한도: tree 결과 `MAX_ENTRIES=2000`, 파일 읽기 `MAX_FILE_BYTES=1 MiB`.
+  - 바이너리 처리: cat 결과에 U+FFFD 발견 시 `base64 -w 0 --` 로 재실행하여 binary-safe 응답.
+  - write: `mkdir -p` 부모 + `sh -c 'echo $1 | base64 -d > $2'` 패턴 (positional arg 로 shell metacharacter injection 방지).
+- `server/src/gapt_server/routers/workspaces.py` — 4 endpoint 추가: `GET /tree?path=`, `GET /file?path=`, `PUT /file?path=`, `DELETE /file?path=`. 모두 `_workspace_for_fs` 헬퍼로 workspace lookup + 프로젝트 멤버십 확인 + sandbox running 상태 확인 (`workspace.fs.not_running` 409). `_http_from_fs_error` 가 stable code → 적절한 HTTP status mapping (400 traversal, 404 not_found, 413 too_large, 500 기타).
+- `tests/workspaces/test_files.py` (8 case): `..` traversal 거부, 정상 listing 파싱 + 정렬 (dir 먼저), stat 실패 → 404, size > 1 MiB → 413, write 의 mkdir+sh sequence, root path 삭제 거부, rm -d argv 확인.
+- 서버 252 pass (+8), openapi check 통과, 65 KB → 65 KB openapi 스펙.
+
+**클라이언트 신규 (3 module + 1 test, 4 case):**
+- `src/api/files.ts` — `TreeEntry`, `FileContent`, `listTree(wid, path)`, `readFile`, `writeFile`, `deleteFile` (URL encoded path query param).
+- `src/ide/FileTree.tsx` — 재귀적 `<DirNode>` 컴포넌트. `dirs` cache 에 directory 별 state (`collapsed | loading | ready | error`) 보관. 클릭 시 lazy load, 다시 클릭 → collapse, 파일 클릭 → `onOpenFile(path)`. ApiError 면 code surface.
+- `src/ide/panels.tsx` — `<FileTreePanel>` 추가 (dockview panel wrapper). `params.workspaceId` 받아 `<FileTree>` 마운트.
+- `src/ide/layouts.ts` — tree panel 을 `placeholder` → `contentComponent: "tree"` 로 교체. workspaceId 는 runtime hydration.
+- `src/ide/DockviewShell.tsx` — `loadPreset` 이 layout 의 panels 를 hydrate: `contentComponent === "tree"` 인 panel 에 `params.workspaceId` 주입. components 레지스트리에 `tree → <FileTreePanel>` 추가.
+
+**테스트 (`tests/FileTree.test.tsx`, 4 case):**
+- 마운트 시 root 자동 listing (`src` + `README.md` 표시)
+- dir 클릭 → children lazy load (`/src` 호출 → `main.py` 등장)
+- 파일 클릭 → `onOpenFile("/README.md")`
+- 500 응답 → `role="alert"` + code surface
+
+**Gate:** server ruff/mypy clean, 252 server pass, openapi up to date. Web lint/typecheck/format clean, 34 test pass (+4), build 성공 (585 kB / 155 kB gz).
+
+#### Plan 카드 대비 변경
+
+- **가상화 미적용**: plan 이 `@tanstack/react-virtual` 명시. 본 cycle 은 일반 재귀 렌더링 — 1000+ 노드 시 perf 영향 있겠지만 대다수 워크스페이스 트리는 lazy expansion 으로 충분. 가상화는 대형 monorepo 발견 시 추가.
+- **우클릭 메뉴 / 파일 생성 / 이름 변경 미구현**: plan §3.4 의 "새 파일/폴더 / 이름 변경 / 삭제" 컨텍스트 메뉴. 본 cycle 은 read-only 트리 + 클릭으로 파일 open 만. 백엔드 `PUT /file` / `DELETE /file` 는 이미 ship 됨 — UI 만 추후.
+- **git 상태 dot 미구현**: plan 이 "git 상태 dot (modified/added/untracked)" 명시. 백엔드 git status 엔드포인트가 없음 — `gapt_git` 도구는 sandbox 내부에서 LLM 이 호출하지만 UI 가 직접 호출할 엔드포인트는 아직 없음. Cycle 3.13 (CI/Audit panel) 또는 별도 backend cycle 에서.
+- **write/delete UI 미연결**: API 클라이언트 (`writeFile`, `deleteFile`) 는 ship 했지만 UI affordance 는 없음. Cycle 3.5 (Monaco 에디터) 가 자동 저장으로 `writeFile` 호출, Cycle 3.6 (DiffEditor) 가 LLM diff approval 로 호출.
 ### Cycle 3.5 — Monaco 에디터 + 자동 저장 (대기, 2 PR)
 ### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
 ### Cycle 3.7 — xterm.js 터미널 (대기)

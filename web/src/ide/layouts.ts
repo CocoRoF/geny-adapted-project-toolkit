@@ -21,6 +21,17 @@ function placeholder(id: string, title: string, kind: string) {
   };
 }
 
+function treePanel(id: string = "tree", title: string = "Files") {
+  return {
+    id,
+    contentComponent: "tree",
+    title,
+    // `workspaceId` is injected at runtime by `DockviewShell`'s
+    // `onReady` — `params` here is a placeholder we never persist.
+    params: { workspaceId: "", kind: "tree" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -48,7 +59,7 @@ const FOCUS: SerializedDockview = {
     },
   },
   panels: {
-    tree: placeholder("tree", "Files", "tree"),
+    tree: treePanel(),
     editor: placeholder("editor", "Editor", "editor"),
     chat: placeholder("chat", "Chat", "chat"),
   },
@@ -93,7 +104,7 @@ const REVIEW: SerializedDockview = {
     },
   },
   panels: {
-    tree: placeholder("tree", "Files", "tree"),
+    tree: treePanel(),
     diff: placeholder("diff", "Diff", "diff"),
     chat: placeholder("chat", "Chat", "chat"),
     ci: placeholder("ci", "CI", "ci"),
@@ -138,7 +149,7 @@ const DEBUG: SerializedDockview = {
     },
   },
   panels: {
-    tree: placeholder("tree", "Files", "tree"),
+    tree: treePanel(),
     editor: placeholder("editor", "Editor", "editor"),
     terminal: placeholder("terminal", "Terminal", "terminal"),
     preview: placeholder("preview", "Preview", "preview"),

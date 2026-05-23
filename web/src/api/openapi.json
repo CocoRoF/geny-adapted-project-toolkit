@@ -284,6 +284,29 @@
         "title": "EnvironmentResponse",
         "type": "object"
       },
+      "FileContentResponse": {
+        "properties": {
+          "encoding": {
+            "title": "Encoding",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "encoding",
+          "text"
+        ],
+        "title": "FileContentResponse",
+        "type": "object"
+      },
       "GitProvider": {
         "enum": [
           "github",
@@ -768,6 +791,40 @@
         "title": "StoreSecretRequest",
         "type": "object"
       },
+      "TreeEntryResponse": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "kind"
+        ],
+        "title": "TreeEntryResponse",
+        "type": "object"
+      },
       "UpdateProjectRequest": {
         "properties": {
           "compose_profile_dev": {
@@ -923,6 +980,24 @@
         ],
         "title": "WorkspaceStatus",
         "type": "string"
+      },
+      "WriteFileRequest": {
+        "properties": {
+          "content": {
+            "default": "",
+            "maxLength": 2000000,
+            "title": "Content",
+            "type": "string"
+          },
+          "encoding": {
+            "default": "utf-8",
+            "pattern": "^(utf-8|base64)$",
+            "title": "Encoding",
+            "type": "string"
+          }
+        },
+        "title": "WriteFileRequest",
+        "type": "object"
       }
     }
   },
@@ -2206,6 +2281,158 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/file": {
+      "delete": {
+        "operationId": "delete_workspace_path_api_workspaces__workspace_id__file_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Workspace Path",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "get": {
+        "operationId": "read_workspace_file_api_workspaces__workspace_id__file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Workspace File",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "operationId": "write_workspace_file_api_workspaces__workspace_id__file_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteFileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Workspace File",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/start": {
       "post": {
         "operationId": "start_workspace_api_workspaces__workspace_id__start_post",
@@ -2285,6 +2512,62 @@
           }
         },
         "summary": "Stop Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/tree": {
+      "get": {
+        "operationId": "tree_api_workspaces__workspace_id__tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "/",
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TreeEntryResponse"
+                  },
+                  "title": "Response Tree Api Workspaces  Workspace Id  Tree Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tree",
         "tags": [
           "workspaces"
         ]
