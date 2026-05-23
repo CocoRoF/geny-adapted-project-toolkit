@@ -96,7 +96,21 @@
 - **org auto-pick**: plan 은 명시 없음. 본 구현은 사용자가 속한 첫 org 를 기본값으로 셀렉터에 noticed. 다중 org 시 사용자가 직접 선택.
 - **Card density** ([feedback_no_decorative_chrome] 준수): 이모지/장식 없음. display_name + slug + org_id + remote URL + archived 배지만.
 - **archived_at 단순 표시**: plan 은 명시 없음. archived 프로젝트는 카드에 "Archived" 배지 표시. 별도 필터 UI 는 추후.
-### Cycle 3.3 — 워크스페이스 진입 + dockview 레이아웃 (대기, 2 PR)
+### Cycle 3.3 — 워크스페이스 진입 + dockview 레이아웃 (2 PR)
+
+#### PR 1 (3.3a) — 프로젝트 디테일 + 워크스페이스 리스트 (✅ 완료 — *this commit*)
+
+**구성 (3 module + 1 test):**
+- `src/api/workspaces.ts` — `WorkspaceResponse`, `WorkspaceStatus` (`creating | running | paused | stopped | failed | archived`), `listWorkspaces`, `createWorkspace`, `getWorkspace`, `startWorkspace`, `stopWorkspace`, `deleteWorkspace`.
+- `src/routes/NewWorkspaceModal.tsx` — `branch` + optional `worktree_path` 입력, `createWorkspace(pid, input)` 호출, `ApiError` 메시지 surface.
+- `src/routes/ProjectDetail.tsx` — `Promise.all([getProject, listWorkspaces])` 로 헤더 + 워크스페이스 행 렌더. 행 액션: running → Stop, stopped/paused → Start, 모든 상태 → Open(`<Link to="/projects/:pid/w/:wid">`). 액션 응답으로 in-place patch (optimistic refresh 없이).
+- i18n 16 키 추가 (workspaces.create.*, workspaces.actions.*, workspace.status.paused 등).
+
+**테스트 (3 case):** 헤더 + 워크스페이스 행 렌더, Stop 버튼이 상태를 stopped 로 전환, 빈 워크스페이스 → empty-state.
+
+**Gate:** lint clean, typecheck clean, 24 web test pass (+3), build 260 kB / 82 kB gz.
+
+#### PR 2 (3.3b) — dockview shell + 4 프리셋 레이아웃 (대기)
 ### Cycle 3.4 — 파일 트리 (대기)
 ### Cycle 3.5 — Monaco 에디터 + 자동 저장 (대기, 2 PR)
 ### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
