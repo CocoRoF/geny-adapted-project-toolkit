@@ -158,6 +158,19 @@ export const ko: Record<keyof typeof en, string> = {
   "cost.guard_rejected.body": "에이전트가 설정된 가드레일에 도달하여 이번 턴을 중단했습니다.",
   "cost.guard_rejected.dismiss": "닫기",
 
+  // --- Command palette ---
+  "palette.open": "명령 팔레트",
+  "palette.placeholder": "명령 입력…",
+  "palette.empty": "일치 항목 없음.",
+  "palette.section.layout": "레이아웃",
+  "palette.section.navigate": "이동",
+  "palette.section.session": "세션",
+  "palette.action.go_projects": "프로젝트로",
+  "palette.action.go_settings": "설정",
+  "palette.action.toggle_locale": "언어 전환",
+  "palette.action.sign_out": "로그아웃",
+  "palette.shortcut.hint": "⌘K 열기 · Esc 닫기",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

@@ -370,7 +370,45 @@
 - **1초 디바운스 미적용**: plan 이 "1초 디바운스" 명시. 백엔드 `on_cost_update` (Cycle 2.9) 가 POST_TOOL_USE 빈도 (~1 Hz max) 로 자연 디바운스. 클라이언트 추가 throttle 불필요. M2 Redis 단계에서 frequency 가 변하면 wrap.
 - **"더 진행" 정책 완화 가이드 링크 미구현**: plan 이 guard_rejected 모달의 "더 진행 (정책 완화 가이드 링크)" 명시. 본 구현은 Dismiss 만 — 정책 편집 UI 자체가 M1-E4 영역.
 - **cost 헤더가 버튼화**: plan 산출물 표에 `CostHeader.tsx` 명시. 본 구현은 ChatPanel 헤더 안의 `<button>` (별도 컴포넌트 분리 안 함) — Cycle 3.11 명령 팔레트에서 cost 관련 액션 추가 시 분리 고려.
-### Cycle 3.11 — 명령 팔레트 + 단축키 (대기)
+### Cycle 3.11 — 명령 팔레트 + 단축키 (✅ 완료 — *this commit*)
+
+[plan §3.11](../../plan/m1/e3_web_ide_shell.md#cycle-311-——-명령-팔레트--단축키-1-pr).
+
+**의존성 추가:** `cmdk@1.1.1` (Radix-backed command primitive + Dialog).
+
+**구성 (5 module + 1 test, 3 case):**
+- `src/app/providers/palette-context.ts` — `PaletteAction` 인터페이스 (`id / title / section / keywords? / shortcut? / run`) + `PaletteRegistry` (open / close / isOpen / register / list / subscribe) + `usePalette` hook.
+- `src/app/providers/PaletteProvider.tsx` — 상태 관리:
+  - `actions: useRef(Map<id, action>)` — id 충돌 시 replace
+  - `listeners: useRef(Set<callback>)` — 변경 시 subscriber 모두 notify
+  - `Cmd/Ctrl+K` 글로벌 키 핸들러로 toggle, `Esc` 로 close (isOpen 일 때만)
+- `src/app/CommandPalette.tsx` — `cmdk`의 `<Command.Dialog>` 마운트:
+  - `Command.Input` + `Command.List` + `Command.Empty` + `Command.Group` (section 별) + `Command.Item` (title + keywords 합쳐 value, shortcut kbd)
+  - `tick` counter 가 registry 변경 시 리렌더 트리거 (`useEffect`에서 subscribe)
+  - 선택 시 `action.run()` → `palette.close()`
+- `src/app/usePaletteAction.ts` — `usePaletteAction(action)` hook. 컴포넌트 mount 동안만 register, unmount 시 자동 deregister.
+- `src/app/AppPaletteActions.tsx` — 최상위 navigation 액션 (앱 어디서나 호출 가능):
+  - `navigate.projects` → `/projects`
+  - `navigate.settings` → `/settings`
+  - `locale.toggle` → en ↔ ko
+  - `auth.sign_out` → `signOut()`
+- `DockviewShell.tsx` 가 4 layout preset 액션 (`ide.layout.{focus,review,debug,custom}`) 등록 + `Ctrl+Alt+1..4` 키맵 wire-up (workspace 마운트 동안만).
+- `App.tsx` 가 `<PaletteProvider>` 안에 `<AppPaletteActions />` + `<CommandPalette />` + `<AppRouter />` 배치.
+- i18n 12 키 (en/ko): palette.open / placeholder / empty / section.* (layout / navigate / session) / action.* (go_projects / go_settings / toggle_locale / sign_out) / shortcut.hint.
+
+**테스트 (`tests/CommandPalette.test.tsx`, 3 case):**
+- Ctrl+K 가 팔레트 open + 등록된 액션 노출
+- 액션 클릭 → run 호출 + 자동 close
+- Esc → close
+
+**Gate:** lint clean (1 issue → tick 패턴으로 수정), typecheck clean, 65 web test pass (+3), build 성공 (842 kB / 197 kB gz — cmdk + Radix dialog ~50 kB 추가, Cycle 3.14 chunking 으로 분리).
+
+#### Plan 카드 대비 변경
+
+- **파일 검색 + 세션 전환 미구현**: plan §3.11 이 "파일 검색 (워크스페이스 트리)", "세션 전환" 명시. 본 cycle 은 글로벌 navigation + 레이아웃 preset + locale + sign-out 만. 파일 검색은 backend `GET /tree` 를 query 기반으로 확장해야 함 (현재는 폴더 listing 만). 세션 전환은 `/api/projects/:pid/sessions` 가 이미 있으므로 ChatPanel 안에서 등록 가능 — Cycle 3.13 또는 별도 follow-up.
+- **shortcut 표시 = visual only**: `kbd` 가 액션 옆에 표시되지만 실제 키 처리는 dockview-shell 안에서. cmdk 의 `shortcut` prop 은 visual hint only — global 키 dispatch 는 우리가 직접 wire-up 해야 함. dockview shell 의 Ctrl+Alt+1-4 가 그 예.
+- **action registration = render time**: 액션 등록이 컴포넌트 mount 동안만 유효 → 다른 페이지에 가면 그 페이지의 액션은 사라짐. 의도적 — context-aware 팔레트. plan 의 "모든 액션이 팔레트에서 도달 가능" 은 *현재 컨텍스트의* 모든 액션을 의미.
+- **cmdk Dialog 의 a11y title**: cmdk 가 Radix Dialog 위에 빌드 → `<DialogTitle>` 요구. `title` prop 사용 (cmdk 가 visually-hidden 으로 wrap). `description` prop 은 cmdk 1.x 에서 지원 안 됨 — 경고는 dev-only warning 으로 무시 가능.
 ### Cycle 3.12 — 프리뷰 iframe + 외부 공유 (대기)
 ### Cycle 3.13 — CI / Audit / Logs 패널 (대기)
 ### Cycle 3.14 — PWA + 다크 모드 + 접근성 (대기)

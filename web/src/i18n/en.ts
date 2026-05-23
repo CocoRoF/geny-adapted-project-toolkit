@@ -159,6 +159,19 @@ export const en = {
   "cost.guard_rejected.body": "The agent paused this turn because it hit a configured guard rail.",
   "cost.guard_rejected.dismiss": "Dismiss",
 
+  // --- Command palette ---
+  "palette.open": "Command palette",
+  "palette.placeholder": "Type a command…",
+  "palette.empty": "No matches.",
+  "palette.section.layout": "Layout",
+  "palette.section.navigate": "Navigate",
+  "palette.section.session": "Session",
+  "palette.action.go_projects": "Go to projects",
+  "palette.action.go_settings": "Settings",
+  "palette.action.toggle_locale": "Switch language",
+  "palette.action.sign_out": "Sign out",
+  "palette.shortcut.hint": "⌘K to open · Esc to close",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

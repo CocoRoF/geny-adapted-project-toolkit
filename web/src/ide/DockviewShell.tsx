@@ -7,6 +7,7 @@ import {
 } from "dockview";
 
 import { useI18n } from "@/app/providers/i18n-context";
+import { usePaletteAction } from "@/app/usePaletteAction";
 import { EditorBus, EditorBusContext } from "@/ide/editor-store";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
 import { ChatPanelDock, EditorPanel, FileTreePanel, PanelPlaceholder } from "@/ide/panels";
@@ -70,6 +71,51 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
   // Each shell instance owns its own bus — multiple workspaces in
   // the same browser session don't cross-talk.
   const editorBus = useMemo(() => new EditorBus(), []);
+
+  // Register the layout presets as palette actions while this shell
+  // is mounted. Plan §3.11 calls for Ctrl+Alt+1..4 shortcuts as
+  // well — registered alongside.
+  usePaletteAction({
+    id: "ide.layout.focus",
+    title: t("ide.layout.focus"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⌥1",
+    run: () => setPreset("focus"),
+  });
+  usePaletteAction({
+    id: "ide.layout.review",
+    title: t("ide.layout.review"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⌥2",
+    run: () => setPreset("review"),
+  });
+  usePaletteAction({
+    id: "ide.layout.debug",
+    title: t("ide.layout.debug"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⌥3",
+    run: () => setPreset("debug"),
+  });
+  usePaletteAction({
+    id: "ide.layout.custom",
+    title: t("ide.layout.custom"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⌥4",
+    run: () => setPreset("custom"),
+  });
+
+  // Ctrl+Alt+1..4 maps to the four presets.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || !e.altKey) return;
+      const idx = ["1", "2", "3", "4"].indexOf(e.key);
+      if (idx < 0) return;
+      e.preventDefault();
+      setPreset(ALL_PRESETS[idx] ?? "focus");
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const loadPreset = useCallback(
     (next: LayoutPreset) => {
