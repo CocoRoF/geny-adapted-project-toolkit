@@ -13,6 +13,7 @@ from gapt_server.middleware.trace_id import TraceIdMiddleware
 from gapt_server.routers import (
     audit,
     auth,
+    ci,
     deploy,
     health,
     projects,
@@ -85,6 +86,7 @@ def create_app(
     app.include_router(sessions.by_id)
     app.include_router(audit.router)
     app.include_router(deploy.router)
+    app.include_router(ci.router)
     return app
 
 

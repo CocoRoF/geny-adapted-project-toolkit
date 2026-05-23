@@ -143,7 +143,65 @@ curl -b /tmp/cookies.txt -X POST \
 - **TOTP backend stub**: `AcceptAnyCodeVerifier` 가 dev/test default. 실 TOTP 는 `users.totp_secret_encrypted` 컬럼 + `pyotp` 추가 + verifier 구현 (별도 cycle). 412 흐름은 이미 wire-up.
 - **Environment CRUD UI 부재**: 백엔드 `/api/projects/{pid}/environments` 존재하지만 웹 UI 없음 — M1-E3 deferred 카탈로그에 추가.
 - **stream_status JSON shape**: 한 줄 JSON `{"run_id","status","exec_code"}` — Cycle 2.10 의 chat SSE 와 같은 패턴.
-### Cycle 4.3 — CI 결과 polling + UI 통합 (대기)
+### Cycle 4.3 — CI 결과 polling + UI 통합 (✅ 완료 — *this commit*, 스코프 축소)
+
+[plan §4.3](../../plan/m1/e4_integration_dogfood_geny.md#cycle-43-——-ci-결과-polling--ui-통합-1-pr).
+
+**스코프 축소 사유**: plan 의 "ARQ 백그라운드 polling 10s" + "WS `/api/projects/{pid}/ci/stream` 라이브 stream" + "CI 그린 → 채팅에 자동 메시지" 는 ARQ + Redis 가 필요하지만 M1-E1 에서 Redis 의존성을 도입하지 않았음 (M2 로 deferred — 본 progress card 의 누적 drift 참조). 따라서 본 cycle 은 **on-demand GET endpoint + UI panel + manual refresh** 로 축소. SSE 실시간 stream + 채팅 자동 메시지 + GitHub Webhook ingress 는 M2 의 Redis 도입 후 wrap.
+
+**서버 신규 (1 module + 1 setting + 1 test, 4 case):**
+- `settings.py` — `ci_github_token: str | None`. M1 의 서버-wide dev 토큰. M2 가 project 별 SecretVault 룩업으로 교체.
+- `routers/ci.py` — `GET /api/projects/{pid}/ci/runs?branch=&limit=`:
+  - `fetch_project_for` (viewer 이상)
+  - `settings.ci_github_token` 미설정 → 412 `ci.no_token` + 운영자 친화 메시지
+  - `parse_github_repo(project.git_remote_url)` (HTTPS / SSH / bare 형태 지원) — 파싱 실패 → 412 `ci.repo_unparseable`
+  - `GithubProvider(token, repo).list_workflow_runs(branch, limit)`
+  - `GitOperationError` → 502
+- `tests/ci/test_routes.py` (4 case): parser 4 variant, happy path (stub runner), 토큰 미설정 → 412, 비멤버 → 403
+- 서버 282 pass (+4), openapi 갱신 (`/api/projects/{pid}/ci/runs` 추가).
+
+**웹 신규 (2 module + 1 test, 3 case):**
+- `src/api/ci.ts` — `CiRun`, `WorkflowRunStatus`, `listCiRuns(pid, {branch?, limit?})`
+- `src/ci/CiPanel.tsx` — 5 컬럼 테이블 (workflow / branch / status / SHA[:7] / link), 브랜치 필터 input + Refresh 버튼, `ci.no_token` 에러는 `data-error-code` 속성으로 surface (UI 가 추후 친화 메시지로 분기 가능).
+- `src/ide/panels.tsx` 에 `<CiPanelDock>`, `DockviewShell.tsx` components 에 `ci: CiPanelDock` 등록.
+- i18n 19 키 추가 (en/ko): ci.title / loading / empty / refresh / branch / col.* (5) / status.* (7).
+
+**테스트 (`tests/CiPanel.test.tsx`, 3 case):**
+- 정상 응답 → 테이블 + 7자 SHA 표시
+- 빈 응답 → empty-state
+- 412 ci.no_token → role="alert" + data-error-code
+
+**Gate:** server ruff/mypy clean, 282 server pass (+4), openapi up to date. Web lint/typecheck/format clean, 79 web test pass (+3), build 성공 (PWA precache 773 KiB).
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. GitHub 토큰 설정 (dev/test 한정)
+export GAPT_CI_GITHUB_TOKEN="ghp_yourtoken"
+
+# 2. 서버 띄우기
+cd server && uv run uvicorn gapt_server.app:app --port 8001
+
+# 3. 매직 링크 로그인 → 프로젝트 생성 (Cycle 4.2 와 동일 흐름)
+#    git_remote_url 은 `https://github.com/owner/repo.git` 형식 필요.
+
+# 4. CI 호출
+curl -b /tmp/cookies.txt \
+  "http://localhost:8001/api/projects/{pid}/ci/runs?branch=main&limit=10"
+# → 200 [{"id": 123, "name": "CI", "head_branch": "main", "status": "completed_success", ...}, ...]
+
+# 5. 웹 UI 에서: 프로젝트 워크스페이스 진입 → 우측 패널 영역에 CI 패널 드래그 (custom 레이아웃)
+# (현재 review/debug preset 의 default panel slot 에 CI 미배치 — Cycle 4.6/4.8 의 dashboard 합류 시 재배치 예정)
+```
+
+#### Plan 카드 대비 변경 (스코프 축소 명시)
+
+- **ARQ background poller 미구현**: plan 의 "활성 워크스페이스의 PR 브랜치에 대해 10s polling". M1-E1 에서 Redis 의존성 도입 안 했음 → ARQ 사용 불가. M2 의 Redis 도입 cycle 에서 wrap.
+- **`WS .../ci/stream` 미구현**: plan 의 "진행 + 결과 WebSocket stream". 동일하게 ARQ/Redis 의존. 본 cycle 은 manual `Refresh` 버튼.
+- **CI 그린 → 채팅 자동 메시지 미구현**: poller 가 없어 자동화 불가. M2 에서.
+- **GitHub Webhook ingress (`POST /api/integrations/github/webhook`) 미구현**: HMAC 검증 자체는 Cycle 4.1 의 `WebhookTarget` 에 패턴 있지만 ingress 라우터는 별도. 사용자 호스트가 외부 도달 가능한 경우만 의미 — M1 dogfood 단계는 manual polling 으로 충분.
+- **per-project SecretVault token lookup 미구현**: `settings.ci_github_token` 서버-wide dev 토큰만. 멀티 프로젝트 / 멀티 owner 시나리오는 `projects.git_auth_secret_ref` 룩업 추가 (별도 cycle).
+- **review/debug preset 에 CI 패널 자동 배치 안 함**: Cycle 3.13 에서 review preset 의 "ci" slot 을 audit panel 로 교체했음. CI 패널은 dockview component 로 등록되어 있어 사용자가 *custom layout* 으로 드래그 가능. 자동 배치는 dashboard cycle (4.6/4.7) 와 함께 재구성 예정.
 ### Cycle 4.4 — Caddy subdomain 동적 등록 (대기)
 ### Cycle 4.5 — PolicyEngine 4계층 config (대기, 2 PR)
 ### Cycle 4.6 — Audit Dashboard (대기)

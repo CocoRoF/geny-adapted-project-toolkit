@@ -204,6 +204,25 @@ export const ko: Record<keyof typeof en, string> = {
   "theme.dark": "다크",
   "theme.system": "시스템",
 
+  // --- CI panel ---
+  "ci.title": "CI 실행",
+  "ci.loading": "워크플로 실행을 불러오는 중…",
+  "ci.empty": "워크플로 실행 기록이 없습니다.",
+  "ci.refresh": "새로고침",
+  "ci.branch": "브랜치",
+  "ci.col.name": "워크플로",
+  "ci.col.branch": "브랜치",
+  "ci.col.status": "상태",
+  "ci.col.sha": "SHA",
+  "ci.col.link": "링크",
+  "ci.status.queued": "대기",
+  "ci.status.in_progress": "실행 중",
+  "ci.status.completed_success": "성공",
+  "ci.status.completed_failure": "실패",
+  "ci.status.completed_cancelled": "취소됨",
+  "ci.status.completed_neutral": "중립",
+  "ci.status.unknown": "알 수 없음",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

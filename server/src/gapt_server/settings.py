@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     github_oauth_secret_key: str = "github_oauth_client_secret"
     github_oauth_scopes: str = "repo,workflow"
 
+    # --- CI surface (Cycle 4.3) ---
+    # Server-wide GitHub token used by the CI runs endpoint. In M1 this
+    # is the operator-supplied dev token; later cycles look up the
+    # token per project from Secret Vault using
+    # `projects.git_auth_secret_ref`.
+    ci_github_token: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

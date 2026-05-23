@@ -133,6 +133,43 @@
         "title": "CallbackResponse",
         "type": "object"
       },
+      "CiRunResponse": {
+        "properties": {
+          "head_branch": {
+            "title": "Head Branch",
+            "type": "string"
+          },
+          "head_sha": {
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "html_url": {
+            "title": "Html Url",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "head_branch",
+          "head_sha",
+          "status",
+          "html_url"
+        ],
+        "title": "CiRunResponse",
+        "type": "object"
+      },
       "CreateEnvironmentRequest": {
         "properties": {
           "cost_multiplier": {
@@ -1164,6 +1201,19 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WorkflowRunStatus": {
+        "enum": [
+          "queued",
+          "in_progress",
+          "completed_success",
+          "completed_failure",
+          "completed_cancelled",
+          "completed_neutral",
+          "unknown"
+        ],
+        "title": "WorkflowRunStatus",
+        "type": "string"
+      },
       "WorkspaceResponse": {
         "properties": {
           "branch": {
@@ -1868,6 +1918,81 @@
         "summary": "List Project Audit",
         "tags": [
           "audit"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/ci/runs": {
+      "get": {
+        "operationId": "list_ci_runs_api_projects__project_id__ci_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CiRunResponse"
+                  },
+                  "title": "Response List Ci Runs Api Projects  Project Id  Ci Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ci Runs",
+        "tags": [
+          "ci"
         ]
       }
     },

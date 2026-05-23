@@ -1,0 +1,205 @@
+"""HTTP-level tests for `GET /api/projects/{pid}/ci/runs`."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import psycopg
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+
+from gapt_server.app import create_app
+from gapt_server.container import build_container
+from gapt_server.db import models
+from gapt_server.domains.audit.sink import InMemoryAuditSink
+from gapt_server.domains.auth.idp import build_memory_idp
+from gapt_server.domains.sandbox import MockSandboxBackend
+from gapt_server.routers import ci as ci_router
+from gapt_server.routers.auth import set_auth_idp
+from gapt_server.settings import Settings
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from fastapi import FastAPI
+
+    from gapt_server.domains.auth.idp import MagicLinkIdp
+
+SERVER_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _require_dsn() -> str:
+    dsn = os.environ.get("GAPT_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("GAPT_TEST_POSTGRES_DSN unset")
+    return dsn
+
+
+def _reset_and_upgrade(sync_dsn: str) -> None:
+    with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("DROP SCHEMA public CASCADE")
+        cur.execute("CREATE SCHEMA public")
+    env = os.environ.copy()
+    env["GAPT_POSTGRES_DSN"] = sync_dsn
+    subprocess.run(
+        ["uv", "run", "alembic", "upgrade", "head"],
+        cwd=SERVER_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_parse_github_repo_variants() -> None:
+    """Unit smoke for the URL parser — no DB needed."""
+    f = ci_router.parse_github_repo
+    assert f("https://github.com/cocoroF/geny-adapted-project-toolkit.git") == (
+        "cocoroF/geny-adapted-project-toolkit"
+    )
+    assert f("https://github.com/owner/repo") == "owner/repo"
+    assert f("git@github.com:owner/repo.git") == "owner/repo"
+    assert f("owner/repo") == "owner/repo"
+    assert f("https://example.com/foo/bar") is None
+
+
+@dataclass
+class _Fx:
+    app: FastAPI
+    idp: MagicLinkIdp
+
+
+@pytest_asyncio.fixture
+async def fx() -> AsyncIterator[_Fx]:
+    sync_dsn = _require_dsn()
+    _reset_and_upgrade(sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn, ci_github_token="ghp_testtoken")
+    audit = InMemoryAuditSink()
+    sandbox = MockSandboxBackend()
+    container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+    app = create_app(settings=settings, container=container)
+    idp = build_memory_idp()
+    set_auth_idp(idp)
+    try:
+        yield _Fx(app=app, idp=idp)
+    finally:
+        await container.aclose()
+
+
+async def _login_and_create_project(client: AsyncClient, fx: _Fx, email: str) -> str:
+    await client.post("/api/auth/magic-link", json={"email": email})
+    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
+    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
+    user_id = cb.json()["user_id"]
+
+    container = client._transport.app.state.container  # type: ignore[attr-defined]
+    async with container.session_factory() as db:
+        org_id = (
+            await db.execute(
+                select(models.OrgMembership.org_id).where(models.OrgMembership.user_id == user_id)
+            )
+        ).scalar_one()
+
+    created = await client.post(
+        "/api/projects",
+        json={
+            "org_id": org_id,
+            "slug": "demo",
+            "display_name": "Demo",
+            "git_remote_url": "https://github.com/owner/repo.git",
+        },
+    )
+    return created.json()["id"]
+
+
+def _stub_runner(runs_payload: list[dict[str, object]]):  # type: ignore[no-untyped-def]
+    """Build a runner that returns canned `gh run list --json` output."""
+
+    async def runner(
+        argv: list[str], env: dict[str, str], cwd: str | None
+    ) -> tuple[int, str, str]:
+        if "run" in argv and "list" in argv and "--json" in argv:
+            return (0, json.dumps(runs_payload), "")
+        return (1, "", f"unexpected argv: {argv}")
+
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_list_ci_runs_happy_path(fx: _Fx) -> None:
+    from gapt_server.domains.git import GithubProvider
+
+    canned_runs = [
+        {
+            "databaseId": 1,
+            "displayTitle": "CI / build",
+            "headBranch": "main",
+            "headSha": "abc123",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/owner/repo/actions/runs/1",
+        }
+    ]
+    original = ci_router._build_provider
+
+    def build_with_stub(token: str, repo: str) -> GithubProvider:
+        return GithubProvider(
+            token=token,
+            repo=repo,
+            runner=_stub_runner(canned_runs),
+            gh_binary="/usr/bin/gh-stub",
+        )
+
+    ci_router._build_provider = build_with_stub  # type: ignore[assignment]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+            project_id = await _login_and_create_project(client, fx, "alice@example.com")
+            resp = await client.get(f"/api/projects/{project_id}/ci/runs?limit=5")
+            assert resp.status_code == 200, resp.text
+            rows = resp.json()
+            assert len(rows) == 1
+            assert rows[0]["id"] == 1
+            assert rows[0]["status"] == "completed_success"
+    finally:
+        ci_router._build_provider = original  # type: ignore[assignment]
+
+
+@pytest.mark.asyncio
+async def test_ci_runs_412_when_token_missing() -> None:
+    sync_dsn = _require_dsn()
+    _reset_and_upgrade(sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn)  # ci_github_token omitted
+    audit = InMemoryAuditSink()
+    sandbox = MockSandboxBackend()
+    container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+    app = create_app(settings=settings, container=container)
+    idp = build_memory_idp()
+    set_auth_idp(idp)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            project_id = await _login_and_create_project(client, _Fx(app=app, idp=idp), "a@b.com")
+            resp = await client.get(f"/api/projects/{project_id}/ci/runs")
+            assert resp.status_code == 412
+            assert resp.json()["detail"]["code"] == "ci.no_token"
+    finally:
+        await container.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ci_runs_403_for_non_member(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        await client.post("/api/auth/logout")
+        client.cookies.clear()
+        await client.post("/api/auth/magic-link", json={"email": "mallory@example.com"})
+        token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
+        await client.get(f"/api/auth/magic-link/callback?token={token}")
+        resp = await client.get(f"/api/projects/{project_id}/ci/runs")
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "project.forbidden"

@@ -205,6 +205,25 @@ export const en = {
   "theme.dark": "Dark",
   "theme.system": "System",
 
+  // --- CI panel ---
+  "ci.title": "CI runs",
+  "ci.loading": "Loading workflow runs…",
+  "ci.empty": "No workflow runs.",
+  "ci.refresh": "Refresh",
+  "ci.branch": "Branch",
+  "ci.col.name": "Workflow",
+  "ci.col.branch": "Branch",
+  "ci.col.status": "Status",
+  "ci.col.sha": "SHA",
+  "ci.col.link": "Link",
+  "ci.status.queued": "queued",
+  "ci.status.in_progress": "running",
+  "ci.status.completed_success": "success",
+  "ci.status.completed_failure": "failed",
+  "ci.status.completed_cancelled": "cancelled",
+  "ci.status.completed_neutral": "neutral",
+  "ci.status.unknown": "unknown",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",
