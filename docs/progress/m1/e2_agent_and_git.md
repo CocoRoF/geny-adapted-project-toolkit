@@ -312,23 +312,62 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 - **on_cost_update 콜백 인터페이스**: plan 은 "WebSocket/SSE 로 push" 만 명시. 본 cycle 은 `Optional[Callable[[CostAccumulator], Awaitable[None]]]` 콜백만 — Cycle 2.10 SSE layer 가 `runner_callback = lambda acc: sse_channel.send(acc.snapshot())` 식으로 wrap.
 - **Layer 1 only**: plan 이 "두 레이어 (server + daemon) 동시 발화" 명시. 본 cycle 은 server-side (Layer 1) 만. Layer 2b (daemon MCP bridge) 는 이미 Cycle 2.4 에 PolicyEngine 호출 들어가 있음 (M0-P3 PR4 decision drift 적용). claude_code_cli provider 에서도 daemon-side gate 만으로 enforcement.
 
-### Cycle 2.10 — 세션 API + SSE (대기)
+### Cycle 2.10 — 세션 API + SSE (✅ 완료 — *this commit*)
+
+[plan §2.10](../../plan/m1/e2_agent_and_git.md#cycle-210-——-세션-api--sse-1-pr).
+
+**구성 (3 module + 1 router + 2 test):**
+- `server/src/gapt_server/agent/streaming.py` — `SessionEventKind` StrEnum (text / tool_call / tool_result / cost / error / done), `SessionEvent` (seq, kind, data, ts; `.to_sse()` + `.to_dict()`), `SessionEventBus` (per-session 모놀로닉 시퀀스 + ring-buffer history + `asyncio.Queue` subscriber set + close sentinel).
+- `server/src/gapt_server/agent/session_registry.py` — `SessionRuntime` (pipeline + accumulator + bus + cancellable task), `_run_with_lifecycle` (uncancel + publish error before re-raise — Python 3.12 cancellation guard), `_default_invoke_runner` (Pipeline.run_stream → SessionEvent 매핑, 7-way taxonomy), `SessionRegistry` (process-local dict), `stream_to_async_iter(...)` (replay → live, terminal-in-replay short-circuit, configurable `keepalive_s`).
+- `server/src/gapt_server/routers/sessions.py` — 8 endpoint: `POST /api/projects/{pid}/sessions`, `GET /api/projects/{pid}/sessions`, `GET /api/sessions/{sid}`, `POST /api/sessions/{sid}/invoke` (202), `GET /api/sessions/{sid}/stream` (SSE), `POST /api/sessions/{sid}/interrupt`, `GET /api/sessions/{sid}/messages?since=N`, `POST /api/sessions/{sid}/archive`. 모든 path 가 `_ensure_project_membership` re-check + `exec_code`-aware HTTPException mapping.
+- `container.py` — `AppContainer` 가 이제 `policy_engine`, `env_service`, `session_manager`, `session_registry` 보유. `get_policy_engine` / `get_session_manager` / `get_session_registry` DI helper 추가. `aclose` 가 registry 도 닫음 (모든 runtime → bus 정리).
+
+**Cancellation 처리 (Python 3.12):**
+- `_run_with_lifecycle` 가 `except asyncio.CancelledError` 안에서 `asyncio.current_task().uncancel()` 호출 → 후속 `await runtime.bus.publish(...)` 가 다시 cancel 받지 않음 → error frame 이 SSE 로 발사된 뒤 `raise` 로 task state 가 cancelled 로 종료. 테스트에서 `await asyncio.sleep(0)` 한 번 yield 후 `interrupt()` 호출해야 task 가 sleep 안에 진입한 상태에서 cancel 처리.
+
+**SSE 스트리밍 결정:**
+- `text/event-stream` 으로 `event: <kind>\nid: <seq>\ndata: <json>\n\n` frame. 클라이언트는 `id` 로 reconnect 시 `?since=<seq>` 사용 (M1 in-process, M2 Redis 로 cross-worker).
+- replay 안에서 terminal event (DONE / ERROR) 발견 시 라이브 구독 skip — 이미 끝난 invocation 을 재연결한 클라이언트가 영원히 keepalive 받는 함정 방지.
+- keepalive `:keepalive\n\n` 15초마다 (proxy/timeout 방어). `keepalive_s` 파라미터로 테스트 injection.
+- Cost 푸시: HookRunner 의 `on_cost_update` 콜백이 `runtime.bus.publish(COST, snapshot)` — `POST_TOOL_USE` 가 자연 debounce 역할 (도구 호출당 1회).
+
+**테스트:**
+- `tests/agent/test_streaming.py` (15 test, no DB): SSE frame format, monotonic seq, subscribe/replay/history-limit/close-sentinel, invoke happy path, double-invoke raises, interrupt → error event, idle interrupt → False, crash → error w/ exec_code, registry round-trip, stream replays → live, keepalive injection.
+- `tests/sessions/test_routes.py` (11 test, Postgres): create happy path (hook runner attached), unknown workspace 404, non-member 403, list/get, get 404, invoke + replay messages, invoke endpoint (default runner), interrupt endpoint, invoke 404 missing runtime, archive (DB + registry eviction), SSE stream emits text + done frames.
+
+**Gate:** ruff clean, mypy clean (63 src + 새 test 2 파일), 244 server pass (+26 vs Cycle 2.9), 104 runtime pass, openapi spec 갱신 + check 통과.
+
+#### Plan 카드 대비 변경
+
+- **In-process registry, no Redis**: plan 이 "multi-worker pub/sub" 명시했지만 M1 은 process-local. M2 wire-up 은 `SessionRegistry` 의 dict 를 RedisSessionRegistry 로 교체 + bus.publish 를 `redis.publish(f"session:{sid}", ...)` 로 fan-out 만 하면 됨. `SessionRuntime` 모양은 그대로.
+- **Cost 디바운스 = POST_TOOL_USE 빈도**: plan 이 "1초 디바운스" 명시했지만 실제로는 도구 호출 단위로 자연 발화. UI 가 추가 throttle 원하면 client-side. server-side 명시 디바운스는 M2 (Redis 단계에서 어차피 timing 다시 봐야 함).
+- **`text` event 는 토큰이 아니라 PipelineEvent 매핑 결과**: plan 이 "토큰 청크" 명시. 현재 Pipeline.run_stream 이 stage 단위 이벤트만 emit — 토큰 스트림은 LLM provider 단에서 wrap 되는 추가 stage 가 필요 (M1-E4 dogfood 단계에서 결정). 본 cycle 은 매핑 인프라 + 라우터 + SSE 만 — 이벤트 종류는 `_map_pipeline_event` 한 곳에서 확장.
+- **archive 시 runtime evict 의도적**: archive 후 같은 session_id 로 invoke 가능한지가 plan 에서 모호. 본 cycle 은 archive = registry pop + bus close — DB row 는 ARCHIVED 로 남지만 invoke 다시 못 함 ("새 session 만들어라"). 명확한 라이프사이클.
 
 ## DoD 진행
 
 [Plan 카드](../../plan/m1/e2_agent_and_git.md) DoD 10개:
 
-- [ ] `gapt_default.json` 프로덕션 manifest 가 `gapt_server` 내부에 ship
-- [ ] `POST /api/projects/{pid}/sessions` → AgentSession 생성 + SSE 스트리밍 시작
-- [ ] CLI MCP wrap 으로 `mcp__gapt__gapt_read` / `glob` / `grep` / `edit` 동작
-- [ ] GitHub OAuth Device Flow + workspace 안 git clone (askpass, host FS 토큰 평문 X)
-- [ ] `gapt_git` 도구로 commit/push
-- [ ] `gapt_pr` 도구로 PR 생성
-- [ ] PolicyEngine PRE_TOOL_USE veto 가 MCP bridge 안에서 발화 (Layer 2b)
-- [ ] `exec.*.*` 코드가 audit + UI 응답에 그대로 노출
-- [ ] 세션 cost/token 라이브 카운터 (1초 디바운스)
-- [ ] freshness 정책 (5분/30분/6시간/24시간) ARQ 작업
+- [x] `gapt_default.json` 프로덕션 manifest 가 `gapt_server` 내부에 ship (Cycle 2.1)
+- [x] `POST /api/projects/{pid}/sessions` → AgentSession 생성 + SSE 스트리밍 시작 (Cycle 2.8a + 2.10)
+- [x] CLI MCP wrap 으로 `mcp__gapt__gapt_read` / `glob` / `grep` / `edit` 동작 (Cycle 2.3 + 2.4)
+- [x] GitHub OAuth Device Flow + workspace 안 git clone (askpass, host FS 토큰 평문 X) (Cycle 2.5 + 2.6)
+- [x] `gapt_git` 도구로 commit/push (Cycle 2.7a)
+- [x] `gapt_pr` 도구로 PR 생성 (Cycle 2.7b)
+- [x] PolicyEngine PRE_TOOL_USE veto 가 MCP bridge 안에서 발화 (Layer 2b) (Cycle 2.4 daemon-side, Cycle 2.9 server-side)
+- [x] `exec.*.*` 코드가 audit + UI 응답에 그대로 노출 (Cycle 2.4 / 2.7 / 2.9 / 2.10)
+- [x] 세션 cost/token 라이브 카운터 (Cycle 2.9 accumulator + Cycle 2.10 SSE `cost` event; 1초 명시 디바운스는 M2 Redis 단계로 이연 — 자연 디바운스 = POST_TOOL_USE 빈도)
+- [x] freshness 정책 (30분/6시간/24시간) (Cycle 2.8b; ARQ wire-up 은 M2 Redis 도입 후, run_once 인터페이스만 유지)
+
+## M1-E2 종료
+
+M1-E2 (Agent + Git + Sessions) 10 cycle / 12 PR 모두 완료. M1-E3 (Web IDE Shell) 로 진행.
 
 ## Drift (cycle 종료 시 작성)
 
-*(아직 종료되지 않음)*
+각 cycle 의 "Plan 카드 대비 변경" 섹션에 in-line 기록함. 요약:
+
+- **ARQ / Redis 미도입**: freshness ARQ wire-up (Cycle 2.8b), cost 명시 디바운스 (Cycle 2.10), multi-worker session pub/sub (Cycle 2.10) 모두 M2 Redis 단계에 wrap. 인터페이스는 그대로 유지.
+- **Layer 1 정책 게이트 = server-side HookRunner**: SDK provider 용. claude_code_cli 는 Layer 2b (daemon MCP bridge) 가 enforce. 두 곳 동시 등록으로 provider 선택과 무관하게 게이팅.
+- **REQUIRE_USER_APPROVAL = block-with-reason**: interactive confirm 라운드트립은 M1-E4. M1 은 "기본 deny" 우선.
+- **archive = 영구 종료**: archived session 으로 invoke 불가, 새 session 생성 필요. DB row 는 audit 용으로 ARCHIVED 상태 보존.

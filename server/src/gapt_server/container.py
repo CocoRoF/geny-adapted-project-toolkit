@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import (  # noqa: TC002  — dataclass + Depends ins
     async_sessionmaker,
 )
 
+from gapt_server.agent.environment_service import GaptEnvironmentService
+from gapt_server.agent.session_manager import ProjectAwareSessionManager
+from gapt_server.agent.session_registry import SessionRegistry
 from gapt_server.db import create_engine, create_session_factory
 from gapt_server.domains.audit.sink import (
     AuditSink,
@@ -34,6 +37,7 @@ from gapt_server.domains.sandbox import (
     SysboxBackend,
     make_default_client,
 )
+from gapt_server.policy.engine import PolicyEngine
 from gapt_server.settings import Settings, get_settings
 
 
@@ -44,8 +48,13 @@ class AppContainer:
     session_factory: async_sessionmaker[AsyncSession] | None
     audit_sink: AuditSink
     sandbox_backend: SandboxBackend
+    policy_engine: PolicyEngine
+    env_service: GaptEnvironmentService
+    session_manager: ProjectAwareSessionManager
+    session_registry: SessionRegistry
 
     async def aclose(self) -> None:
+        await self.session_registry.aclose()
         await self.audit_sink.aclose()
         if self.engine is not None:
             await self.engine.dispose()
@@ -74,13 +83,23 @@ def build_container(
     if sandbox_backend is None:
         sandbox_backend = _build_default_sandbox(settings)
 
+    env_service = GaptEnvironmentService()
+
     if settings.postgres_dsn is None:
+        sink_noop = audit_sink or NullAuditSink()
+        policy_noop = PolicyEngine(audit_sink=sink_noop)
         return AppContainer(
             settings=settings,
             engine=None,
             session_factory=None,
-            audit_sink=audit_sink or NullAuditSink(),
+            audit_sink=sink_noop,
             sandbox_backend=sandbox_backend,
+            policy_engine=policy_noop,
+            env_service=env_service,
+            session_manager=ProjectAwareSessionManager(
+                env_service=env_service, audit_sink=sink_noop
+            ),
+            session_registry=SessionRegistry(),
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
@@ -101,6 +120,10 @@ def build_container(
         session_factory=factory,
         audit_sink=sink,
         sandbox_backend=sandbox_backend,
+        policy_engine=PolicyEngine(audit_sink=sink),
+        env_service=env_service,
+        session_manager=ProjectAwareSessionManager(env_service=env_service, audit_sink=sink),
+        session_registry=SessionRegistry(),
     )
 
 
@@ -159,6 +182,24 @@ async def get_db_session(
         )
     async with container.session_factory() as session:
         yield session
+
+
+def get_policy_engine(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> PolicyEngine:
+    return container.policy_engine
+
+
+def get_session_manager(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> ProjectAwareSessionManager:
+    return container.session_manager
+
+
+def get_session_registry(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> SessionRegistry:
+    return container.session_registry
 
 
 def attach_container(app: FastAPI, container: AppContainer) -> None:
