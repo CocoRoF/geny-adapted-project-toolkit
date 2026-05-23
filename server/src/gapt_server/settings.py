@@ -44,6 +44,24 @@ class Settings(BaseSettings):
     session_secret: str = "dev-only-secret-change-me"
     daemon_jwt_secret: str = "dev-only-daemon-secret-change-me"
 
+    # --- sandbox / runtime (Cycle 1.7 onwards) ---
+    sandbox_runtime: str = "sysbox-runc"
+    sandbox_image_tag: str = "ghcr.io/cocorof/gapt-runtime:dev"
+    sandbox_daemon_socket: str = "/run/agent.sock"
+    sandbox_daemon_token_ttl_s: int = 900  # 15 minutes
+    sandbox_idle_pause_s: int = 1800  # 30 minutes → paused
+    sandbox_idle_archive_s: int = 86_400  # 24 hours → archive
+
+    # --- arq / background jobs ---
+    arq_queue_name: str = "gapt:default"
+
+    # --- audit ---
+    audit_flush_interval_s: float = 0.5
+    audit_max_batch_size: int = 200
+
+    # --- HTTP trace id ---
+    request_id_header: str = "X-Request-Id"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

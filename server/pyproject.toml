@@ -87,6 +87,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004", "S101"]
+# FastAPI `Depends(...)` is canonically called in default-arg position.
+"src/gapt_server/container.py" = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -47,7 +47,24 @@
 
 - **audit_events 월 파티션 deferred**: Plan §1.1 가 declarative partitioning 명시했으나 0001_init 에서는 plain 테이블로 생성. 이유: PG 의 partitioned table 은 모든 unique constraint 가 partition key 를 포함해야 하므로 `id PRIMARY KEY` 만 두려면 `(id, ts)` 복합 PK 로 바꿔야 함. M1 시점 audit 볼륨이 작아 indices 만으로 충분, 파티셔닝은 audit 볼륨 모니터링 후 0002+ migration 에서 추가. 인덱스 `ix_audit_events_ts` + `ix_audit_events_action_ts` 는 plan 의 query pattern 미리 커버.
 - **users 테이블에 `password_hash` 등 auth 컬럼 없음**: Plan 의 magic-link 흐름은 Cycle 1.3 에서 처리, 이 cycle 은 schema 만. M1-E1 후속 마이그레이션에서 magic-link token / session 테이블 추가될 예정.
-### Cycle 1.2 — 설정 / DI 컨테이너 (대기)
+### Cycle 1.2 — 설정 / DI 컨테이너 (✅ 완료 — *this commit*)
+
+- `settings.py` 확장 — Cycle 1.7+ 에 쓰일 키들 추가: `sandbox_runtime` (`sysbox-runc`), `sandbox_image_tag`, `sandbox_daemon_socket`, `sandbox_daemon_token_ttl_s`, `sandbox_idle_pause_s` (30min), `sandbox_idle_archive_s` (24h), `arq_queue_name`, `audit_flush_interval_s` / `audit_max_batch_size`, `request_id_header`.
+- `container.py` — `AppContainer` 데이터클래스 (settings / engine / session_factory) + `build_container(settings)` 가 `postgres_dsn` 없으면 engine None 으로 booted (테스트 친화), `_coerce_async_dsn` 가 `postgresql://` / `+asyncpg://` 모두 `+psycopg://` 로 정규화. FastAPI `Depends` 3종: `get_container` / `get_app_settings` / `get_db_session` (async generator).
+- `middleware/trace_id.py` — `TraceIdMiddleware` 가 매 요청마다:
+  - 들어오는 `X-Request-Id` 검증 (8~80자, printable ASCII) → 통과 시 echo, 실패/없으면 ULID 생성
+  - `structlog.contextvars.bind_contextvars(trace_id, method, path)` → 핸들러에서 emit 되는 모든 로그가 trace_id 포함
+  - 응답 헤더에 trace_id 첨부, 요청 종료 시 contextvars clear (worker re-use 누수 방지)
+- `app.py` 와이어업 — `create_app(settings, container)` 두 인자, lifespan 이 `container.aclose()` 호출하여 engine dispose, 미들웨어 ordering: TraceId 가 *최외곽* (CORS 보다 먼저) 등록되어 모든 후속 미들웨어 로그도 trace_id 보유.
+- 테스트 추가:
+  - `test_trace_id.py` (4 tests) — generated ULID, echo, malformed 거부, **structlog 출력에서 trace_id 발견**
+  - `test_container.py` (6 tests) — DSN coercion 3종, postgres 없을 때도 부팅 가능, postgres 있으면 engine 생성/dispose, `get_db_session` 에러 메시지, `get_app_settings` Depends, `get_container` fallback path
+- 결과: 18 PASS (이전 8 → +10), coverage 97%, ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **`opentelemetry` 미사용**: pyproject 에 의존성은 있으나 본 cycle 에서는 structlog 만으로 trace_id 처리. OTel exporter 와이어업은 Cycle 1.12 (관측 통합) 또는 후속 PR 로 이월.
+- **per-request `AsyncSession` factory 만 노출**: `get_db_session` 가 async generator yield 패턴. 별도 transactional middleware 는 추가 안 함 — endpoint 가 명시적 `session.commit()` 호출 (도메인 서비스 패턴 일관성).
 ### Cycle 1.3 — D2 Auth: MagicLink IDP (대기)
 ### Cycle 1.4 — D7 Secret Vault (대기)
 ### Cycle 1.5 — D8 Audit Sink (대기)
