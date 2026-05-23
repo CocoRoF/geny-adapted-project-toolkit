@@ -17,6 +17,7 @@ from gapt_server.domains.git.askpass import (
     AskpassToken,
     AskpassTokenStore,
 )
+from gapt_server.domains.git.github_provider import GithubProvider
 from gapt_server.domains.git.provider import (
     GitCloneSpec,
     GitCommitInfo,
@@ -40,6 +41,7 @@ __all__ = [
     "GitPullRequest",
     "GitPushSpec",
     "GitRepoSummary",
+    "GithubProvider",
     "WorkflowRun",
     "WorkflowRunStatus",
 ]

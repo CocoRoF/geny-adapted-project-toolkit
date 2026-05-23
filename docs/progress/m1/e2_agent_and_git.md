@@ -166,7 +166,34 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
   - `test_provider_protocol.py` (6): Mock GitProvider Protocol 만족, Clone/Push spec round-trip, **GitPushSpec 의 plain `force` 필드 *없음* 검증** (코드 강제), WorkflowRunStatus 안정 wire value, GitOperationError code, GitCommitInfo 생성
 - 결과: server 174 PASS (+15), 합 239 PASS. ruff + mypy strict + openapi 그린.
 
-#### PR 2 (2.6b) — GithubProvider (gh CLI subprocess) — 대기
+#### PR 2 (2.6b) — GithubProvider (gh CLI subprocess) (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/git/github_provider.py`:
+  - `GithubProvider` 가 `gh` 서브프로세스 호출 (테스트 가능 `runner` 콜백 주입)
+  - `GH_TOKEN` env 로 토큰 주입 (gh CLI 의 문서 방식) — 호스트 FS 에 credential 파일 생성 안 함
+  - `--json` 모드 우선 사용 (자유 텍스트 파싱 회피)
+  - `list_user_repos`, `clone`, `fetch` (git 직접), `push` (`--force-with-lease` 옵션, plain --force *코드에서 emit 불가능*), `open_pr` (PR URL parse → number 추출 → `get_pr_status` refetch 로 single source of truth), `get_pr_status`, `list_workflow_runs` (status × conclusion → `WorkflowRunStatus` mapping), `get_workflow_run_logs`
+  - 에러 코드: `git.gh_not_found` / `git.gh_failed` / `git.gh_malformed_json` / `git.push_failed` / `git.fetch_failed` / `git.pr_create_unexpected_output`
+- 12 신규 테스트:
+  - `list_user_repos` JSON parsing + argv 검증
+  - `clone` 가 branch/depth/--no-recurse-submodules 정확 전달
+  - `push` 가 `--force-with-lease` 만 emit (plain `--force` *부재 검증*)
+  - `push` 실패 → `git.push_failed`
+  - `open_pr` URL → number → refetch 흐름
+  - `open_pr` unexpected output → `git.pr_create_unexpected_output`
+  - `get_pr_status` MERGED → "merged" lowercase normalize
+  - `list_workflow_runs` 5 status×conclusion 조합 → 5 WorkflowRunStatus mapping
+  - workflow logs round-trip
+  - `gh` exit code 0 아니면 `git.gh_failed`
+  - JSON 모드인데 HTML 응답 → `git.gh_malformed_json`
+  - `gh` PATH 미설치 → `git.gh_not_found`
+  - **모든 호출이 `GH_TOKEN` env 운반 검증** (fake runner 안에 assert)
+- 결과: server 186 PASS (+12), 합 251 PASS. ruff + mypy strict + openapi 그린.
+
+#### Plan 카드 대비 변경
+
+- **`gh` 가 호스트에서 실행**: plan §2.6 는 "컨테이너 데몬에서 실행". 본 cycle 의 `GithubProvider` 는 *control-plane 측* — 컨트롤 플레인이 직접 PR 상태 조회 등 read-only 작업 시 사용. Sandbox 안의 git/gh 실행은 `gapt_git` / `gapt_pr` 도구 (Cycle 2.7) 가 daemon `/exec` 로 위임 — 같은 GithubProvider 인터페이스 재사용, 다만 `runner` 가 daemon RPC 로 swap.
+- **token 평문이 env 에 있음**: gh CLI 의 documented behavior. 프로세스 부모/자식 외부에서 token 노출 안 됨 — 같은 보안 모델 (askpass + 단명).
 ### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)
 ### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
