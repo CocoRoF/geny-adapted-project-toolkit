@@ -132,7 +132,30 @@
 
 - **Redis Streams 미사용**: plan §1.5 가 "Redis Streams로 비동기 flush". 본 cycle 은 in-process `asyncio.Queue`. Redis 의존 도입 (Cycle 1.7 ARQ) 시 swap-in. Protocol 뒤에 있어서 caller 변경 없음.
 - **월 파티션 미준비**: plan 의 audit_events monthly partition 은 Cycle 1.1 Drift 에서 이미 deferred. 본 cycle 은 non-partitioned table 에 batch insert — partition 추가 시 INSERT path 변경 없음 (Postgres declarative partitioning 가 INSERT 를 partition 으로 라우팅).
-### Cycle 1.6 — D1 Project Service CRUD (대기)
+### Cycle 1.6 — D1 Project Service CRUD (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/projects/`:
+  - `service.py` — `ProjectService` (CRUD + Environment CRUD + ownership 검증).
+    - `create` 가 creator 에 OWNER `ProjectMembership` 자동 발급
+    - `list_for_user` 가 membership join → 본인이 멤버인 프로젝트만 반환
+    - `update` ≥ EDITOR, `archive` ≥ ADMIN, `create_environment` ≥ ADMIN
+    - 역할 순서 매핑 (`VIEWER < EDITOR < ADMIN < OWNER`)
+    - `ProjectError` 도메인 에러 + 안정 code (`project.not_found` / `project.forbidden` / `project.role_insufficient` / `project.slug_taken` / `environment.name_taken` / `org.forbidden`)
+    - 모든 mutate 가 `AuditSink` 로 `project.create` / `project.update` / `project.archive` event emit
+- `routers/projects.py` — 7 endpoints (POST/GET/GET id/PATCH/DELETE + 2 env routes), `get_current_user` Depends, slug regex 검증 (`^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$`), Project/EnvironmentResponse 가 view dataclass 에서 빌드, `_http_from_project_error` 가 code → HTTP status 매핑 (404/403/409/400)
+- `app.py` 가 router include
+- 테스트 4개 (`tests/projects/test_routes.py`):
+  - 전체 lifecycle (create → list → get → patch → archive → archived filter + include_archived 토글) + 3개 audit 이벤트 검증
+  - 중복 slug 409
+  - 다른 사용자 (멤버십 없음) 의 list 에서 미노출 + 직접 GET 403
+  - Environment CRUD + 중복 name 409
+- 결과: 49 PASS (이전 45 → +4), ruff + mypy strict 그린
+
+#### Plan 카드 대비 변경
+
+- **rename `service.list` → `list_for_user`**: 메서드명이 builtin `list` 와 충돌, mypy 가 일부 어노테이션을 메서드 참조로 잘못 해석. 동일한 이름의 free function 이 SQLAlchemy mapping 에 잡히는 케이스도 회피.
+- **`include_archived` query param**: plan 명시 안 됐지만 archive 가 soft-delete 의 의미를 가지므로 toggle 필요. default `false` (archived 행 미노출), `?include_archived=true` 로 활성화.
+- **org 등록 별도 endpoint 미구현**: plan 은 D1 Project CRUD 만 명시. Org 는 `_ensure_user` 가 첫 로그인 시 default org 자동 생성 (Cycle 1.3). Org-level CRUD endpoint 는 M2 multi-tenant 시점에 추가.
 ### Cycle 1.7 — D4 Sandbox Controller (Sysbox 어댑터) — 2 PR (대기)
 ### Cycle 1.8 — Workspace 라이프사이클 (대기)
 ### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR (대기)
