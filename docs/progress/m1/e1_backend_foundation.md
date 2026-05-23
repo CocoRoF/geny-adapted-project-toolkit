@@ -168,7 +168,31 @@
   - `test_mock_backend.py` (4): full state machine, docker.sock mount 거부, canned exec response, destroy 후 start 거부
 - 결과: 75 PASS (이전 49 → +26), ruff + mypy strict 그린.
 
-#### PR 2 (1.7b) — SysboxBackend (real docker SDK) — 대기
+#### PR 2 (1.7b) — SysboxBackend (real docker SDK) (✅ 완료 — *this commit*)
+
+- `docker>=7.1` 의존성 추가
+- `gapt_server/domains/sandbox/sysbox_backend.py`:
+  - `SysboxBackend` — docker-py 7.x `DockerClient` 을 injectable 로 받음. `containers.create/start/stop/remove/exec_run` 를 `asyncio.to_thread` 로 async wrap.
+  - `validate_mounts` 가 `create` 첫 줄에서 실행 → 위험 mount 가 docker call 까지 도달 불가
+  - 모든 컨테이너에 `runtime=sysbox-runc` + base labels (`gapt.managed=true`, `gapt.runtime=sysbox-runc`, `gapt.sandbox_id`, `gapt.project_id`, `gapt.workspace_id`) + env (`GAPT_SANDBOX_ID`, `GAPT_PROJECT_ID`, `GAPT_WORKSPACE_ID`) 주입. cgroup v2 limits (`cpu_quota`, `cpu_period`, `mem_limit`, `pids_limit`) 가 `SandboxResources` 에서 매핑.
+  - `wait_for_daemon(ref)` 스텁 — 컨테이너가 `running` 상태에 도달할 때까지 0.5s 폴링, `daemon_healthcheck_timeout_s` (default 60s) 초과 시 `SandboxBackendError`. Cycle 1.9 가 실제 데몬 소켓 + JWT round-trip 로 채움.
+  - `make_default_client()` lazy factory — prod 부팅 경로용. 테스트는 `MagicMock` injection.
+- `mypy.overrides` 에 `docker.*` 추가 (types-docker 가 stale)
+- 테스트 9개 (`test_sysbox_backend.py`) — 전부 `MagicMock` 기반, CI 에 sysbox-runc 불필요:
+  - sysbox runtime + GAPT env + labels 주입 검증
+  - mounts → docker-py volumes shape 변환
+  - `/var/run/docker.sock` mount 시도 → SecurityInvariantError + `containers.create` 호출 0회 (invariant 가 upstream gate)
+  - 전체 lifecycle (start/inspect/stop/destroy) thread-hop 검증
+  - exec_in demux stdout/stderr
+  - wait_for_daemon polling success + timeout
+  - create 예외 wrap
+  - container_id=None → 명확한 에러
+- 결과: 84 PASS (이전 75 → +9), ruff + mypy strict 그린.
+
+##### Plan 카드 대비 변경
+
+- **integration smoke 미작성**: plan §1.7 가 "실제 docker daemon 위에서 컨테이너 부팅" 를 함의. 본 cycle 은 *unit + mock* 만. 실제 Sysbox 통합은 `GAPT_TEST_SANDBOX=1` env 로 gating 하고 별도 `test_sysbox_real.py` 에 (생성 deferred) — CI 가 sysbox-runc 미설치 환경이므로 의도적 분리. M0-P2 의 `poc/sysbox_isolation/` 가 이미 sysbox 부팅 자체는 검증함.
+- **events stream 미구현**: plan 의 `events() — docker events 스트림`. 워크스페이스 lifecycle 코드 (Cycle 1.8) + ARQ 좀비 정리가 실제로 events 를 요구할 때 추가 — 현재 API surface 가 비어있으니 deferred.
 ### Cycle 1.8 — Workspace 라이프사이클 (대기)
 ### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR (대기)
 ### Cycle 1.10 — PolicyEngine 골격 (대기)

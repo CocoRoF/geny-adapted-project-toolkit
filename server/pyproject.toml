@@ -48,6 +48,9 @@ dependencies = [
 
     # Secret vault
     "cryptography>=43.0",
+
+    # Sandbox (D4)
+    "docker>=7.1",
 ]
 
 [project.optional-dependencies]
@@ -114,7 +117,7 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["arq.*", "geny_executor.*"]
+module = ["arq.*", "docker.*", "geny_executor.*"]
 ignore_missing_imports = true
 
 # ---------- pytest ----------

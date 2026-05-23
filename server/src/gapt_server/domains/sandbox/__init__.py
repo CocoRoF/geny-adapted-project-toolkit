@@ -25,6 +25,11 @@ from gapt_server.domains.sandbox.backend import (
     validate_mounts,
 )
 from gapt_server.domains.sandbox.mock_backend import MockSandboxBackend
+from gapt_server.domains.sandbox.sysbox_backend import (
+    SysboxBackend,
+    SysboxBackendConfig,
+    make_default_client,
+)
 
 __all__ = [
     "ExecResult",
@@ -37,6 +42,9 @@ __all__ = [
     "SandboxRef",
     "SandboxResources",
     "SecurityInvariantError",
+    "SysboxBackend",
+    "SysboxBackendConfig",
     "forbidden_mount_paths",
+    "make_default_client",
     "validate_mounts",
 ]
