@@ -282,7 +282,29 @@
 
 - **단일 layer**: plan §1.10 명시 ("이 cycle에선 override 시스템 X"). 4-layer override (built-in / server / org / project) 는 M1-E4. 본 cycle 의 `PolicyEngine` 인터페이스는 그대로 유지되고, 구현체만 layered 로 swap 가능.
 - **2FA flow 미구현**: `REQUIRE_2FA` decision 은 정의됐지만 트리거 path 미구현. plan 의 `deploy.prod` 가 "DENY (user click + 2FA)" 인데, 실제 2FA 플로우는 M1-E3 (Web IDE) 가 가져옴 — 현재는 DENY 가 충분히 보수적.
-### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (대기)
+### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/storage/`:
+  - `volume.py` — `VolumeManager` Protocol + `VolumeRef` 데이터클래스 (`workspace_id` / `bucket` / `path` / `filer_url` + `to_env()` 가 runtime 의 entrypoint script 가 읽을 `GAPT_SEAWEED_*` env 4개 반환)
+  - `InMemoryVolumeManager` (테스트/dev), `FilerVolumeManager` (SeaweedFS filer HTTP API — `POST ?op=mkdir` / `DELETE ?recursive=true` / `GET`)
+  - 인보케이션 invariants: workspace_id 가 26-char Crockford ULID 가 아니면 `volume.invalid_workspace_id`, FilerVolumeManager 가 빈 filer_url 거부 → `volume.filer_url_missing`
+  - `httpx.AsyncClient` factory injection (테스트가 `httpx.MockTransport` 주입)
+- 테스트 15개 (`tests/storage/test_volume.py`):
+  - 7 parametrized invalid workspace_id (빈 문자열 / 짧음 / 길음 / path traversal / mixed-case / Crockford 외 문자 `I`)
+  - in-memory create+delete + env 4종 검증
+  - duplicate create 거부 (`volume.already_exists`)
+  - Filer create POST + `op=mkdir` query 확인
+  - Filer 500 응답 → `volume.filer_failed`
+  - Filer DELETE recursive=true 확인
+  - Filer DELETE 404 idempotent (재시도 안전)
+  - Filer GET exists 200/404 분기
+  - 생성자 empty url 거부
+- 결과: 129 PASS (이전 114 → +15), ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **docker plugin 대신 FUSE-via-entrypoint**: M0-P2 `decision_volume_driver.md` 의 Option B 채택 — runtime image 의 `mount_seaweedfs_workspace` script 가 sandbox boot 시 FUSE mount 를 수행하고, 본 cycle 의 `VolumeManager` 는 **filer 쪽 path 만 관리**. docker plugin 은 운영 복잡도 + Sysbox 와의 호환성 이슈로 보류.
+- **per-workspace bucket 대신 per-workspace path**: plan 은 "Filer collection 단위" 모호하게 명시. 구현은 단일 bucket (`settings.seaweed_bucket`, 기본 `gapt`) 아래 `/<workspace_id>` 디렉토리. 여러 GAPT 인스턴스가 SeaweedFS 클러스터 공유 시에는 bucket 만 분리.
 ### Cycle 1.12 — 통합 + 검증 (대기)
 
 ## DoD 진행
