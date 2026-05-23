@@ -1,29 +1,84 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import App from "@/app/App";
 
-describe("<App />", () => {
-  it("renders the GAPT title", () => {
-    render(<App />);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "GAPT — geny-adapted-project-toolkit",
+// `<AuthProvider>` calls `/api/auth/me` on mount; the result drives
+// the router's first render. Each test stubs `fetch` to control the
+// branch under test.
+
+const ORIGINAL_FETCH = globalThis.fetch;
+
+function mockFetchOnce(handler: (input: RequestInfo | URL, init?: RequestInit) => Response) {
+  globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+    Promise.resolve(handler(input, init)),
+  );
+}
+
+beforeEach(() => {
+  window.history.replaceState({}, "", "/");
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  globalThis.fetch = ORIGINAL_FETCH;
+});
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("<App /> router", () => {
+  it("redirects an unauthenticated visit of `/` to `/login`", async () => {
+    mockFetchOnce(() =>
+      jsonResponse(401, { detail: { code: "auth.session.invalid", reason: "" } }),
     );
+
+    render(<App />);
+
+    const heading = await screen.findByRole("heading", { level: 2 });
+    expect(heading).toHaveTextContent(/Sign in|로그인/);
+    expect(window.location.pathname).toBe("/login");
   });
 
-  it("renders the language switcher with two options", () => {
+  it("renders the projects placeholder once `/me` resolves", async () => {
+    window.history.replaceState({}, "", "/projects");
+    mockFetchOnce(() =>
+      jsonResponse(200, { user_id: "u1", email: "alice@example.com", display_name: null }),
+    );
+
     render(<App />);
-    const select = screen.getByRole("combobox");
-    expect(select).toBeInTheDocument();
-    const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(2);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/Projects|프로젝트/);
+    });
+    // The header surfaces the signed-in email + sign-out affordance.
+    expect(screen.getByRole("button", { name: /alice@example\.com/ })).toBeInTheDocument();
   });
 
-  it("renders the repository link", () => {
-    render(<App />);
-    expect(screen.getByRole("link")).toHaveAttribute(
-      "href",
-      "https://github.com/CocoRoF/geny-adapted-project-toolkit",
+  it("shows the language switcher with two options", async () => {
+    mockFetchOnce(() =>
+      jsonResponse(401, { detail: { code: "auth.session.invalid", reason: "" } }),
     );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox")).toBeInTheDocument();
+    });
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("shows a friendly error banner when `/me` is non-401", async () => {
+    mockFetchOnce(() => jsonResponse(503, { detail: { code: "server.down", reason: "boom" } }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
   });
 });
