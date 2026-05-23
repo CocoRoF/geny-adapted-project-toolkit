@@ -48,7 +48,25 @@
 
 - **`EnvironmentManifest.load()` → `from_dict`**: 위에 명시. 이미 M0-P3 PoC 에서 발견했고 여기서 정식 도입.
 - **strict=True 위치**: plan §2.1 가 "strict=True 로드 + 부팅 시 sanity check". 본 cycle 은 `Pipeline.from_manifest_async(..., strict=True)` 에 위임 — geny-executor 가 manifest 형식/필드 검증을 책임. Server-side 추가 sanity check 는 후속 cycle 에서 PolicyEngine + manifest hook 결합 시 추가.
-### Cycle 2.2 — CredentialBundle 빌더 (대기)
+### Cycle 2.2 — CredentialBundle 빌더 (✅ 완료 — *this commit*)
+
+- `agent/credentials.py`:
+  - `SecretRefMap` — 프로젝트 단위 provider→secret_id 매핑 (anthropic / openai / google / vllm). claude_code_cli 는 별도 ref 불요 (host OAuth 또는 ANTHROPIC_API_KEY env).
+  - `claude_binary(*, override=None)` — 우선순위 override > `CLAUDE_BIN` env > PATH lookup. PATH 미발견 시 `FileNotFoundError`.
+  - `build_claude_code_cli_creds(...)` — `bare_mode=True`, `default_permission_mode`, `timeout_s`, `workspace_root` / `mcp_config` / `settings_path` / `max_budget_usd` / `extra_args` 옵셔널. 미설정 키는 `extras` 에서 빠짐 (geny-executor strict load 통과).
+  - `build_for_session(db, vault, actor_id, secret_refs, ...)` — claude_code_cli 항상 포함, SDK provider 는 매핑된 ref 만 vault 에서 단명 read 후 `del plaintext` 로 노출 윈도우 축소.
+- 7개 신규 테스트 (`tests/agent/test_credentials.py`):
+  - `claude_binary` 3종 경로 (override / env / PATH 미발견 raise)
+  - extras 전체 키 carry + 미설정 시 absent 검증
+  - 통합: Postgres + SecretVault + InMemoryAuditSink
+    - 매핑 없을 때 claude_code_cli 만 포함
+    - 매핑 시 anthropic/openai 평문 carry + google/vllm absent + **vault.read 가 actor_id + `agent_session.{provider}` purpose 로 audit emit 2회** 검증
+- 결과: 147 PASS (이전 140 → +7), ruff + mypy strict + openapi freshness 그린.
+
+#### Plan 카드 대비 변경
+
+- **함수명/시그너처 통일**: plan §2.2 의 `build_for_session(project, workspace, session, secret_vault, daemon_socket, bridge_token)` 시그너처를 본 cycle 은 더 narrow 하게 가져감 — `daemon_socket` / `bridge_token` 은 Cycle 2.3 (MCP bridge) 가 mcp_config 구조 안에 인라인으로 넣을 예정이라 여기서 받지 않음. `project` / `workspace` / `session` 객체 통째 전달도 본 cycle 은 `actor_id` 만 받아 audit 에 쓰는 식으로 가벼움 유지. ProjectAwareSessionManager (Cycle 2.8) 가 wrapper 로 객체→인자 풀어주는 역할.
+- **plaintext zeroize**: plan 명시 "메모리에만, 부팅 후 즉시 zeroize". Python 한계 — `str` 은 true zeroize 불가. `del plaintext` + loop 다음 iter 진입으로 reference 빠르게 drop 하는 best-effort 수준. 모듈 docstring 에 명시.
 ### Cycle 2.3 — MCP stdio bridge 프로덕션화 (대기)
 ### Cycle 2.4 — GaptToolProvider (Read/Glob/Grep/Edit) (대기)
 ### Cycle 2.5 — GitHub OAuth Device Flow (대기)

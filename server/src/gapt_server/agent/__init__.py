@@ -6,10 +6,24 @@ along with a `CredentialBundle`. Sessions, credentials, and
 ProjectAwareSessionManager land in later cycles (2.2 / 2.8 / 2.10).
 """
 
+from gapt_server.agent.credentials import (
+    SecretRefMap,
+    build_claude_code_cli_creds,
+    build_for_session,
+    claude_binary,
+)
 from gapt_server.agent.environment_service import (
     GaptEnvironmentService,
     ManifestNotFoundError,
     ManifestResolution,
 )
 
-__all__ = ["GaptEnvironmentService", "ManifestNotFoundError", "ManifestResolution"]
+__all__ = [
+    "GaptEnvironmentService",
+    "ManifestNotFoundError",
+    "ManifestResolution",
+    "SecretRefMap",
+    "build_claude_code_cli_creds",
+    "build_for_session",
+    "claude_binary",
+]
