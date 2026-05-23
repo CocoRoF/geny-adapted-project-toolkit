@@ -280,7 +280,38 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 - **ARQ wire-up 미구현**: plan §1.7 / §2.8 이 ARQ background jobs 명시. 본 cycle 은 `FreshnessRunner.run_once(db)` 단일 호출 인터페이스만 — pytest 에서 직접 호출, dev CLI 에서도 호출 가능. Redis 의존성 도입 (M2) 시 ARQ task 로 wrap 만 하면 됨 (signature 그대로 유지).
 - **5분 band 없음**: plan 표가 "5분 그대로" 명시했으나 실제로는 "변경 안 함" 의미. 본 cycle 의 첫 transition 은 30 분 — 5 분 band 는 *데이터 모델 변화 없음* 이라 코드 표현 불필요. 30/360/1440 의 3 임계만 명시.
 - **sandbox pause side-effect 분리**: plan §1.7 "30분 idle → paused (TickEngine)" 의 sandbox 실 pause 호출은 `on_pause` callback 인자. 본 cycle 은 callback 인터페이스만 — SandboxBackend.stop 와이어업은 Cycle 2.10 / M2 (ARQ wire).
-### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
+### Cycle 2.9 — HookRunner: Policy + Audit + Cost (✅ 완료 — *this commit*)
+
+[plan §2.9](../../plan/m1/e2_agent_and_git.md#cycle-29-——-hookrunner-policy--audit--cost-—-1-pr).
+
+**구성 (5 module + 1 test):**
+- `server/src/gapt_server/agent/hooks/__init__.py` — public surface (PolicyHookConfig, CostAccumulator, build_*)
+- `policy_hook.py` — `PRE_TOOL_USE` 핸들러. 도구명 → 액션 매핑 (`gapt_git → tool.gapt_git`, …), `Actor(kind=AGENT_SESSION, id=actor_id)` + `Scope(project_id, workspace_id)` 로 `PolicyEngine.evaluate` 호출. ALLOW → passthrough, DENY → `HookOutcome.block("PolicyEngine denied …")`, REQUIRE_USER_APPROVAL/2FA → `HookOutcome.block("'…' requires explicit user confirmation (require_user_approval): …")`. UI 가 메시지 그대로 surface (Cycle 2.10).
+- `audit_hook.py` — `build_audit_hook(...) → (pre, post_ok, post_fail)` 트리플 반환. 각각 `agent.tool_invoke` / `agent.tool_complete` / `agent.tool_failure` 이벤트 emit. scope 에 `session_id` 들어가서 `scope_jsonb->>'session_id'` 조인 가능. POST_TOOL_FAILURE 핸들러는 `details.code` → `exec_code` 매핑 (예: `exec.tool.access_denied`).
+- `cost_hook.py` — `CostAccumulator` 데이터클래스 (`input_tokens`, `output_tokens`, `cost_usd`, `tool_calls`, `tool_duration_ms`, `by_tool: Counter`) + `build_cost_hook(accumulator, on_update?)`. POST_TOOL_USE 핸들러가 `details.{input,output}_tokens / cost_usd / duration_ms` 누적 + optional `on_update(accumulator)` 콜백. `.snapshot()` 반환 dict 는 SSE layer 가 1초 debounce 로 push (Cycle 2.10).
+- `runner.py` — `build_hook_runner(*, engine, audit_sink, actor_id, project_id, workspace_id, session_id, on_cost_update=None) → (HookRunner, CostAccumulator)`. 등록: PRE_TOOL_USE (policy + pre_audit) ×2, POST_TOOL_USE (post_audit_ok + cost) ×2, POST_TOOL_FAILURE (post_audit_fail) ×1.
+
+**HookRunner enabled 이슈 (해결):**
+- geny-executor `HookRunner.enabled = config.enabled AND GENY_ALLOW_HOOKS` env opt-in. env opt-in 은 *subprocess* hook 안전장치인데 in-process 핸들러까지 short-circuit 됨. `build_hook_runner` 내부에서 `env=dict(os.environ) + {GENY_ALLOW_HOOKS=1}` 합성하여 HookRunner 에 주입 (in-process 만 등록하므로 안전, subprocess hook 등록되면 별도 옵트인 필요).
+
+**테스트 (`tests/agent/test_hooks.py`, 8 case, all green):**
+- `test_policy_hook_allows_read_only_tools` — `gapt_read` → ALLOW
+- `test_policy_hook_blocks_secret_create` — `_TOOL_TO_ACTION["gapt_secret_create"] = "secret.create"` 런타임 패치 → DENY 경로 검증
+- `test_policy_hook_blocks_require_user_approval` — `git.push.protected` 매핑 → REQUIRE_USER_APPROVAL → block + "requires explicit user confirmation" reason
+- `test_audit_hook_emits_pre_post_failure` — 3 이벤트 순서/exec_code/duration_ms 검증
+- `test_cost_hook_accumulates_tokens_and_calls_callback` — 3 호출 누적 (`by_tool == {"gapt_read": 2, "gapt_edit": 1}`, `tool_calls==3`, `cost_usd≈0.003`), `on_update` 3회 호출
+- `test_cost_hook_no_callback_still_works`
+- `test_build_hook_runner_registers_all_events` — PRE=2, POST=2, FAIL=1
+- `test_runner_fires_chain_when_allowed` — `runner.fire(PRE_TOOL_USE)` → audit pre 발화, `runner.fire(POST_TOOL_USE)` → cost 누적
+
+**Gate:** ruff/mypy clean (5 src + 1 test 파일), 218 server tests pass (Cycle 2.8b 대비 +8), 104 runtime tests pass, openapi spec up to date.
+
+#### Plan 카드 대비 변경
+
+- **REQUIRE_USER_APPROVAL = block (no interactive flow yet)**: plan §2.9 가 "require → UI 승인 요청" 명시. 본 cycle 은 REQUIRE_* 도 일단 block + reason text 만 — Cycle 2.10 SSE event 가 그 reason 을 client 로 push, M1-E4 가 실제 confirm/deny 라운드트립 추가. 보안적으로 "기본 deny" 우선 (block 후 사용자 unblock 필요).
+- **on_cost_update 콜백 인터페이스**: plan 은 "WebSocket/SSE 로 push" 만 명시. 본 cycle 은 `Optional[Callable[[CostAccumulator], Awaitable[None]]]` 콜백만 — Cycle 2.10 SSE layer 가 `runner_callback = lambda acc: sse_channel.send(acc.snapshot())` 식으로 wrap.
+- **Layer 1 only**: plan 이 "두 레이어 (server + daemon) 동시 발화" 명시. 본 cycle 은 server-side (Layer 1) 만. Layer 2b (daemon MCP bridge) 는 이미 Cycle 2.4 에 PolicyEngine 호출 들어가 있음 (M0-P3 PR4 decision drift 적용). claude_code_cli provider 에서도 daemon-side gate 만으로 enforcement.
+
 ### Cycle 2.10 — 세션 API + SSE (대기)
 
 ## DoD 진행
