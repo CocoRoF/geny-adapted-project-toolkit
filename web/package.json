@@ -17,6 +17,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "dockview": "^6.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

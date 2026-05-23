@@ -177,7 +177,42 @@
 - **우클릭 메뉴 / 파일 생성 / 이름 변경 미구현**: plan §3.4 의 "새 파일/폴더 / 이름 변경 / 삭제" 컨텍스트 메뉴. 본 cycle 은 read-only 트리 + 클릭으로 파일 open 만. 백엔드 `PUT /file` / `DELETE /file` 는 이미 ship 됨 — UI 만 추후.
 - **git 상태 dot 미구현**: plan 이 "git 상태 dot (modified/added/untracked)" 명시. 백엔드 git status 엔드포인트가 없음 — `gapt_git` 도구는 sandbox 내부에서 LLM 이 호출하지만 UI 가 직접 호출할 엔드포인트는 아직 없음. Cycle 3.13 (CI/Audit panel) 또는 별도 backend cycle 에서.
 - **write/delete UI 미연결**: API 클라이언트 (`writeFile`, `deleteFile`) 는 ship 했지만 UI affordance 는 없음. Cycle 3.5 (Monaco 에디터) 가 자동 저장으로 `writeFile` 호출, Cycle 3.6 (DiffEditor) 가 LLM diff approval 로 호출.
-### Cycle 3.5 — Monaco 에디터 + 자동 저장 (대기, 2 PR)
+### Cycle 3.5 — Monaco 에디터 + 자동 저장 (✅ 완료 — *this commit*)
+
+[plan §3.5](../../plan/m1/e3_web_ide_shell.md#cycle-35-——-monaco-에디터--자동-저장-2-pr).
+
+**의존성 추가:** `@monaco-editor/react@4.7.0` (Monaco wrapper + lazy CDN loading).
+
+**구성 (3 module + 1 test):**
+- `src/ide/editor-store.ts` — `EditorBus` (subscribe/emit pub/sub) + `EditorBusContext` + `useEditorBus` hook. 트리 패널이 파일 클릭 시 `bus.emit(path)`, 에디터 패널이 `bus.subscribe(setOpenPath)`. 두 패널이 dockview 의 별도 React root 에 mount 되어 props 로 연결 불가하기 때문에 context 기반 채널 사용.
+- `src/ide/Editor.tsx` — `<FileEditor workspaceId openPath>`:
+  - `useEffect(openPath)` → `readFile(wid, path)` → `DocState{path, encoding, text, status: clean}`
+  - `onChange` → status=dirty + 300 ms debounce setTimeout → `writeFile(wid, path, {content, encoding})` → status=saving → saved | error
+  - 언어 자동 감지 (`LANG_BY_EXT` 매핑 16종: ts/tsx/js/jsx/py/json/md/yaml/toml/sh/rs/go/java/cpp/css/sql ...)
+  - binary 파일 (`encoding === "base64"`): non-editable banner + "open from terminal" 안내
+  - load 실패 (404 등): status=error + ApiError code surface
+  - Monaco options: minimap, automaticLayout, tabSize 2, wordWrap on
+- `src/ide/panels.tsx` — `<EditorPanel>` 추가 + `<FileTreePanel>` 가 `bus.emit(path)` 콜백 wire-up.
+- `src/ide/layouts.ts` — `editorPanel()` helper, `editor` panel 의 contentComponent 를 `placeholder` → `editor` 로 교체.
+- `src/ide/DockviewShell.tsx` — components 레지스트리에 `editor: EditorPanel` 추가. `HYDRATED_PANEL_KINDS = {tree, editor}` — `loadPreset` 가 두 종류 panel 모두에 `workspaceId` 주입. `<EditorBusContext.Provider value={editorBus}>` 로 shell 전체 래핑 (per-workspace instance, 다른 워크스페이스와 cross-talk 없음).
+
+**i18n 8 키 추가** (en/ko): editor.empty / loading / save_failed / binary / dirty / saving / saved.
+
+**테스트 (`tests/Editor.test.tsx`, 4 case):**
+- empty-state (openPath=null)
+- utf-8 파일 load → Monaco stub textarea 에 content 노출
+- base64 응답 → `<editor-binary>` 배너 표시
+- 404 응답 → ApiError code (workspace.fs.not_found) inline
+
+**Gate:** lint clean, typecheck clean, 38 web test pass (+4), build 성공 (646 kB JS / 167 kB gz — Monaco wrapper 가 추가됐지만 Monaco 자체는 lazy CDN). format clean.
+
+#### Plan 카드 대비 변경
+
+- **2 PR → 1 PR**: plan 이 2 PR 명시. 본 구현은 단일 PR (편집 + 자동 저장 + 언어 감지 + binary 처리 + 에러 surface) — Monaco wrapper 가 워낙 간단하여 분할 필요성 없음.
+- **monaco-vim / vscode keybinding 미구현**: plan 이 "Vim/VSCode 키바인딩 프리셋" 명시. Monaco 자체의 기본 키맵만 사용. Vim 프리셋은 `monaco-vim` 별도 의존성, VSCode keybinding 은 Monaco 가 이미 제공 — Cycle 3.14 또는 사용자 요청 시.
+- **1 MB+ 파일 경고 미구현**: plan 이 ">1MB 경고 + lazy load" 명시. 백엔드는 1 MiB 에서 413 반환 (Cycle 3.4 서버 cap) — UI 는 413 → "too_large" code 로 자동 표시. 명시적 경고 모달은 추후.
+- **EditorBus 채택**: plan 산출물에 없음. dockview 의 panel-per-React-root 구조 때문에 도입한 패턴. 추후 Monaco DiffEditor (Cycle 3.6) 도 같은 bus 를 통해 diff 카드를 받음.
+- **언어 자동 감지 16종**: plan 은 "언어 자동 감지 (path → mime)" 명시. 본 구현은 ext-only 매핑 (mime 검색 안 함). 미지 ext → plaintext fallback.
 ### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
 ### Cycle 3.7 — xterm.js 터미널 (대기)
 ### Cycle 3.8 — 채팅 패널 SSE 스트리밍 (대기, 2 PR)

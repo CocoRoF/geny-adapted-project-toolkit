@@ -7,8 +7,9 @@ import {
 } from "dockview";
 
 import { useI18n } from "@/app/providers/i18n-context";
+import { EditorBus, EditorBusContext } from "@/ide/editor-store";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
-import { FileTreePanel, PanelPlaceholder } from "@/ide/panels";
+import { EditorPanel, FileTreePanel, PanelPlaceholder } from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
 
@@ -41,10 +42,11 @@ function writeStored(workspaceId: string, value: StoredLayout): void {
 
 const components = {
   placeholder: (props: IDockviewPanelProps<{ kind: string }>) => <PanelPlaceholder {...props} />,
-  tree: (
-    props: IDockviewPanelProps<{ workspaceId: string; onOpenFile?: (path: string) => void }>,
-  ) => <FileTreePanel {...props} />,
+  tree: (props: IDockviewPanelProps<{ workspaceId: string }>) => <FileTreePanel {...props} />,
+  editor: (props: IDockviewPanelProps<{ workspaceId: string }>) => <EditorPanel {...props} />,
 };
+
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor"]);
 
 interface Props {
   workspaceId: string;
@@ -61,6 +63,9 @@ export function DockviewShell({ workspaceId }: Props) {
   );
   const [preset, setPreset] = useState<LayoutPreset>(initial.preset);
   const apiRef = useRef<DockviewApi | null>(null);
+  // Each shell instance owns its own bus — multiple workspaces in
+  // the same browser session don't cross-talk.
+  const editorBus = useMemo(() => new EditorBus(), []);
 
   const loadPreset = useCallback(
     (next: LayoutPreset) => {
@@ -69,13 +74,19 @@ export function DockviewShell({ workspaceId }: Props) {
       const stored = readStored(workspaceId);
       const layout =
         next === "custom" && stored?.customSnapshot ? stored.customSnapshot : PRESETS[next];
-      // Inject the live workspaceId into any tree-typed panel before
-      // hydration — the layout snapshot was authored with a blank id.
+      // Inject the live workspaceId into every panel that needs it
+      // (`tree`, `editor`) — the layout snapshot was authored with a
+      // blank id placeholder.
       const hydrated = {
         ...layout,
         panels: Object.fromEntries(
           Object.entries(layout.panels).map(([id, panel]) => {
-            if (panel.contentComponent !== "tree") return [id, panel];
+            if (
+              typeof panel.contentComponent !== "string" ||
+              !HYDRATED_PANEL_KINDS.has(panel.contentComponent)
+            ) {
+              return [id, panel];
+            }
             return [
               id,
               {
@@ -117,34 +128,36 @@ export function DockviewShell({ workspaceId }: Props) {
   }
 
   return (
-    <div className="ide-shell">
-      <nav className="ide-shell-toolbar" aria-label="layout presets">
-        {ALL_PRESETS.map((p) => (
+    <EditorBusContext.Provider value={editorBus}>
+      <div className="ide-shell">
+        <nav className="ide-shell-toolbar" aria-label="layout presets">
+          {ALL_PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              aria-pressed={preset === p}
+              onClick={() => setPreset(p)}
+              className={preset === p ? "is-active" : undefined}
+            >
+              {t(`ide.layout.${p}`)}
+            </button>
+          ))}
           <button
-            key={p}
             type="button"
-            aria-pressed={preset === p}
-            onClick={() => setPreset(p)}
-            className={preset === p ? "is-active" : undefined}
+            onClick={() => {
+              window.localStorage.removeItem(storageKey(workspaceId));
+              setPreset("focus");
+              loadPreset("focus");
+            }}
+            className="ide-shell-reset"
           >
-            {t(`ide.layout.${p}`)}
+            {t("ide.layout.reset")}
           </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => {
-            window.localStorage.removeItem(storageKey(workspaceId));
-            setPreset("focus");
-            loadPreset("focus");
-          }}
-          className="ide-shell-reset"
-        >
-          {t("ide.layout.reset")}
-        </button>
-      </nav>
-      <div className="ide-shell-body">
-        <DockviewReact components={components} onReady={onReady} />
+        </nav>
+        <div className="ide-shell-body">
+          <DockviewReact components={components} onReady={onReady} />
+        </div>
       </div>
-    </div>
+    </EditorBusContext.Provider>
   );
 }

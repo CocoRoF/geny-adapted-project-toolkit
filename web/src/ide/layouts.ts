@@ -27,8 +27,17 @@ function treePanel(id: string = "tree", title: string = "Files") {
     contentComponent: "tree",
     title,
     // `workspaceId` is injected at runtime by `DockviewShell`'s
-    // `onReady` — `params` here is a placeholder we never persist.
+    // `loadPreset` — `params` here is a placeholder we never persist.
     params: { workspaceId: "", kind: "tree" },
+  };
+}
+
+function editorPanel(id: string = "editor", title: string = "Editor") {
+  return {
+    id,
+    contentComponent: "editor",
+    title,
+    params: { workspaceId: "", kind: "editor" },
   };
 }
 
@@ -60,7 +69,7 @@ const FOCUS: SerializedDockview = {
   },
   panels: {
     tree: treePanel(),
-    editor: placeholder("editor", "Editor", "editor"),
+    editor: editorPanel(),
     chat: placeholder("chat", "Chat", "chat"),
   },
   activeGroup: "editor-group",
@@ -150,7 +159,7 @@ const DEBUG: SerializedDockview = {
   },
   panels: {
     tree: treePanel(),
-    editor: placeholder("editor", "Editor", "editor"),
+    editor: editorPanel(),
     terminal: placeholder("terminal", "Terminal", "terminal"),
     preview: placeholder("preview", "Preview", "preview"),
   },

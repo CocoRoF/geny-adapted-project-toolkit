@@ -95,6 +95,13 @@ export const en = {
   "ide.panel.ci": "CI",
   "ide.panel.audit": "Audit",
   "ide.placeholder": "Lands in a later cycle.",
+  "ide.editor.empty": "No file open. Click a file in the tree to start editing.",
+  "ide.editor.loading": "Loading file…",
+  "ide.editor.save_failed": "Could not save the file.",
+  "ide.editor.binary": "This file is binary — open it from a terminal.",
+  "ide.editor.dirty": "● Unsaved",
+  "ide.editor.saving": "Saving…",
+  "ide.editor.saved": "Saved",
 
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.

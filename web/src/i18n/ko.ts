@@ -94,6 +94,13 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.panel.ci": "CI",
   "ide.panel.audit": "Audit",
   "ide.placeholder": "이후 cycle 에서 추가됩니다.",
+  "ide.editor.empty": "열린 파일이 없습니다. 트리에서 파일을 클릭하여 편집을 시작하세요.",
+  "ide.editor.loading": "파일을 불러오는 중…",
+  "ide.editor.save_failed": "파일을 저장하지 못했습니다.",
+  "ide.editor.binary": "바이너리 파일입니다 — 터미널에서 열어주세요.",
+  "ide.editor.dirty": "● 저장 안 됨",
+  "ide.editor.saving": "저장 중…",
+  "ide.editor.saved": "저장됨",
 
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
