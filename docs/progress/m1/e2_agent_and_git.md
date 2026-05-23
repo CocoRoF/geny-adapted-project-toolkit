@@ -1,0 +1,78 @@
+# M1-E2: 에이전트 세션 + Git 통합 — 진행 기록
+
+> Plan: [`../../plan/m1/e2_agent_and_git.md`](../../plan/m1/e2_agent_and_git.md)
+> Status: **in_progress**
+> Started: 2026-05-23
+> Owner: gkfua00 (CocoRoF)
+> Depends on: ✅ M0-P1 (`a4de305`), ✅ M0-P2 (`f468b15`), ✅ M0-P3 (`cd395ca`), ✅ M1-E1 (`72625a1`)
+
+## 진입 조건 검증
+
+- [x] M0-P3 통과 (executor + MCP bridge PoC)
+- [x] M1-E1 통과 (백엔드 토대 — 130 tests, 12 cycles, CI green)
+- [x] [`04_llm_agent_layer.md`](../../04_llm_agent_layer.md) §4.3 manifest / §4.5 MCP / §4.6 PolicyEngine 일독
+- [x] [`05_git_workflow.md`](../../05_git_workflow.md) §5.2 인증 / §5.5 PR 자동화 일독
+- [x] [[reference_geny_executor_v2_1]] 일독 — 21단계, claude_code_cli, MCP 2 boundary, exec.*.* 코드 모두 숙지
+
+## 사전 정정 (M0-P3 PoC 학습 반영)
+
+1. **`EnvironmentManifest.load()` 미존재** — 실제 API 는 `EnvironmentManifest.from_dict(json.loads(path.read_text()))`. plan §2.1 의 `.load()` 표기는 `from_dict` 로 정정해서 구현.
+2. **PolicyEngine PRE_TOOL_USE 가 `claude_code_cli` 에서 발화 안 함** — M0-P3 PR4 의 `decision_two_layer_policy.md` 가 입증. plan §2.9 의 "PRE_TOOL_USE 훅이 `mcp__gapt__*` 호출 시점에 발화" 는 *MCP bridge 안에서* 수행 (Layer 2b). Layer 1 (server-side HookRunner) 은 SDK provider 용으로 남김.
+3. **`_classify_cli_result` 휴리스틱 stream-path 미적용** — M0-P3 PR5 finding. M1-E2 안에서 geny-executor upstream patch 제안할 시점.
+
+## Cycle 진행 로그
+
+### Cycle 2.1 — GaptEnvironmentService + manifest ship (✅ 완료 — *this commit*)
+
+- `server/src/gapt_server/manifests/` 신규 디렉토리, 3 manifest ship:
+  - `gapt_default.json` — production v1. 21 stage, `claude_code_cli` provider, sonnet, max_tokens 8192, max_iterations 10, cost_budget 1.0 USD.
+  - `gapt_planning.json` — Plan/Act 강화. think stage 에 `extended_thinking_budget_tokens=8192`, loop max_iterations_override=20, cost_budget 3.0 USD.
+  - `gapt_review.json` — read-heavy 코드 리뷰. tool stage `read_only_default=true`, hitl `always_confirm_writes=true`, max_iterations 5, cost_budget 0.5 USD.
+- `server/src/gapt_server/agent/environment_service.py`:
+  - `GaptEnvironmentService.resolve(env_id, *, workspace_dir, project_override_path)` 3-tier 해석 (override → workspace-local `.gapt/manifests/{id}.json` → bundled)
+  - `ManifestResolution` 데이터클래스 (source 추적용 — audit 친화)
+  - `ManifestNotFoundError` 가 시도된 모든 path 를 carry
+  - `instantiate_pipeline(env_id, *, credentials, …)` 가 `Pipeline.from_manifest_async(manifest, credentials=..., strict=True)` 호출
+  - **API 정정**: plan §2.1 의 `EnvironmentManifest.load(...)` 는 미존재 → 실제 `EnvironmentManifest.from_dict(json.loads(...))`. inline 주석으로 명시.
+- 테스트 10개 (`tests/agent/test_environment_service.py`):
+  - 3 bundled manifests 존재 + parametrized 로 각각 resolve 성공
+  - unknown env_id → `ManifestNotFoundError` + tried[] 검증
+  - empty/whitespace env_id → 시도 0 paths
+  - project_override 가 bundled 이김
+  - workspace-local 이 bundled 이김
+  - override > workspace-local 우선순위 검증
+  - **`instantiate_pipeline` 실 부팅** — 21-stage 검증 (api / tool 포함)
+- 결과: 140 PASS (이전 130 → +10), ruff + mypy strict 그린, OpenAPI freshness 그린.
+
+#### Plan 카드 대비 변경
+
+- **`EnvironmentManifest.load()` → `from_dict`**: 위에 명시. 이미 M0-P3 PoC 에서 발견했고 여기서 정식 도입.
+- **strict=True 위치**: plan §2.1 가 "strict=True 로드 + 부팅 시 sanity check". 본 cycle 은 `Pipeline.from_manifest_async(..., strict=True)` 에 위임 — geny-executor 가 manifest 형식/필드 검증을 책임. Server-side 추가 sanity check 는 후속 cycle 에서 PolicyEngine + manifest hook 결합 시 추가.
+### Cycle 2.2 — CredentialBundle 빌더 (대기)
+### Cycle 2.3 — MCP stdio bridge 프로덕션화 (대기)
+### Cycle 2.4 — GaptToolProvider (Read/Glob/Grep/Edit) (대기)
+### Cycle 2.5 — GitHub OAuth Device Flow (대기)
+### Cycle 2.6 — GitProvider + GithubProvider — 2 PR (대기)
+### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)
+### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
+### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
+### Cycle 2.10 — 세션 API + SSE (대기)
+
+## DoD 진행
+
+[Plan 카드](../../plan/m1/e2_agent_and_git.md) DoD 10개:
+
+- [ ] `gapt_default.json` 프로덕션 manifest 가 `gapt_server` 내부에 ship
+- [ ] `POST /api/projects/{pid}/sessions` → AgentSession 생성 + SSE 스트리밍 시작
+- [ ] CLI MCP wrap 으로 `mcp__gapt__gapt_read` / `glob` / `grep` / `edit` 동작
+- [ ] GitHub OAuth Device Flow + workspace 안 git clone (askpass, host FS 토큰 평문 X)
+- [ ] `gapt_git` 도구로 commit/push
+- [ ] `gapt_pr` 도구로 PR 생성
+- [ ] PolicyEngine PRE_TOOL_USE veto 가 MCP bridge 안에서 발화 (Layer 2b)
+- [ ] `exec.*.*` 코드가 audit + UI 응답에 그대로 노출
+- [ ] 세션 cost/token 라이브 카운터 (1초 디바운스)
+- [ ] freshness 정책 (5분/30분/6시간/24시간) ARQ 작업
+
+## Drift (cycle 종료 시 작성)
+
+*(아직 종료되지 않음)*

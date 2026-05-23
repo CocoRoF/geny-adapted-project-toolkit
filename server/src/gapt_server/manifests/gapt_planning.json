@@ -1,0 +1,64 @@
+{
+  "name": "gapt-planning",
+  "metadata": {
+    "owner": "gapt",
+    "tags": ["m1-e2", "claude-code-cli", "planning"],
+    "version": "v1",
+    "description": "Plan/Act 강화 — think 단계가 길어지고 loop 가 plan→act 분리."
+  },
+  "stages": [
+    { "order": 1, "name": "input", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 2, "name": "context", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 3, "name": "system", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 4, "name": "guard", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 5, "name": "cache", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    {
+      "order": 6,
+      "name": "api",
+      "active": true,
+      "artifact": "default",
+      "config": {
+        "provider": "claude_code_cli",
+        "model": "sonnet",
+        "max_tokens": 12288
+      },
+      "strategies": {}
+    },
+    { "order": 7, "name": "token", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    {
+      "order": 8,
+      "name": "think",
+      "active": true,
+      "artifact": "default",
+      "config": { "extended_thinking_budget_tokens": 8192 },
+      "strategies": {}
+    },
+    { "order": 9, "name": "parse", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 10, "name": "tool", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 11, "name": "tool_review", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 12, "name": "agent", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 13, "name": "task_registry", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 14, "name": "evaluate", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 15, "name": "hitl", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    {
+      "order": 16,
+      "name": "loop",
+      "active": true,
+      "artifact": "default",
+      "config": { "max_iterations_override": 20 },
+      "strategies": {}
+    },
+    { "order": 17, "name": "emit", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 18, "name": "memory", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 19, "name": "summarize", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 20, "name": "persist", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 21, "name": "yield", "active": true, "artifact": "default", "config": {}, "strategies": {} }
+  ],
+  "tools": {
+    "built_in": [],
+    "external": [],
+    "mcp_servers": []
+  },
+  "max_iterations": 20,
+  "cost_budget_usd": 3.0
+}
