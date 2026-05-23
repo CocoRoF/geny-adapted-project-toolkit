@@ -262,7 +262,24 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
   - archive unknown → `session.not_found`
 - 결과: server 193 PASS (+7), runtime 104 유지, 합 297 PASS. ruff + mypy strict + openapi 그린.
 
-#### PR 2 (2.8b) — freshness policy ARQ jobs — 대기
+#### PR 2 (2.8b) — freshness policy + in-process runner (✅ 완료 — *this commit*)
+
+- `server/src/gapt_server/agent/freshness.py`:
+  - `FreshnessAction` StrEnum: `KEEP_ACTIVE` / `NOTIFY_IDLE` / `PAUSE_SANDBOX` / `ARCHIVE`
+  - `FreshnessThresholds` (default 30 min / 6 h / 24 h) — settings 가 override
+  - `FreshnessPolicy.evaluate(last_active_at, current_status, now) → FreshnessAction` — idempotent (이미 STALE_IDLE 인 세션은 NOTIFY_IDLE 재emit 안 함, STALE_COMPACT 도 PAUSE 재emit 안 함, ARCHIVED 는 항상 KEEP)
+  - `FreshnessRunner.run_once(db, now=None) → dict[action, count]` — DB 쿼리 (ARCHIVED 제외 모든 세션) → policy 평가 → 상태 전이 + audit emit + optional `on_pause` / `on_archive` callback
+  - audit action: `session.idle_notice` / `session.pause` / `session.archive` (actor_type=SYSTEM)
+- 17 신규 테스트:
+  - **9 parametrized band boundary** — 1 min/10 min/29:50 → KEEP, 30 min/1 h → NOTIFY, 6 h/12 h → PAUSE, 24 h/7 days → ARCHIVE
+  - 4 status-aware idempotency (STALE_IDLE / STALE_COMPACT / ARCHIVED skip, custom thresholds)
+  - 4 Postgres-backed runner: 4-band classify sweep + DB status 갱신 + audit emit 3종, on_pause callback fires, on_archive callback fires, ARCHIVED 세션은 sweep 에서 0 count
+
+#### Plan 카드 대비 변경
+
+- **ARQ wire-up 미구현**: plan §1.7 / §2.8 이 ARQ background jobs 명시. 본 cycle 은 `FreshnessRunner.run_once(db)` 단일 호출 인터페이스만 — pytest 에서 직접 호출, dev CLI 에서도 호출 가능. Redis 의존성 도입 (M2) 시 ARQ task 로 wrap 만 하면 됨 (signature 그대로 유지).
+- **5분 band 없음**: plan 표가 "5분 그대로" 명시했으나 실제로는 "변경 안 함" 의미. 본 cycle 의 첫 transition 은 30 분 — 5 분 band 는 *데이터 모델 변화 없음* 이라 코드 표현 불필요. 30/360/1440 의 3 임계만 명시.
+- **sandbox pause side-effect 분리**: plan §1.7 "30분 idle → paused (TickEngine)" 의 sandbox 실 pause 호출은 `on_pause` callback 인자. 본 cycle 은 callback 인터페이스만 — SandboxBackend.stop 와이어업은 Cycle 2.10 / M2 (ARQ wire).
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
 ### Cycle 2.10 — 세션 API + SSE (대기)
 

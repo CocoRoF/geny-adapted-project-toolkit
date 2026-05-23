@@ -17,6 +17,12 @@ from gapt_server.agent.environment_service import (
     ManifestNotFoundError,
     ManifestResolution,
 )
+from gapt_server.agent.freshness import (
+    FreshnessAction,
+    FreshnessPolicy,
+    FreshnessRunner,
+    FreshnessThresholds,
+)
 from gapt_server.agent.session_manager import (
     AgentSessionHandle,
     ProjectAwareSessionManager,
@@ -25,6 +31,10 @@ from gapt_server.agent.session_manager import (
 
 __all__ = [
     "AgentSessionHandle",
+    "FreshnessAction",
+    "FreshnessPolicy",
+    "FreshnessRunner",
+    "FreshnessThresholds",
     "GaptEnvironmentService",
     "ManifestNotFoundError",
     "ManifestResolution",
