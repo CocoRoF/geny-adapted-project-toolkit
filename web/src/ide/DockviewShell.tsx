@@ -11,6 +11,7 @@ import { usePaletteAction } from "@/app/usePaletteAction";
 import { EditorBus, EditorBusContext } from "@/ide/editor-store";
 import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
 import {
+  AuditPanelDock,
   ChatPanelDock,
   EditorPanel,
   FileTreePanel,
@@ -55,9 +56,10 @@ const components = {
     <ChatPanelDock {...props} />
   ),
   preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
+  audit: (props: IDockviewPanelProps<{ projectId: string }>) => <AuditPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "preview"]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "preview", "audit", "ci"]);
 
 interface Props {
   workspaceId: string;

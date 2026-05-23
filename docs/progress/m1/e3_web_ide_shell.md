@@ -441,7 +441,49 @@
 - **자동 리프레시 미구현**: plan 의 "watch 재기동 시 트리거" — backend webhook 또는 file watcher 가 필요. 현재는 manual Refresh. M1-E4 에서 backend 가 build/watch 이벤트 emit 시 wire-up.
 - **외부 공유 (cloudflared) 미구현**: plan 의 "외부 공유 토글" — backend cloudflared/ngrok 통합 의존. 별도 cycle / M2.
 - **iframe sandbox 결정**: plan 명시 없음. 사용자의 자신의 sandbox dev server 만 대상이라 capability 제한 불필요 — file:// 또는 untrusted URL 입력 시 브라우저 자체 same-origin 정책이 작동.
-### Cycle 3.13 — CI / Audit / Logs 패널 (대기)
+### Cycle 3.13 — CI / Audit / Logs 패널 (Audit 만 ✅ — *this commit*, CI/Logs 는 M1-E4)
+
+[plan §3.13](../../plan/m1/e3_web_ide_shell.md#cycle-313-——-ci--audit--logs-패널-1-pr).
+
+**스코프 축소 사유**: plan §3.13 은 세 surface 명시:
+- **CI 탭**: GitHub Actions runs 라이브 스트림 (`GET /api/projects/{pid}/ci/runs` + `WS .../runs/{id}/logs`) — backend GitHub Actions 연동 endpoint 없음
+- **Audit 탭**: 세션/프로젝트 이벤트 필터링 — `audit_events` 테이블 + `PostgresAuditSink` 가 M1-E1 부터 populate 중. **이 cycle 에서 ship**.
+- **Logs 탭**: compose 서비스 stdout 라이브 — backend log streaming endpoint 없음
+
+→ Audit panel 만 ship, CI/Logs 는 backend endpoint 가 추가되면 wrap (M1-E4 또는 별도 cycle).
+
+**서버 신규 (1 module + 1 test, 3 case):**
+- `server/src/gapt_server/routers/audit.py` — `GET /api/projects/{pid}/audit` paginated 쿼리:
+  - 필터: `action_prefix`, `outcome` (enum), `since` / `until` (ISO-8601), `limit` (1..500), `offset`
+  - membership: `fetch_project_for` 로 viewer 이상 (workspace/session 과 동일 gate)
+  - JSONB `scope->>'project_id'` 필터 → M1-E1 의 `(ts, scope_jsonb->>project_id)` 복합 인덱스 사용
+  - ts descending sort
+- `tests/audit/test_routes.py` (3): 프로젝트별 listing + ts desc + scope 검증, action_prefix 필터, 비멤버 403
+- 서버 255 pass (+3), openapi 갱신
+
+**웹 신규 (2 module + 1 test, 4 case):**
+- `src/api/audit.ts` — `AuditEntry`, `AuditOutcome`, `listProjectAudit(pid, query)`
+- `src/audit/AuditPanel.tsx` — 테이블 (ts / action / actor / outcome / exec_code), action prefix + outcome 셀렉터 필터, Refresh 버튼. exec_code 는 `title={execMessage(code)}` 로 hover 시 친화 메시지.
+- `src/ide/panels.tsx` 에 `<AuditPanelDock>` (projectId 받음)
+- `DockviewShell.tsx` components 에 `audit: AuditPanelDock`, `HYDRATED_PANEL_KINDS` 에 audit / ci 추가
+- `layouts.ts`: review preset 의 `ci` panel → `audit` 으로 교체 (CI 자리 audit 로 재배치). `auditPanel()` helper 추가.
+- `tests/ide-layouts.test.ts` 의 review preset 검증을 `ci → audit` 으로 업데이트.
+- i18n 16 키 추가 (en/ko): audit.title / empty / loading / refresh / filter.{action,outcome,outcome.{any,ok,error}}, audit.col.{ts,action,actor,outcome,exec_code}.
+
+**테스트 (`tests/AuditPanel.test.tsx`, 4 case):**
+- 행 렌더 + exec_code surface
+- action_prefix 필터가 URL 쿼리에 반영
+- 빈 응답 → empty-state
+- 500 → role="alert" + code
+
+**Gate:** server 255 pass, openapi check 통과. Web lint clean, typecheck clean, 73 web test pass (+4 audit), build 성공 (851 kB / 199 kB gz), format clean.
+
+#### Plan 카드 대비 변경 (스코프 축소 명시)
+
+- **CI 탭 deferred**: plan 의 "GitHub Actions runs 라이브 스트림" + "WS `.../runs/{id}/logs`" — backend `/api/projects/{pid}/ci/*` endpoint 전무. GitHub Actions API 호출 + WebSocket log relay 가 별도 backend cycle. M1-E4 dogfood 단계에서 실제로 필요해지면 wire-up.
+- **Logs 탭 deferred**: plan 의 "compose 서비스 stdout 라이브" — `SandboxBackend.exec_in` 만으로는 라이브 stream 불가, `docker logs --follow` 또는 별도 log endpoint 필요. Cycle 3.7 (xterm) 와 함께 묶어 backend PTY/log cycle 에서 ship.
+- **검색 + 필터 + 시간대 변경 부분 구현**: action prefix + outcome 만. since/until 백엔드 지원하지만 UI 입력 없음 — 추후 date picker 추가.
+- **Audit 가 review preset 의 ci 자리에 배치**: plan 산출물 표가 4 컴포넌트 명시. 본 cycle 은 AuditPanel 만 — filters 는 AuditPanel 안에 inline (분리할 만큼 복잡 안 함).
 ### Cycle 3.14 — PWA + 다크 모드 + 접근성 (대기)
 
 ## DoD 진행

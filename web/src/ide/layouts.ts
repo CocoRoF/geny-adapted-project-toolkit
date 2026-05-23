@@ -59,6 +59,15 @@ function previewPanel(id: string = "preview", title: string = "Preview") {
   };
 }
 
+function auditPanel(id: string = "audit", title: string = "Audit") {
+  return {
+    id,
+    contentComponent: "audit",
+    title,
+    params: { projectId: "", kind: "audit" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -123,7 +132,7 @@ const REVIEW: SerializedDockview = {
             {
               type: "leaf",
               size: 400,
-              data: { views: ["ci"], activeView: "ci", id: "ci-group" },
+              data: { views: ["audit"], activeView: "audit", id: "audit-group" },
             },
           ],
         },
@@ -134,7 +143,7 @@ const REVIEW: SerializedDockview = {
     tree: treePanel(),
     diff: placeholder("diff", "Diff", "diff"),
     chat: chatPanel(),
-    ci: placeholder("ci", "CI", "ci"),
+    audit: auditPanel(),
   },
   activeGroup: "diff-group",
 };

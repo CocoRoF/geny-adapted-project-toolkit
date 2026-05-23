@@ -20,10 +20,12 @@ describe("dockview layout presets", () => {
     expect(Object.keys(layout.panels).sort()).toEqual(["chat", "editor", "tree"]);
   });
 
-  it("review preset surfaces the diff panel + CI panel", () => {
+  it("review preset surfaces the diff panel + audit panel", () => {
     const layout = PRESETS.review;
     expect(Object.keys(layout.panels)).toContain("diff");
-    expect(Object.keys(layout.panels)).toContain("ci");
+    // Cycle 3.13 swapped the "CI" slot for the audit panel because
+    // CI streaming is deferred to M1-E4. The slot stays available.
+    expect(Object.keys(layout.panels)).toContain("audit");
   });
 
   it("debug preset surfaces the terminal panel", () => {

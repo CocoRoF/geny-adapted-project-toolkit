@@ -182,6 +182,22 @@ export const ko: Record<keyof typeof en, string> = {
   "preview.device.tablet": "태블릿",
   "preview.device.phone": "폰",
 
+  // --- Audit panel ---
+  "audit.title": "감사 로그",
+  "audit.empty": "이 필터에 일치하는 감사 이벤트가 없습니다.",
+  "audit.loading": "감사 이벤트를 불러오는 중…",
+  "audit.refresh": "새로고침",
+  "audit.filter.action": "액션 접두사",
+  "audit.filter.outcome": "결과",
+  "audit.filter.outcome.any": "전체",
+  "audit.filter.outcome.ok": "성공",
+  "audit.filter.outcome.error": "실패",
+  "audit.col.ts": "시간",
+  "audit.col.action": "액션",
+  "audit.col.actor": "주체",
+  "audit.col.outcome": "결과",
+  "audit.col.exec_code": "exec 코드",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

@@ -2,6 +2,7 @@ import { type IDockviewPanelProps } from "dockview";
 import { useEffect, useState } from "react";
 
 import { useI18n } from "@/app/providers/i18n-context";
+import { AuditPanel } from "@/audit/AuditPanel";
 import { ChatPanel } from "@/chat/ChatPanel";
 import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
@@ -30,6 +31,15 @@ export function FileTreePanel(props: IDockviewPanelProps<{ workspaceId: string }
   return (
     <div className="ide-panel-tree" data-panel-kind="tree">
       <FileTree workspaceId={props.params.workspaceId} onOpenFile={(path) => bus.emit(path)} />
+    </div>
+  );
+}
+
+/** Audit panel — read-only view of the project audit feed. */
+export function AuditPanelDock(props: IDockviewPanelProps<{ projectId: string }>) {
+  return (
+    <div className="ide-panel-audit" data-panel-kind="audit">
+      <AuditPanel projectId={props.params.projectId} />
     </div>
   );
 }

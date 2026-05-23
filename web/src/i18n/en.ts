@@ -183,6 +183,22 @@ export const en = {
   "preview.device.tablet": "Tablet",
   "preview.device.phone": "Phone",
 
+  // --- Audit panel ---
+  "audit.title": "Audit",
+  "audit.empty": "No audit events match this filter.",
+  "audit.loading": "Loading audit events…",
+  "audit.refresh": "Refresh",
+  "audit.filter.action": "Action prefix",
+  "audit.filter.outcome": "Outcome",
+  "audit.filter.outcome.any": "Any",
+  "audit.filter.outcome.ok": "ok",
+  "audit.filter.outcome.error": "error",
+  "audit.col.ts": "Time",
+  "audit.col.action": "Action",
+  "audit.col.actor": "Actor",
+  "audit.col.outcome": "Outcome",
+  "audit.col.exec_code": "exec code",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",
