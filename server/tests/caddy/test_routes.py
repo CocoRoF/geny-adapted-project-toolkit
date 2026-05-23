@@ -237,3 +237,35 @@ async def test_preview_403_for_non_member(fx: _Fx) -> None:
 
 
 _ = (new_ulid, enums)  # keep imports alive for future cycles
+
+
+@pytest.mark.asyncio
+async def test_ask_approves_known_workspace_subdomain(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        domain = f"{workspace_id.lower()}.preview.gapt.example"
+        # The ask endpoint must NOT require auth — Caddy calls it
+        # unauthenticated.
+        await client.post("/api/auth/logout")
+        client.cookies.clear()
+        resp = await client.get(f"/api/preview/ask?domain={domain}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"domain": domain}
+
+
+@pytest.mark.asyncio
+async def test_ask_rejects_unknown_slug(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        # No workspace seeded — any slug should return 404 so Caddy
+        # refuses to mint a certificate.
+        resp = await client.get("/api/preview/ask?domain=01k0123456789.preview.gapt.example")
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["code"] == "preview.unknown"
+
+
+@pytest.mark.asyncio
+async def test_ask_rejects_wrong_parent_domain(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        resp = await client.get("/api/preview/ask?domain=evil.elsewhere.com")
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "preview.wrong_domain"

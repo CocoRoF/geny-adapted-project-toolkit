@@ -1,0 +1,71 @@
+# GAPT production Caddyfile.
+#
+# Two responsibilities:
+#   1. Reverse-proxy the apex domain to the FastAPI server.
+#   2. Match wildcard preview subdomains and let GAPT register routes
+#      dynamically via the admin API. The `preview` server below is
+#      the empty container that Cycle 4.4's SubdomainManager
+#      appends routes into.
+#
+# On-demand TLS lets Caddy mint certificates lazily so the operator
+# doesn't pre-register every preview subdomain. The `ask` endpoint
+# points at GAPT — it returns 200 only for slugs that match an
+# active workspace, gating Let's Encrypt registration to legitimate
+# preview hosts.
+
+{
+    email {$ACME_EMAIL}
+    admin 0.0.0.0:2019
+    # The on-demand block applies globally so any host configured
+    # with `tls { on_demand }` consults `ask` before requesting a
+    # cert.
+    on_demand_tls {
+        ask http://server:8088/api/preview/ask
+        interval 2m
+        burst 5
+    }
+}
+
+# ── apex domain — control plane + web UI ──
+{$GAPT_DOMAIN} {
+    encode gzip zstd
+
+    log {
+        output stdout
+        format json
+    }
+
+    handle /api/* {
+        reverse_proxy server:8088
+    }
+
+    handle /metrics {
+        # /metrics is internal-only. Bind your scraper inside the
+        # gapt-prod network instead. Block it at the edge.
+        respond 403
+    }
+
+    handle /health {
+        reverse_proxy server:8088
+    }
+
+    # Web bundle is served by the same FastAPI app in M1 (no separate
+    # static server). Future cycles may add a CDN here.
+    handle {
+        reverse_proxy server:8088
+    }
+}
+
+# ── wildcard preview subdomains ──
+# Server name `preview` matches Cycle 4.4's SubdomainManager which
+# appends routes under /config/apps/http/servers/preview/routes.
+*.{$GAPT_PREVIEW_DOMAIN} {
+    tls {
+        on_demand
+    }
+
+    # The admin API will inject the actual reverse_proxy directives.
+    # Without an injected route this responder catches the host so
+    # the request doesn't blow up before /api/preview/ask runs.
+    respond "GAPT preview not registered" 404
+}

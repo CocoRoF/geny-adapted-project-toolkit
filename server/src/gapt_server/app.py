@@ -96,6 +96,7 @@ def create_app(
     app.include_router(deploy.router)
     app.include_router(ci.router)
     app.include_router(preview.router)
+    app.include_router(preview.ask_router)
     app.include_router(policies.router)
     app.include_router(cost.router)
     app.include_router(metrics.router)

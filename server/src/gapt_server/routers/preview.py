@@ -42,6 +42,56 @@ if TYPE_CHECKING:
 
 router = APIRouter(prefix="/api/workspaces", tags=["preview"])
 
+# Separate router with no auth — Caddy's on-demand TLS hook hits this
+# unauthenticated. Mounted under /api/preview/ask.
+ask_router = APIRouter(prefix="/api/preview", tags=["preview"])
+
+
+@ask_router.get("/ask")
+async def caddy_on_demand_ask(
+    domain: str = Query(min_length=1, max_length=255),
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+) -> dict[str, str]:
+    """Caddy on-demand TLS gate.
+
+    Caddy fires `GET ?domain=foo.preview.example.com` before
+    requesting a certificate; 200 = mint cert, anything else = refuse.
+    We look up the slug portion against the workspaces table and only
+    approve hosts that match an active (non-archived) workspace under
+    the configured preview domain. This is what keeps an attacker
+    from making us mint certs for arbitrary names."""
+    if not settings.caddy_preview_domain:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={"code": "preview.disabled", "reason": "GAPT_CADDY_PREVIEW_DOMAIN unset"},
+        )
+    suffix = f".{settings.caddy_preview_domain}"
+    if not domain.endswith(suffix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "preview.wrong_domain", "reason": f"{domain!r} not under {suffix!r}"},
+        )
+    slug = domain[: -len(suffix)]
+    if not slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "preview.empty_slug", "reason": domain},
+        )
+    # SubdomainManager.register/_workspace_slug both use the
+    # workspace.id (ULID) lowercased — match that.
+    row = (
+        await db.execute(
+            select(models.Workspace).where(models.Workspace.id == slug.upper())
+        )
+    ).scalar_one_or_none()
+    if row is None or row.status.value == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "preview.unknown", "reason": slug},
+        )
+    return {"domain": domain}
+
 
 class RegisterPreviewBody(BaseModel):
     upstream_host: str = Field(min_length=1, max_length=255)

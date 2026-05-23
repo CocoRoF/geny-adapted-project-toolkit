@@ -1,0 +1,21 @@
+# GAPT Prometheus scrape config — single target.
+#
+# The control plane exposes /metrics on the gapt-prod network. We
+# never publish that port at the edge (Caddyfile.prod returns 403
+# for /metrics) — the scraper runs inside the same compose network.
+#
+# Add per-environment targets / federation here if you scale beyond
+# a single VPS.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: gapt-server
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - server:8088
+        labels:
+          service: gapt-server
