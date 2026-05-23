@@ -11,7 +11,11 @@ timezone-aware (`timestamptz`). Enums are native Postgres types — see
 
 from __future__ import annotations
 
-from datetime import datetime
+# `datetime` is read at runtime by SQLAlchemy 2's `mapped_column` via
+# `typing.get_type_hints`, so it cannot move into a TYPE_CHECKING block
+# (per-file-ignore would also work but inline noqa survives stricter
+# selectors).
+from datetime import datetime  # noqa: TC003
 from typing import Any
 
 from sqlalchemy import (
