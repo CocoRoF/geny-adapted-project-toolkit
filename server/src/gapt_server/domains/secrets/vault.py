@@ -18,6 +18,11 @@ from sqlalchemy.exc import IntegrityError
 
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
+from gapt_server.domains.audit.sink import (
+    AuditEvent,
+    AuditSink,
+    NullAuditSink,
+)
 from gapt_server.domains.secrets.backend import (
     SecretBackend,
     SecretBackendError,
@@ -66,8 +71,14 @@ class SecretVault:
     """One vault per process. Multiple backends can be supported by
     composition later; M1 ships a single backend."""
 
-    def __init__(self, backend: SecretBackend) -> None:
+    def __init__(
+        self,
+        backend: SecretBackend,
+        *,
+        audit_sink: AuditSink | None = None,
+    ) -> None:
         self._backend = backend
+        self._audit: AuditSink = audit_sink or NullAuditSink()
 
     # ─────────────────────────────────────────────────────── write ──
 
@@ -157,7 +168,17 @@ class SecretVault:
         except SecretBackendError as exc:
             raise SecretVaultError("secret.read_failed", str(exc)) from exc
 
-        # M1-E1 Cycle 1.5 will replace this with a real audit sink call.
+        await self._audit.log(
+            AuditEvent(
+                action="secret.read",
+                actor_type=enums.AuditActorType.AGENT_SESSION,
+                actor_id=actor_id,
+                outcome=enums.AuditOutcome.OK,
+                scope={"secret_id": secret_id},
+                subject={"key_name": row.key_name, "owner_scope": row.owner_scope.value},
+                payload={"purpose": purpose, "backend": self._backend.name},
+            )
+        )
         logger.info(
             "secret.read",
             secret_id=secret_id,

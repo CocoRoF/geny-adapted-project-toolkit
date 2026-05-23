@@ -23,6 +23,11 @@ from sqlalchemy.ext.asyncio import (  # noqa: TC002  — dataclass + Depends ins
 )
 
 from gapt_server.db import create_engine, create_session_factory
+from gapt_server.domains.audit.sink import (
+    AuditSink,
+    NullAuditSink,
+    PostgresAuditSink,
+)
 from gapt_server.settings import Settings, get_settings
 
 
@@ -31,25 +36,50 @@ class AppContainer:
     settings: Settings
     engine: AsyncEngine | None
     session_factory: async_sessionmaker[AsyncSession] | None
+    audit_sink: AuditSink
 
     async def aclose(self) -> None:
+        await self.audit_sink.aclose()
         if self.engine is not None:
             await self.engine.dispose()
 
 
-def build_container(settings: Settings) -> AppContainer:
+def build_container(
+    settings: Settings,
+    *,
+    audit_sink: AuditSink | None = None,
+) -> AppContainer:
     """Construct the container without performing any I/O.
 
     If `settings.postgres_dsn` is unset, the container is still usable
     for unit tests that don't touch the DB (e.g. /health). DB-dependent
     code paths will raise a clear error when they ask for a session.
+
+    Pass `audit_sink` to inject a custom sink (tests use
+    `InMemoryAuditSink`). When unset, a `PostgresAuditSink` is built
+    against the same engine (or `NullAuditSink` when no DSN).
     """
     if settings.postgres_dsn is None:
-        return AppContainer(settings=settings, engine=None, session_factory=None)
+        return AppContainer(
+            settings=settings,
+            engine=None,
+            session_factory=None,
+            audit_sink=audit_sink or NullAuditSink(),
+        )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
     factory = create_session_factory(engine)
-    return AppContainer(settings=settings, engine=engine, session_factory=factory)
+    sink: AuditSink
+    if audit_sink is not None:
+        sink = audit_sink
+    else:
+        pg_sink = PostgresAuditSink(
+            engine=engine,
+            flush_interval_s=settings.audit_flush_interval_s,
+            max_batch_size=settings.audit_max_batch_size,
+        )
+        sink = pg_sink
+    return AppContainer(settings=settings, engine=engine, session_factory=factory, audit_sink=sink)
 
 
 def _coerce_async_dsn(dsn: str) -> str:
@@ -79,6 +109,10 @@ def get_container(request: Request) -> AppContainer:
 
 def get_app_settings(container: AppContainer = Depends(get_container)) -> Settings:  # noqa: B008
     return container.settings
+
+
+def get_audit_sink(container: AppContainer = Depends(get_container)) -> AuditSink:  # noqa: B008
+    return container.audit_sink
 
 
 async def get_db_session(

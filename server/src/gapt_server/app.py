@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from gapt_server import __version__
 from gapt_server.container import AppContainer, attach_container, build_container
+from gapt_server.domains.audit.sink import PostgresAuditSink
 from gapt_server.logging import configure_logging
 from gapt_server.middleware.trace_id import TraceIdMiddleware
 from gapt_server.routers import auth, health, secrets
@@ -26,6 +27,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         port=settings.port,
         db_configured=container.engine is not None,
     )
+    # PostgresAuditSink needs its flush task started before any handler
+    # runs (otherwise queued events sit until shutdown).
+    if isinstance(container.audit_sink, PostgresAuditSink):
+        container.audit_sink.start()
     try:
         yield
     finally:

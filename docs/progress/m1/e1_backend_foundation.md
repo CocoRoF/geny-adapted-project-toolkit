@@ -111,7 +111,27 @@
 
 - **OS keyring backend 미구현**: plan §1.4 가 `OsKeyringBackend` 1차 + `EncryptedSqliteBackend` fallback. 본 cycle 은 EncryptedSqlite 만 ship — `keyring` 패키지가 헤드리스 컨테이너에서 디폴트 백엔드 없음 + dev/CI 가 일관되게 동작 + Fernet 가 단일 노드 위협 모델에 충분. `SecretBackend` Protocol 뒤에 있어서 keyring 추가 비용 거의 0.
 - **audit_events 직접 기록 미연결**: plan §1.4 "모든 read는 audit 이벤트 `secret.read` 발행". 본 cycle 은 structlog 로 emit. Cycle 1.5 가 `AuditSink` 구현하면 vault 가 hook into 함 — Protocol 인자로 inject 예정 (현재 구조에 swap 거의 0).
-### Cycle 1.5 — D8 Audit Sink (대기)
+### Cycle 1.5 — D8 Audit Sink (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/audit/`:
+  - `masking.py` — `scrub()` regex-based 평문 시크릿 redaction. 7 패턴 (Anthropic / OpenAI old/new / GitHub PAT / GitHub fine-grained / Slack / Bearer). dict/list 재귀.
+  - `sink.py` — `AuditSink` Protocol + 3 구현:
+    - `NullAuditSink` (test 친화 noop)
+    - `InMemoryAuditSink` (test assertion 용)
+    - `PostgresAuditSink` (asyncio.Queue → background flush task → batched INSERT). `start()` / `aclose()` lifecycle, `max_queue_size`/`max_batch_size`/`flush_interval_s` 튜닝. Queue 가득 차면 drop + warning (caller 절대 block 안 함).
+    - 모든 row 가 `masking.scrub` 통과 후 insert — 평문 secret 이 `audit_events.payload` 에 도달 불가.
+  - `AuditAction` 상수 (action 문자열 안정성)
+- `container.py` 가 `AuditSink` 를 1급 의존성으로 hold, `app.lifespan` 이 `PostgresAuditSink.start()` 호출, `aclose()` 가 drain.
+- `routers/secrets.py` `get_vault` 가 audit_sink Depends 로 주입 → `SecretVault.read` 가 `secret.read` 이벤트 emit
+- 테스트 12개:
+  - `test_masking.py` (6 tests): 7 패턴 검증 + dict/list 재귀 + 비-string passthrough
+  - `test_sink.py` (5 tests): Null/InMemory 동작, 200 이벤트 burst 가 모두 보존 + ULID 정렬, secret 패턴이 INSERT 전 scrub, queue-full drop 동작
+- 결과: 45 PASS (이전 33 → +12), ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **Redis Streams 미사용**: plan §1.5 가 "Redis Streams로 비동기 flush". 본 cycle 은 in-process `asyncio.Queue`. Redis 의존 도입 (Cycle 1.7 ARQ) 시 swap-in. Protocol 뒤에 있어서 caller 변경 없음.
+- **월 파티션 미준비**: plan 의 audit_events monthly partition 은 Cycle 1.1 Drift 에서 이미 deferred. 본 cycle 은 non-partitioned table 에 batch insert — partition 추가 시 INSERT path 변경 없음 (Postgres declarative partitioning 가 INSERT 를 partition 으로 라우팅).
 ### Cycle 1.6 — D1 Project Service CRUD (대기)
 ### Cycle 1.7 — D4 Sandbox Controller (Sysbox 어댑터) — 2 PR (대기)
 ### Cycle 1.8 — Workspace 라이프사이클 (대기)

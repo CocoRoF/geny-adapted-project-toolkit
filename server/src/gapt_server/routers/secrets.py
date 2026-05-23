@@ -19,8 +19,9 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from gapt_server.container import get_app_settings, get_db_session
+from gapt_server.container import get_app_settings, get_audit_sink, get_db_session
 from gapt_server.db import enums, models  # noqa: TC001  — pydantic + FastAPI runtime introspection
+from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
 from gapt_server.domains.secrets.backend import EncryptedSqliteBackend
 from gapt_server.domains.secrets.vault import (
     SecretMetadata,
@@ -39,14 +40,17 @@ if TYPE_CHECKING:
 _VAULT: SecretVault | None = None
 
 
-def get_vault(settings: Settings = Depends(get_app_settings)) -> SecretVault:  # noqa: B008
+def get_vault(
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+) -> SecretVault:
     global _VAULT  # noqa: PLW0603
     if _VAULT is None:
         backend = EncryptedSqliteBackend(
             db_path=settings.vault_sqlite_path,
             master_key=settings.vault_master_key,
         )
-        _VAULT = SecretVault(backend)
+        _VAULT = SecretVault(backend, audit_sink=audit_sink)
     return _VAULT
 
 
