@@ -8,6 +8,7 @@ from gapt_runtime.tools.edit import GaptEdit
 from gapt_runtime.tools.git_tool import GaptGit
 from gapt_runtime.tools.glob import GaptGlob
 from gapt_runtime.tools.grep import GaptGrep
+from gapt_runtime.tools.pr_tool import GaptPr
 from gapt_runtime.tools.read import GaptRead
 
 if TYPE_CHECKING:
@@ -36,4 +37,4 @@ class ToolRegistry:
 
 
 def build_default_registry() -> ToolRegistry:
-    return ToolRegistry([GaptRead(), GaptGlob(), GaptGrep(), GaptEdit(), GaptGit()])
+    return ToolRegistry([GaptRead(), GaptGlob(), GaptGrep(), GaptEdit(), GaptGit(), GaptPr()])

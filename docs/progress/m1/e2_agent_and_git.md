@@ -214,7 +214,28 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
   - push feat 행복 + main 거부 + master 거부 + force_with_lease only + 실패 → `git.push.failed` + custom protected branches override
 - 결과: runtime 89 PASS (+24), server 186 유지, 합 275 PASS. ruff + mypy strict 그린.
 
-#### PR 2 (2.7b) — gapt_pr (3 action) — 대기
+#### PR 2 (2.7b) — gapt_pr (3 action) (✅ 완료 — *this commit*)
+
+- `runtime/src/gapt_runtime/tools/pr_tool.py` `GaptPr`:
+  - 3 action: `create` / `review_request` / `merge`
+  - `create`: gh pr create stdout 마지막 줄에서 URL → number parse, metadata 에 `{url, number, draft}` 반환. `--draft` 옵셔널.
+  - `review_request`: gh pr edit `--add-reviewer` / `--add-label` (콤마 join). 둘 다 비면 거부 (의미 없는 호출 차단).
+  - `merge`: 2단계 — `pr view --json baseRefName,headRefName` 으로 base 확인 → protected base (`main` / `master` / `release` / `production`) 이면 `confirm_protected=true` 명시되지 않는 한 `git.pr.merge_protected` 코드로 거부. 통과 시 `pr merge --squash --delete-branch` (strategy: merge/squash/rebase, default squash).
+  - **`gh pr merge --admin` 자체 schema 부재** — required reviews 우회 불가
+  - 에러 코드: `git.pr_create_failed`, `git.pr_create_unexpected_output`, `git.pr_review_request_failed`, `git.pr_view_failed`, `git.pr.merge_protected`, `git.pr_merge_failed`
+- registry 에 GaptPr 등록 → /tools/list 가 6개 도구 (edit/git/glob/grep/**pr**/read)
+- 15 신규 테스트:
+  - unknown action 거부
+  - create: happy URL parse → number → metadata, draft flag, missing title 거부, unexpected output → `git.pr_create_unexpected_output`, gh 실패 → `git.pr_create_failed`
+  - review_request: reviewers+labels argv, 둘 다 비면 거부, invalid number 거부
+  - merge: squash happy (2-call view+merge), main 거부, main with confirm 통과, invalid strategy 거부, view non-JSON → `git.pr_view_failed`, merge 실패 → `git.pr_merge_failed`
+- `test_tools_http.py` names assertion 6개로 갱신
+- 결과: runtime 104 PASS (+15), server 186 유지, 합 290 PASS. ruff + mypy strict + openapi 그린.
+
+#### Plan 카드 대비 변경
+
+- **`--admin` 옵션 미노출**: plan §2.7 가 "merge: PolicyEngine `git.pr.merge` 통과". 본 cycle 은 PolicyEngine wire 전이지만 *schema level 에서 admin override 차단* — code 강제 floor. Cycle 2.9 의 HookRunner 가 protected base 이외의 PolicyEngine 평가 (예: org/project override) 를 추가하면 추가 차단 layered.
+- **`labels` 가 review_request 액션 내에 포함**: plan 은 "review_request: 라벨/리뷰어 지정" 합쳐서 표현. 본 cycle 동일하게 단일 action 으로 통합 — separate `labels` action 분리 안 함. gh pr edit 한 번에 처리.
 ### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
 ### Cycle 2.10 — 세션 API + SSE (대기)

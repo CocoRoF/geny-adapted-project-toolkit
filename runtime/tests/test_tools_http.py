@@ -91,8 +91,15 @@ async def test_tools_list_returns_registered_tools(daemon: tuple[TestClient, Pat
     assert resp.status == 200
     payload = await resp.json()
     names = sorted(t["name"] for t in payload["tools"])
-    # gapt_git joined the registry in Cycle 2.7a.
-    assert names == ["gapt_edit", "gapt_git", "gapt_glob", "gapt_grep", "gapt_read"]
+    # gapt_git + gapt_pr joined the registry in Cycle 2.7.
+    assert names == [
+        "gapt_edit",
+        "gapt_git",
+        "gapt_glob",
+        "gapt_grep",
+        "gapt_pr",
+        "gapt_read",
+    ]
     for tool in payload["tools"]:
         assert "input_schema" in tool
         assert tool["input_schema"]["type"] == "object"

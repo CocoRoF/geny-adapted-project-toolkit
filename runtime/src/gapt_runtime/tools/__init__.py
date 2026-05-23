@@ -18,6 +18,7 @@ from gapt_runtime.tools.edit import GaptEdit
 from gapt_runtime.tools.git_tool import GaptGit
 from gapt_runtime.tools.glob import GaptGlob
 from gapt_runtime.tools.grep import GaptGrep
+from gapt_runtime.tools.pr_tool import GaptPr
 from gapt_runtime.tools.protocol import (
     Tool,
     ToolError,
@@ -33,6 +34,7 @@ __all__ = [
     "GaptGit",
     "GaptGlob",
     "GaptGrep",
+    "GaptPr",
     "GaptRead",
     "Tool",
     "ToolError",
