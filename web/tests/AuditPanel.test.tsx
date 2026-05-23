@@ -120,4 +120,54 @@ describe("<AuditPanel />", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("server.boom");
     });
   });
+
+  it("exposes CSV and JSONL export anchors that carry the current filters", async () => {
+    globalThis.fetch = vi.fn(() => Promise.resolve(jsonResponse(200, SAMPLE)));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("audit-table")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/Action prefix|액션 접두사/), {
+      target: { value: "agent." },
+    });
+
+    const csv = screen.getByTestId("audit-export-csv");
+    const jsonl = screen.getByTestId("audit-export-jsonl");
+    expect(csv.getAttribute("href")).toContain("/api/projects/p1/audit/export?");
+    expect(csv.getAttribute("href")).toContain("format=csv");
+    expect(csv.getAttribute("href")).toContain("action_prefix=agent.");
+    expect(jsonl.getAttribute("href")).toContain("format=jsonl");
+    expect(jsonl.getAttribute("href")).toContain("action_prefix=agent.");
+  });
+
+  it("paginates with Load more when a full page comes back", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      ...SAMPLE[0],
+      id: `e${i}`,
+      action: `bulk.${i}`,
+    }));
+    const page2 = [{ ...SAMPLE[0], id: "tail", action: "bulk.tail" }];
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const p = pathOf(input);
+      seen.push(p);
+      if (p.includes("offset=100")) return Promise.resolve(jsonResponse(200, page2));
+      return Promise.resolve(jsonResponse(200, page1));
+    });
+
+    renderPanel();
+
+    const loadMore = await screen.findByTestId("audit-load-more");
+    fireEvent.click(loadMore);
+
+    await waitFor(() => {
+      expect(screen.getByText("bulk.tail")).toBeInTheDocument();
+    });
+    expect(seen.some((p) => p.includes("offset=100"))).toBe(true);
+    // Second page (< PAGE_SIZE) collapses the Load more button.
+    expect(screen.queryByTestId("audit-load-more")).not.toBeInTheDocument();
+  });
 });

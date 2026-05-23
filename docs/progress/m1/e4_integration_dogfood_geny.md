@@ -331,7 +331,67 @@ GAPT_POLICY_CONFIG_PATH=/tmp/bad.yaml uv run uvicorn gapt_server.app:app
 - **5 invariant floor**: plan 의 "5개 코드 강제 불변식" → `INVARIANT_FLOORS`. 단순 deny 강제가 아니라 *floor* 모델 (operator 가 *더 엄격하게* 만드는 건 항상 가능).
 - **YAML 핫 리로드 미구현**: startup-only. SIGHUP handler / file watcher 는 M2.
 - **변경 diff UI 미구현**: PUT 없으니 diff UI 도 없음.
-### Cycle 4.6 — Audit Dashboard (대기)
+### Cycle 4.6 — Audit Dashboard (✅ 완료 — *this commit*)
+
+[plan §4.6](../../plan/m1/e4_integration_dogfood_geny.md#cycle-46-——-audit-dashboard-1-pr).
+
+**구성 (서버 1 router 확장 + 4 test, 웹 2 module 확장 + 2 test, i18n 12 키):**
+
+서버:
+- `routers/audit.py` — `GET /api/projects/{pid}/audit/export?format=csv|jsonl[&action_prefix&outcome&since&until]`:
+  - `_EXPORT_MAX = 5000` (서버 캡 — 큰 export 도 bounded)
+  - `_CSV_FIELDS` 11 컬럼 (id/ts/actor_type/actor_id/action/outcome/duration_ms/exec_code/scope/subject/payload). scope/subject/payload 는 `json.dumps` 직렬화 → CSV 필드 안에서도 안전.
+  - JSONL 은 `models.AuditEvent` 한 줄 = 한 row.
+  - `fetch_project_for` 멤버 게이트 (403 if non-member)
+  - 응답: `StreamingResponse(content_type="text/csv" | "application/x-ndjson", Content-Disposition: attachment; filename=...)` — 브라우저가 곧장 다운로드.
+  - 동일 endpoint 가 `list_project_audit` 와 같은 필터 (action_prefix / outcome / since / until) 를 공유.
+- `tests/audit/test_routes.py` (+4 case): CSV round-trip (header + 3 rows), JSONL round-trip (2 rows, each JSON parseable), action_prefix=test.event.1 → 1줄, 비멤버 → 403.
+
+웹:
+- `src/api/audit.ts` — `exportProjectAuditUrl(projectId, format, query)` 가 export URL 빌더. UI 가 fetch 가 아니라 `<a href download>` 로 브라우저 다운로드 트리거.
+- `src/audit/AuditPanel.tsx` 전면 개편:
+  - 시간 범위 preset (오늘 / 최근 7일 / 최근 30일 / 전체 / custom datetime-local 2개)
+  - `resolveRange(preset, custom)` 유틸이 ISO since/until 계산
+  - `PAGE_SIZE = 100`, offset paginate. 마지막 페이지가 100 미만 → Load more 버튼 자동 숨김 (`hasMore` state)
+  - CSV / JSONL 다운로드 앵커 (`<a download>`) — 현재 필터 그대로 적용한 URL
+  - `baseQuery` 메모이즈 (action_prefix / outcome / since / until) → refresh / loadMore / export 가 동일 쿼리 공유
+- i18n 12 키 추가 (en + ko): audit.filter.since/until, audit.export.csv/jsonl, audit.load_more, audit.range.{label,today,7d,30d,all,custom}.
+- `tests/AuditPanel.test.tsx` (+2 case): export anchor href 가 action_prefix 반영, 100-row 응답 → Load more 클릭 → offset=100 호출 + 2번째 페이지 단행 → 버튼 사라짐.
+
+**Gate:** server ruff/mypy clean, 317 server tests pass (+4), openapi 갱신. Web typecheck / lint / format clean, 81 web tests pass (+2), build 성공 (PWA precache 776 KiB).
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. 서버 부팅 + 매직 링크 로그인 (이전 cycle 흐름)
+# 2. 프로젝트 생성 + 약간의 audit 이벤트 발생 (chat/edit/git push 등)
+
+# 3. CSV 다운로드
+curl -b /tmp/cookies.txt \
+  "http://localhost:8001/api/projects/{pid}/audit/export?format=csv&action_prefix=agent." \
+  -o audit.csv
+head -3 audit.csv
+# id,ts,actor_type,actor_id,action,outcome,duration_ms,exec_code,scope,subject,payload
+# ...
+
+# 4. JSONL 다운로드
+curl -b /tmp/cookies.txt \
+  "http://localhost:8001/api/projects/{pid}/audit/export?format=jsonl&outcome=error&since=2026-05-01T00:00:00Z" \
+  -o audit.jsonl
+
+# 5. 웹 UI: 프로젝트 워크스페이스 → audit 패널
+#    - 시간 범위 select 에서 "최근 30일" / "custom" 선택
+#    - "Export CSV" / "Export JSONL" 버튼 클릭 → 브라우저 다운로드
+#    - 100개 이상 결과면 "Load more" 버튼 출현 → 클릭하면 추가 100개 append
+```
+
+#### Plan 카드 대비 변경
+
+- **Subject diff viewer 부재**: plan 의 "subject before/after diff (JSON viewer)". 현재는 단순 텍스트 컬럼만. JSON diff 컴포넌트는 다음 cycle 또는 dogfood 단계에서 패널 확장.
+- **per-actor pivot 미구현**: plan 의 "특정 사용자/세션 행위 시간순". 현재는 actor_type/actor_id 컬럼만. 별도 actor view 는 추후.
+- **별도 dashboard 페이지 없음**: 기존 dockview audit panel 을 확장 — 별도 route 추가하지 않음. M1 의 IDE-centric IA 와 일관.
+- **export 5000 cap**: plan 명시 없음. JSONB 페치 + 직렬화 비용 vs 사용자 기대값 균형 — 큰 export 는 추후 streaming chunked 으로 무제한화.
+
 ### Cycle 4.7 — 비용 대시보드 + OTel + Prometheus (대기, 2 PR)
 ### Cycle 4.8 — 알림 (대기)
 ### Cycle 4.9 — 헤드리스 oneshot API (대기)
@@ -347,7 +407,7 @@ GAPT_POLICY_CONFIG_PATH=/tmp/bad.yaml uv run uvicorn gapt_server.app:app
 - [ ] prod 배포 2FA TOTP 필수 (4.2)
 - [ ] CI 결과 라이브 표시 (4.3)
 - [ ] PolicyEngine config override 4계층 + UI 편집 + audit (4.5)
-- [ ] Audit dashboard (4.6)
+- [x] Audit dashboard (4.6)
 - [ ] OTel + Prometheus exporter (4.7)
 - [ ] 🎯 Dogfood: GAPT 가 GAPT 유지보수 (4.10)
 - [ ] 🎯 Geny 첫 어댑트: 외부 IDE 0회 (4.11)

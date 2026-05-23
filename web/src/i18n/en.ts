@@ -198,6 +198,17 @@ export const en = {
   "audit.col.actor": "Actor",
   "audit.col.outcome": "Outcome",
   "audit.col.exec_code": "exec code",
+  "audit.filter.since": "Since",
+  "audit.filter.until": "Until",
+  "audit.export.csv": "Export CSV",
+  "audit.export.jsonl": "Export JSONL",
+  "audit.load_more": "Load more",
+  "audit.range.today": "Today",
+  "audit.range.7d": "Last 7 days",
+  "audit.range.30d": "Last 30 days",
+  "audit.range.all": "All time",
+  "audit.range.custom": "Custom",
+  "audit.range.label": "Time range",
 
   // --- Theme ---
   "theme.label": "Theme",

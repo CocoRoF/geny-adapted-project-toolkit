@@ -158,6 +158,70 @@ async def test_audit_filters_by_action_prefix(fx: _Fx) -> None:
 
 
 @pytest.mark.asyncio
+async def test_audit_export_csv_round_trip(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        await _seed_audit(fx.app, project_id, count=3)
+
+        resp = await client.get(f"/api/projects/{project_id}/audit/export?format=csv")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv")
+        assert "attachment" in resp.headers["content-disposition"]
+        text = resp.text
+        assert "id,ts,actor_type" in text  # header row
+        # Three seeded rows + header.
+        assert len(text.strip().splitlines()) == 4
+
+
+@pytest.mark.asyncio
+async def test_audit_export_jsonl_round_trip(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        await _seed_audit(fx.app, project_id, count=2)
+
+        resp = await client.get(f"/api/projects/{project_id}/audit/export?format=jsonl")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/x-ndjson")
+        lines = resp.text.strip().splitlines()
+        assert len(lines) == 2
+        import json as _json
+
+        for line in lines:
+            row = _json.loads(line)
+            assert row["scope"]["project_id"] == project_id
+
+
+@pytest.mark.asyncio
+async def test_audit_export_respects_action_prefix(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        await _seed_audit(fx.app, project_id, count=4)
+
+        resp = await client.get(
+            f"/api/projects/{project_id}/audit/export"
+            "?format=jsonl&action_prefix=test.event.1"
+        )
+        assert resp.status_code == 200
+        lines = resp.text.strip().splitlines()
+        # Only test.event.1 from {0,1,2,3} matches the prefix.
+        assert len(lines) == 1
+
+
+@pytest.mark.asyncio
+async def test_audit_export_403_for_non_member(fx: _Fx) -> None:
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        await client.post("/api/auth/logout")
+        client.cookies.clear()
+        await client.post("/api/auth/magic-link", json={"email": "mallory@example.com"})
+        token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
+        await client.get(f"/api/auth/magic-link/callback?token={token}")
+
+        resp = await client.get(f"/api/projects/{project_id}/audit/export")
+        assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_audit_403_for_non_member(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id = await _login_and_create_project(client, fx, "alice@example.com")

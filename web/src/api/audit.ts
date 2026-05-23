@@ -26,7 +26,7 @@ export interface AuditQuery {
   offset?: number;
 }
 
-export function listProjectAudit(projectId: string, query: AuditQuery = {}): Promise<AuditEntry[]> {
+function buildQuery(query: AuditQuery): string {
   const params = new URLSearchParams();
   if (query.action_prefix) params.set("action_prefix", query.action_prefix);
   if (query.outcome) params.set("outcome", query.outcome);
@@ -34,6 +34,27 @@ export function listProjectAudit(projectId: string, query: AuditQuery = {}): Pro
   if (query.until) params.set("until", query.until);
   if (query.limit) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
-  const qs = params.toString();
+  return params.toString();
+}
+
+export function listProjectAudit(projectId: string, query: AuditQuery = {}): Promise<AuditEntry[]> {
+  const qs = buildQuery(query);
   return apiGet<AuditEntry[]>(`/api/projects/${projectId}/audit${qs ? `?${qs}` : ""}`);
+}
+
+/** Returns the URL pointing at the export endpoint — the UI usually
+ * navigates the browser to it (so the file download triggers) rather
+ * than fetching it as JSON. */
+export function exportProjectAuditUrl(
+  projectId: string,
+  format: "csv" | "jsonl",
+  query: Omit<AuditQuery, "limit" | "offset"> = {},
+): string {
+  const params = new URLSearchParams();
+  params.set("format", format);
+  if (query.action_prefix) params.set("action_prefix", query.action_prefix);
+  if (query.outcome) params.set("outcome", query.outcome);
+  if (query.since) params.set("since", query.since);
+  if (query.until) params.set("until", query.until);
+  return `/api/projects/${projectId}/audit/export?${params.toString()}`;
 }

@@ -197,6 +197,17 @@ export const ko: Record<keyof typeof en, string> = {
   "audit.col.actor": "주체",
   "audit.col.outcome": "결과",
   "audit.col.exec_code": "exec 코드",
+  "audit.filter.since": "시작",
+  "audit.filter.until": "끝",
+  "audit.export.csv": "CSV 내보내기",
+  "audit.export.jsonl": "JSONL 내보내기",
+  "audit.load_more": "더 보기",
+  "audit.range.today": "오늘",
+  "audit.range.7d": "최근 7일",
+  "audit.range.30d": "최근 30일",
+  "audit.range.all": "전체",
+  "audit.range.custom": "사용자 지정",
+  "audit.range.label": "기간",
 
   // --- Theme ---
   "theme.label": "테마",
