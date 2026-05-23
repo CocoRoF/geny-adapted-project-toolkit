@@ -260,7 +260,28 @@
 
 - **JWT 토큰 회전 (사용자 세션 수명마다)**: plan §1.9 명시. 본 cycle 은 토큰 발급/검증만, 자동 회전 로직 미구현 — server 측 컨트롤 플레인이 새 토큰 발급 후 컨테이너 env 갱신하는 흐름은 M1-E2 의 agent session lifecycle 와 연계 (현재는 컨테이너 boot 시 단일 토큰).
 - **`AgentDaemonClient`**: plan §1.9 "컨트롤 측 클라이언트". server 가 daemon 을 호출할 때 쓰는 httpx wrapper — 본 cycle 미구현, server side 가 실제로 daemon 호출하는 첫 cycle 인 M1-E2 에 합류.
-### Cycle 1.10 — PolicyEngine 골격 (대기)
+### Cycle 1.10 — PolicyEngine 골격 (✅ 완료 — *this commit*)
+
+- `gapt_server/policy/engine.py`:
+  - `PolicyDecision` enum (ALLOW / DENY / REQUIRE_USER_APPROVAL / REQUIRE_2FA)
+  - `Actor` (kind: USER / AGENT_SESSION / SYSTEM + id), `Scope` (project/workspace/environment), `PolicyEvaluation` 결과 데이터클래스
+  - `PolicyEngine.evaluate(action, actor, scope, context)` — built-in bundle 매핑 (§9.2.3 표 그대로 + `git.push.protected/force`, `tool.bash.danger`, `edit.sensitive_file` 추가). agent_session 은 deploy.* / secret.mutate / membership / git.push.force 전부 DENY (user-only action class). 알 수 없는 action 은 ALLOW (M1-E4 override 가 좁힘).
+  - `audit_sink` Depends — 모든 evaluation 이 `policy.evaluate` audit row 발행, outcome 은 decision 에서 매핑 (DENY=denied, others=ok)
+- `gapt_server/policy/invariants.py` — §9.2.4 5 불변식 모두 코드 강제:
+  1. `require_safe_sandbox_mount` (validate_mounts 위 wrapper, 동일 거부 패턴 + InvariantViolation 으로 변환)
+  2. `require_owner_id(row_kind, owner_id)` — `None` 또는 빈 문자열 거부, talkative 에러
+  3. `require_secret_not_in_payload(payload)` — dict 의 `value` / `secret` / `api_key` 키 + `sk-ant-` / `sk-` / `ghp_` / `github_pat_` / `xox[baprs]-` 토큰 패턴 거부, 재귀 walking
+  4. `require_audit_event_actor(declared, observed)` — actor_id 위조 차단 (system events `None==None` 허용)
+  5. `require_not_agent_session(actor_kind, action)` — agent_session 이 `policy.*` 액션 invoke 시 거부
+- 테스트 26개:
+  - `test_engine.py` (8): deploy.prod 양쪽 actor 모두 DENY, deploy.dev 는 REQUIRE_USER_APPROVAL, agent 가 secret.mutate 시도 시 DENY (reason 에 "user-only"), secret.read 양쪽 ALLOW, force_push 모두 DENY, 알 수 없는 action ALLOW, audit sink 가 evaluation row 기록, scope+context 가 결과에 carry
+  - `test_invariants.py` (18 parametrized + 단독): docker.sock 거부 + safe path 허용, owner_id None/"" 거부 + 정상 값 허용, 4가지 secret-shape (key value / nested api_key / Bearer string / list of secrets) 거부 + 4가지 safe shape 통과, audit actor mismatch 거부 + match 허용, agent → policy.* 거부 + user → policy.* 허용, agent → secret.read 통과
+- 결과: 114 PASS (이전 88 → +26), ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **단일 layer**: plan §1.10 명시 ("이 cycle에선 override 시스템 X"). 4-layer override (built-in / server / org / project) 는 M1-E4. 본 cycle 의 `PolicyEngine` 인터페이스는 그대로 유지되고, 구현체만 layered 로 swap 가능.
+- **2FA flow 미구현**: `REQUIRE_2FA` decision 은 정의됐지만 트리거 path 미구현. plan 의 `deploy.prod` 가 "DENY (user click + 2FA)" 인데, 실제 2FA 플로우는 M1-E3 (Web IDE) 가 가져옴 — 현재는 DENY 가 충분히 보수적.
 ### Cycle 1.11 — SeaweedFS 볼륨 라이프사이클 (대기)
 ### Cycle 1.12 — 통합 + 검증 (대기)
 
