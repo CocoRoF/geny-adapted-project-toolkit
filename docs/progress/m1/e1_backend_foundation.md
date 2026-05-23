@@ -93,7 +93,24 @@
 - **Redis 미사용**: plan §1.3 는 "Redis 세션 store" 명시. 본 cycle 은 in-memory 만 ship — Redis 와이어업은 Redis 의존 도입 시점 (Cycle 1.7 sandbox 가 ARQ 큐로 Redis 쓰기 시작) 까지 연기. 모든 store 가 Protocol 뒤에 있어서 swap-in 비용 거의 0.
 - **SMTP delivery 미와이어**: plan 은 "SMTP 발송 (개발은 콘솔 출력 모드)". 본 cycle 은 `ConsoleDelivery` 만 — SMTP 어댑터는 SMTP 의존 도입 시 추가, `MagicLinkDelivery` Protocol 인터페이스는 이미 안정.
 - **세션 cookie `secure` 가드**: `settings.env != "dev"` 일 때만 secure flag. prod 에서는 강제. plan 명시 안 됐지만 [09](../../09_security_authz_observability.md) §9.2 의 cookie hardening 일관성.
-### Cycle 1.4 — D7 Secret Vault (대기)
+### Cycle 1.4 — D7 Secret Vault (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/secrets/`:
+  - `backend.py` — `SecretBackend` Protocol + `EncryptedSqliteBackend` (Fernet, PBKDF2-HMAC-SHA256 480k iter, WAL SQLite). `SecretRef` opaque handle (backend:locator 형식, 평문은 backend 외부에서 절대 비공개).
+  - `vault.py` — `SecretVault` — `store/read/rotate/delete/list/get_metadata`. `SecretMetadata` 데이터클래스 (평문 없음). 모든 `read` 는 `secret.read` 이벤트 emit (Cycle 1.5 의 AuditSink 가 hook into 예정). IntegrityError → `secret.duplicate` 코드, 누수된 ciphertext 자동 cleanup.
+- `routers/secrets.py` — 5 endpoints (POST/GET/GET id/POST rotate/DELETE) 모두 `get_current_user` Depends. 응답 schema (`SecretView`) 는 **value 필드 자체가 없음** — 평문이 wire 에 절대 안 실림.
+- `app.py` 가 router include
+- `cryptography>=43.0` 의존성 추가
+- 설정 추가: `vault_master_key` (PBKDF2 입력, env override 강제), `vault_sqlite_path` (default `.gapt/local/vault.sqlite3`).
+- 테스트 10개:
+  - `test_vault.py` (7 tests): backend round-trip + 디스크에 평문 없음 검증, foreign ref 거부, SecretRef 파싱, vault store/read/delete cycle + Postgres backend_ref 에 평문 없음 검증, duplicate key 거부, rotate 가 old blob 제거 + 평문 부재 확인, fuzz pattern `GAPT-FUZZ-TOKEN` 디스크 grep 미발견.
+  - `test_routes.py` (3 tests): auth gate, HTTP 전체 lifecycle (response 에 value 부재 확인 + plaintext 가 list 응답 텍스트에 부재), 409 duplicate.
+- 결과: 33 PASS (이전 23 → +10), ruff + mypy strict 그린, coverage 99%.
+
+#### Plan 카드 대비 변경
+
+- **OS keyring backend 미구현**: plan §1.4 가 `OsKeyringBackend` 1차 + `EncryptedSqliteBackend` fallback. 본 cycle 은 EncryptedSqlite 만 ship — `keyring` 패키지가 헤드리스 컨테이너에서 디폴트 백엔드 없음 + dev/CI 가 일관되게 동작 + Fernet 가 단일 노드 위협 모델에 충분. `SecretBackend` Protocol 뒤에 있어서 keyring 추가 비용 거의 0.
+- **audit_events 직접 기록 미연결**: plan §1.4 "모든 read는 audit 이벤트 `secret.read` 발행". 본 cycle 은 structlog 로 emit. Cycle 1.5 가 `AuditSink` 구현하면 vault 가 hook into 함 — Protocol 인자로 inject 예정 (현재 구조에 swap 거의 0).
 ### Cycle 1.5 — D8 Audit Sink (대기)
 ### Cycle 1.6 — D1 Project Service CRUD (대기)
 ### Cycle 1.7 — D4 Sandbox Controller (Sysbox 어댑터) — 2 PR (대기)

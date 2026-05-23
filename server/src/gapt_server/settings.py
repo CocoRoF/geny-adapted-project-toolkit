@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     session_cookie_name: str = "gapt_session"
     session_secret: str = "dev-only-secret-change-me"
     daemon_jwt_secret: str = "dev-only-daemon-secret-change-me"
+    # Master key for the local secret vault. PBKDF2-derived → Fernet
+    # 32-byte key. Override in prod via env; *never* commit a real value.
+    vault_master_key: str = "dev-only-vault-master-change-me"
+    # Where the EncryptedSqliteBackend stores its ciphertext blobs.
+    # Plaintext NEVER lands in Postgres — only the SecretRef pointer.
+    vault_sqlite_path: str = ".gapt/local/vault.sqlite3"
 
     # --- sandbox / runtime (Cycle 1.7 onwards) ---
     sandbox_runtime: str = "sysbox-runc"

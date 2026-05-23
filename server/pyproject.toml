@@ -45,6 +45,9 @@ dependencies = [
 
     # Auth
     "email-validator>=2.2",
+
+    # Secret vault
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]
