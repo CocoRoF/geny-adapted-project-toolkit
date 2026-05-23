@@ -91,7 +91,30 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 - **mTLS 미적용**: plan §2.3 는 "mTLS unix socket". 본 cycle 은 unix socket + JWT (Bearer) 만 — sandbox 내부 동일 호스트라 mTLS 의 추가 보안 이득이 낮음 + Sysbox 격리가 socket 접근 제어. mTLS 는 다중 노드 배치 시 (M2+) 도입.
 - **streaming 응답 미지원**: plan §2.3 가 "응답 streaming (긴 결과)". 본 cycle 은 일회성 JSON 응답 — MCP `tools/call` 자체가 single-shot 이라 LLM 측 변화 없음. 큰 결과 (예: 대형 파일 read) 는 Cycle 2.4 `gapt_read` 가 chunk 분할로 처리 예정.
 - **PolicyEngine 평가 위치**: plan §2.3 가 "PolicyEngine 평가 결과를 컨트롤 플레인이 반환". 본 cycle 의 bridge 는 policy-blind — 데몬이 응답 `ok=false` + `error.code` 로 정책 거부를 표현, bridge 는 코드 그대로 `TextContent` 에 형식화. 데몬 측 PolicyEngine 호출은 Cycle 2.4 / 2.9 에서 wire-up.
-### Cycle 2.4 — GaptToolProvider (Read/Glob/Grep/Edit) (대기)
+### Cycle 2.4 — GaptToolProvider 4종 + daemon `/tools/*` (✅ 완료 — *this commit*)
+
+**범위 정정**: plan §2.4 가 server 측 `AdhocToolProvider` 를 명시했으나, `claude_code_cli` 흐름에서는 CLI → MCP bridge → daemon 으로 dispatch 가 흐르므로 **실제 tool 핸들러는 daemon (runtime) 에 있어야** 함. server 측 `AdhocToolProvider` 는 SDK provider 용 — 본 cycle 범위 밖, 후속 cycle 에서 추가.
+
+- `runtime/src/gapt_runtime/tools/`:
+  - `protocol.py` — `Tool` Protocol + `ToolSchema` / `ToolInvocation` / `ToolResult` / `ToolError` (stable `exec.tool.*` code suffix)
+  - `read.py` `GaptRead` — line-windowed file read, 8 MiB hard cap, line_offset+limit, total_lines/truncated metadata
+  - `glob.py` `GaptGlob` — recursive `**/*.py` 패턴, 5k 결과 cap, defence-in-depth 로 매 hit 마다 root re-validation
+  - `grep.py` `GaptGrep` — Python re, binary file skip (NUL byte probe in first 8 KiB), `path:line:col:text` 포맷, default 1k matches cap, optional subpath / `ignore_case`
+  - `edit.py` `GaptEdit` — single-occurrence 기본 (`all=true` 안 주면 거부), `old==new` 거부, 모든 mutation 전 `resolve_under_root` 통과
+  - `registry.py` `ToolRegistry` + `build_default_registry()`
+- `runtime/src/gapt_runtime/workspace.py` — 기존 `_resolve_under_root` 를 별도 모듈 (`resolve_under_root` + `WorkspaceTraversalError`) 로 hoist. tools 가 공유.
+- `runtime/src/gapt_runtime/handlers_tools.py` — `GET /tools/list` (manifest with input_schema) + `POST /tools/call` (Pydantic 검증, JWT middleware). `ToolError` → 200 with `ok=false` (Cycle 2.3 bridge 가 `isError=true` 로 변환), unknown tool → 404 `exec.tool.unknown`, 예측 못한 exception → 500 `exec.tool.crashed`.
+- `daemon.py` 가 `/tools/list` + `/tools/call` 라우트 + `REGISTRY_KEY` 와이어업
+- 테스트 28개 신규:
+  - `test_tools_unit.py` (17) — 4 도구 모두 hermetic: gapt_read window/missing/traversal, gapt_glob recursive/truncated, gapt_grep path-scope/binary-skip/invalid-regex/traversal, gapt_edit single/multi-without-all-refused/replace-all/missing-old/old==new
+  - `test_tools_http.py` (11) — JWT auth gate × 2, tools/list 4종 매니페스트 + input_schema, gapt_read/glob/grep/edit happy path, 404 unknown, 400 invalid JSON, 400 missing name, traversal returns 200 ok=false
+- 결과: runtime 65 PASS (+28), server 147 유지 → 합 212 PASS. ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **server-side `AdhocToolProvider` 미구현**: 위에 명시. claude_code_cli 흐름에서는 불필요. 향후 SDK provider 용 wrapper 가 필요할 때 `agent/tools/provider.py` 로 추가 — daemon RPC 만 호출하면 되므로 trivial.
+- **rg/fd 대신 Python**: plan §2.4 가 `rg` / `fd` 사용 명시. 본 cycle 은 Python `pathlib.glob` + `re` 만 — 추가 system dep 0, workspace-sized 트리에 충분. 큰 monorepo 성능 이슈 시 후속 perf cycle 에서 swap.
+- **PolicyEngine 미연결**: plan §2.4 의 PRE_TOOL_USE veto 는 Cycle 2.9 (HookRunner) 에서 wire. 본 cycle 의 `ToolError` 는 *입력 검증* + *path traversal* 만 — 진짜 policy 평가는 다음 cycle.
 ### Cycle 2.5 — GitHub OAuth Device Flow (대기)
 ### Cycle 2.6 — GitProvider + GithubProvider — 2 PR (대기)
 ### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)

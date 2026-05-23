@@ -14,8 +14,14 @@ from gapt_runtime.handlers_pty import (
     handle_open_pty,
     handle_pty_ws,
 )
+from gapt_runtime.handlers_tools import (
+    REGISTRY_KEY,
+    handle_tools_call,
+    handle_tools_list,
+)
 from gapt_runtime.pty_manager import PtyManager
 from gapt_runtime.settings import DaemonSettings
+from gapt_runtime.tools import build_default_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +49,7 @@ def create_app(settings: DaemonSettings) -> web.Application:
     app = web.Application(middlewares=[jwt_middleware])
     app[SETTINGS_KEY] = settings
     app[PTY_MANAGER_KEY] = PtyManager()
+    app[REGISTRY_KEY] = build_default_registry()
 
     app.router.add_get("/health", handle_health)
     app.router.add_get("/info", handle_info)
@@ -52,6 +59,8 @@ def create_app(settings: DaemonSettings) -> web.Application:
     app.router.add_post("/open_pty", handle_open_pty)
     app.router.add_post("/pty/{session_id}/close", handle_close_pty)
     app.router.add_get("/pty/{session_id}", handle_pty_ws)
+    app.router.add_get("/tools/list", handle_tools_list)
+    app.router.add_post("/tools/call", handle_tools_call)
 
     async def _shutdown_pty(_: web.Application) -> None:
         await app[PTY_MANAGER_KEY].aclose()
