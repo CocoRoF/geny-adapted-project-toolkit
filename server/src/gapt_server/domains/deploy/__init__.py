@@ -1,7 +1,12 @@
 """Deploy domain — DeployTarget Protocol + LocalCompose / RemoteSsh / Webhook
-adapters. Wired into `routers/deploy.py` (Cycle 4.2)."""
+adapters + Orchestrator + 2FA gate. Wired into `routers/deploy.py`."""
 
 from gapt_server.domains.deploy.local import LocalComposeTarget
+from gapt_server.domains.deploy.orchestrator import (
+    DeployOrchestrator,
+    OrchestratorError,
+    SecretBundleResolver,
+)
 from gapt_server.domains.deploy.protocol import (
     DeployContext,
     DeployRequest,
@@ -13,10 +18,19 @@ from gapt_server.domains.deploy.protocol import (
     RollbackResult,
 )
 from gapt_server.domains.deploy.ssh import RemoteSshTarget, SshConnectionSpec
+from gapt_server.domains.deploy.two_factor import (
+    AcceptAnyCodeVerifier,
+    AlwaysDenyVerifier,
+    TwoFactorError,
+    TwoFactorVerifier,
+)
 from gapt_server.domains.deploy.webhook import WebhookTarget
 
 __all__ = [
+    "AcceptAnyCodeVerifier",
+    "AlwaysDenyVerifier",
     "DeployContext",
+    "DeployOrchestrator",
     "DeployRequest",
     "DeployResult",
     "DeployStatus",
@@ -24,8 +38,12 @@ __all__ = [
     "DeployTarget",
     "DeployTargetError",
     "LocalComposeTarget",
+    "OrchestratorError",
     "RemoteSshTarget",
     "RollbackResult",
+    "SecretBundleResolver",
     "SshConnectionSpec",
+    "TwoFactorError",
+    "TwoFactorVerifier",
     "WebhookTarget",
 ]

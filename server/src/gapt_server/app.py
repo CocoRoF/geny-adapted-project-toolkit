@@ -10,7 +10,16 @@ from gapt_server.container import AppContainer, attach_container, build_containe
 from gapt_server.domains.audit.sink import PostgresAuditSink
 from gapt_server.logging import configure_logging
 from gapt_server.middleware.trace_id import TraceIdMiddleware
-from gapt_server.routers import audit, auth, health, projects, secrets, sessions, workspaces
+from gapt_server.routers import (
+    audit,
+    auth,
+    deploy,
+    health,
+    projects,
+    secrets,
+    sessions,
+    workspaces,
+)
 from gapt_server.settings import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
@@ -75,6 +84,7 @@ def create_app(
     app.include_router(sessions.by_project)
     app.include_router(sessions.by_id)
     app.include_router(audit.router)
+    app.include_router(deploy.router)
     return app
 
 

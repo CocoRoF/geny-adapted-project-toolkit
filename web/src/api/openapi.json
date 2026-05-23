@@ -315,6 +315,69 @@
         "title": "CreateWorkspaceRequest",
         "type": "object"
       },
+      "DeployRequestBody": {
+        "properties": {
+          "target_options": {
+            "additionalProperties": true,
+            "title": "Target Options",
+            "type": "object"
+          },
+          "two_factor_code": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Two Factor Code"
+          },
+          "version": {
+            "default": "latest",
+            "maxLength": 200,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "title": "DeployRequestBody",
+        "type": "object"
+      },
+      "DeployResultResponse": {
+        "properties": {
+          "exec_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Code"
+          },
+          "log": {
+            "default": "",
+            "title": "Log",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "DeployResultResponse",
+        "type": "object"
+      },
       "DeployTargetKind": {
         "enum": [
           "local",
@@ -714,6 +777,90 @@
           "archived_at"
         ],
         "title": "ProjectResponse",
+        "type": "object"
+      },
+      "RollbackRequestBody": {
+        "properties": {
+          "run_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "target_options": {
+            "additionalProperties": true,
+            "title": "Target Options",
+            "type": "object"
+          },
+          "to_version": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "To Version",
+            "type": "string"
+          },
+          "two_factor_code": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Two Factor Code"
+          }
+        },
+        "required": [
+          "run_id",
+          "to_version"
+        ],
+        "title": "RollbackRequestBody",
+        "type": "object"
+      },
+      "RollbackResultResponse": {
+        "properties": {
+          "exec_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Code"
+          },
+          "log": {
+            "default": "",
+            "title": "Log",
+            "type": "string"
+          },
+          "restored_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored Version"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "RollbackResultResponse",
         "type": "object"
       },
       "RotateSecretRequest": {
@@ -1247,6 +1394,110 @@
         "summary": "Me",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/environments/{env_id}/deploy": {
+      "post": {
+        "operationId": "trigger_deploy_api_environments__env_id__deploy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "env_id",
+            "required": true,
+            "schema": {
+              "title": "Env Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployResultResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Deploy",
+        "tags": [
+          "deploy"
+        ]
+      }
+    },
+    "/api/environments/{env_id}/rollback": {
+      "post": {
+        "operationId": "trigger_rollback_api_environments__env_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "env_id",
+            "required": true,
+            "schema": {
+              "title": "Env Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RollbackResultResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Rollback",
+        "tags": [
+          "deploy"
         ]
       }
     },

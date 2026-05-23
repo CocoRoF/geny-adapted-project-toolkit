@@ -80,7 +80,69 @@
 - **WebhookTarget body 가 env values 미포함**: 의도적. webhook URL 은 외부 신뢰 경계 — secret 평문 POST 시 webhook owner 가 그것을 로깅하거나 leak 할 수 있음. `env_keys` 만 hint 로 보내고 webhook 이 *자기 secret store* 에서 fetch 한다는 명확한 책임 분리.
 - **rollback snapshot 기반**: plan 의 "rollback(to: Version)" 시그너처. LocalComposeTarget 은 deploy 시점에 image digest snapshot 을 캡처 → rollback 시 그걸 복원 (registry version log 의존 안 함). 단순하고 self-contained.
 - **2 PR → 1 PR**: plan 이 2 PR 명시. 3개 어댑터가 같은 Protocol 위에 빌드되어 분할 가치 작음. 함께 ship.
-### Cycle 4.2 — Build/Deploy Orchestrator + Deploy API (대기)
+
+### Cycle 4.2 — Build/Deploy Orchestrator + Deploy API (✅ 완료 — *this commit*)
+
+[plan §4.2](../../plan/m1/e4_integration_dogfood_geny.md#cycle-42-——-builddeploy-orchestrator-d6--deploy-api-1-pr).
+
+**구성 (3 module + 2 test, 11 case):**
+- `domains/deploy/two_factor.py` — `TwoFactorVerifier` Protocol + `AcceptAnyCodeVerifier` (dev stub) + `AlwaysDenyVerifier` (test) + `TwoFactorError`. 실 TOTP backend 는 `users.totp_secret_encrypted` migration 후 wrap.
+- `domains/deploy/orchestrator.py` — `DeployOrchestrator` 가 5단계 시퀀스 실행:
+  1. `PolicyEngine.evaluate("deploy.{env_name}", actor=USER, scope)` → DENY 면 OrchestratorError + audit("deploy.denied", DENIED)
+  2. `REQUIRE_2FA` → `TwoFactorVerifier.verify(user_id, code)` 실패면 TwoFactorError + audit
+  3. `REQUIRE_USER_APPROVAL` → audit("deploy.user_approved") (UI 가 이미 click 후 호출)
+  4. `secret_resolver(refs)` → plaintext dict (default = empty; 라우터가 SecretVault 와 wire)
+  5. `audit("deploy.start")` → `target.deploy(ctx)` → `audit("deploy.{status}")` (try/finally zeroize env_secrets)
+  - `rollback(...)`: 동일 policy + 2FA gate → `target.rollback(ctx, to_version)` → audit("deploy.rollback")
+  - `stream_status(...)`: poll `target.status()` until terminal, yield JSON 프레임 — SSE wire 는 다음 cycle.
+- `routers/deploy.py` — `POST /api/environments/{env_id}/deploy` + `/rollback`:
+  - `_resolve_env` (404), `fetch_project_for` (403 if non-member)
+  - `_build_target` (kind → target instance), per-env asyncio.Lock 으로 동시 deploy 직렬화
+  - Exception 매핑: TwoFactorError → 412, OrchestratorError(policy_denied) → 403, 그 외 → 500
+- `domains/deploy/__init__.py` 가 orchestrator/2FA 타입 모두 re-export. `app.py` 가 `deploy.router` include.
+
+**테스트:**
+- `test_orchestrator.py` (6 case): success → start+terminal audit, DENY → OrchestratorError + denied audit + target 미실행, REQUIRE_2FA 코드 없으면 TwoFactorError, REQUIRE_2FA 코드 있으면 통과, secret_resolver 호출 + 시크릿 target 까지 전달, rollback → target.rollback 호출 (to_version 전달)
+- `test_routes.py` (5 case, Postgres): happy path (webhook target), webhook 502 → exec_code, 환경 미존재 → 404, 비멤버 → 403, rollback round-trip
+- 라우터 fixture 가 `_build_target` 을 monkey-patch 해서 모든 kind → WebhookTarget (`poster` injected) — 실 docker/SSH 미터치
+
+**Gate:** ruff/mypy clean (70 src), 278 server tests (+11), openapi check 통과.
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. 서버 띄우기 (Postgres + dev DSN 필요)
+cd server && uv run uvicorn gapt_server.app:app --host 0.0.0.0 --port 8001
+
+# 2. 매직 링크 로그인 (dev 모드는 서버 콘솔에 callback URL 출력)
+curl -X POST http://localhost:8001/api/auth/magic-link \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+# 서버 로그에서 token 찾아 paste:
+
+curl -c /tmp/cookies.txt \
+  "http://localhost:8001/api/auth/magic-link/callback?token=PASTE_TOKEN"
+
+# 3. 프로젝트 생성 (이미 가능)
+# 4. 환경 생성 (UI 미존재 — DB 직접 insert 필요. UI wizard 는 추후 cycle)
+
+# 5. deploy 호출
+curl -b /tmp/cookies.txt -X POST \
+  http://localhost:8001/api/environments/{env_id}/deploy \
+  -H "Content-Type: application/json" \
+  -d '{"version": "v1"}'
+# → 200 {"run_id": "...", "status": "success" | "failed", "exec_code": ..., "log": "..."}
+```
+
+웹 UI 트리거 (`DeployModal`) 는 추후 cycle 에서. 본 cycle 은 backend HTTP API + 테스트 수준까지.
+
+#### Plan 카드 대비 변경
+
+- **SSE deploy progress stream 미연결**: plan 명시 "진행 로그 SSE". orchestrator 에 `stream_status` 가 yield JSON 프레임 가능하지만 라우터 SSE endpoint 는 다음 cycle. 현재는 `deploy()` 가 동기 호출.
+- **5분 내 진행 중 deploy queue 미구현**: plan 의 "queue + 사용자 확인". 본 cycle 은 per-env asyncio.Lock 으로 동시성만 차단 — 두 번째 요청은 첫 번째 완료까지 *block*. "queue + UI confirm" 은 Cycle 4.8 (알림) 와 함께.
+- **TOTP backend stub**: `AcceptAnyCodeVerifier` 가 dev/test default. 실 TOTP 는 `users.totp_secret_encrypted` 컬럼 + `pyotp` 추가 + verifier 구현 (별도 cycle). 412 흐름은 이미 wire-up.
+- **Environment CRUD UI 부재**: 백엔드 `/api/projects/{pid}/environments` 존재하지만 웹 UI 없음 — M1-E3 deferred 카탈로그에 추가.
+- **stream_status JSON shape**: 한 줄 JSON `{"run_id","status","exec_code"}` — Cycle 2.10 의 chat SSE 와 같은 패턴.
 ### Cycle 4.3 — CI 결과 polling + UI 통합 (대기)
 ### Cycle 4.4 — Caddy subdomain 동적 등록 (대기)
 ### Cycle 4.5 — PolicyEngine 4계층 config (대기, 2 PR)
