@@ -180,7 +180,13 @@ async def test_edit_replace_all(tmp_path: Path) -> None:
         _inv(tmp_path, "gapt_edit", path="a.py", old="x", new="y", all=True)
     )
     assert target.read_text() == "y\ny\ny\n"
-    assert result.metadata == {"replaced": 3, "all": True}
+    assert result.metadata == {
+        "replaced": 3,
+        "all": True,
+        "path": "a.py",
+        "old": "x",
+        "new": "y",
+    }
 
 
 @pytest.mark.asyncio

@@ -213,7 +213,53 @@
 - **1 MB+ 파일 경고 미구현**: plan 이 ">1MB 경고 + lazy load" 명시. 백엔드는 1 MiB 에서 413 반환 (Cycle 3.4 서버 cap) — UI 는 413 → "too_large" code 로 자동 표시. 명시적 경고 모달은 추후.
 - **EditorBus 채택**: plan 산출물에 없음. dockview 의 panel-per-React-root 구조 때문에 도입한 패턴. 추후 Monaco DiffEditor (Cycle 3.6) 도 같은 bus 를 통해 diff 카드를 받음.
 - **언어 자동 감지 16종**: plan 은 "언어 자동 감지 (path → mime)" 명시. 본 구현은 ext-only 매핑 (mime 검색 안 함). 미지 ext → plaintext fallback.
-### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
+### Cycle 3.6 — Monaco DiffEditor 카드 (✅ 완료 — *this commit*)
+
+[plan §3.6](../../plan/m1/e3_web_ide_shell.md#cycle-36-——-monaco-diffeditor-카드-1-pr).
+
+**런타임 변경 (1 file):**
+- `runtime/src/gapt_runtime/tools/edit.py` — `ToolResult.metadata` 가 이제 `{path, old, new, replaced, all}` 모두 echo. 기존엔 `{replaced, all}` 만 — 채팅 SSE 가 `tool_result` 만 받기 때문에 `args` 를 다시 fetch 할 길이 없었음. 비파괴적 metadata 확장.
+- `tests/test_tools_unit.py:183` assertion 업데이트.
+- 104 runtime test 그대로 pass.
+
+**웹 신규 (3 module + 1 test, 5 case):**
+- `src/chat/diff-util.ts` — `unifiedDiff(old, new)` (newline split), `countLines`, `INLINE_THRESHOLD_LINES = 20` (plan §3.6 의 inline vs side-by-side 임계값).
+- `src/chat/DiffCard.tsx` — `<DiffCard workspaceId payload>`:
+  - 헤더: 제목 + 경로 + replaced 카운트
+  - body: inline `<pre>` 블록 (- 빨강 / + 초록 라인 그룹) — small edit (≤ 20 라인) default
+  - large edit (> 20 라인): "Show side-by-side" 토글 → Monaco `<DiffEditor>` (readonly, renderSideBySide, minimap off)
+  - footer: side-by-side 토글 + **Revert** 액션
+- Revert flow (정직한 post-hoc):
+  1. `GET /api/workspaces/{wid}/file?path=...` 로 현재 파일 fetch
+  2. base64 인코딩이면 `diff.revert.binary` (415) 에러 — utf-8 만 지원
+  3. `payload.all` 이면 split/join 으로 모든 사이트 invert, 아니면 첫 occurrence 만 `String.replace(new, old)` invert
+  4. 변경 없으면 `diff.revert.no_op` (409)
+  5. `writeFile(wid, path, {content, encoding: "utf-8"})` 로 push
+  6. 성공 → "Reverted" 배지, 버튼 disabled
+
+**ChatPanel 통합:**
+- `maybeGaptEditPayload(data)`: `data.tool === "gapt_edit"` 이고 `metadata.{path, old, new}` 가 string 이면 `GaptEditPayload` 반환. 그 외 도구는 generic JSON 렌더.
+- `<EventRow>` 가 이제 `workspaceId` prop 받음. `tool_result` + 매칭되는 payload → `<DiffCard>`, 아니면 기존 JSON.
+- i18n 9 키 추가 (en/ko): diff.title, diff.path, diff.replaced, diff.show_full, diff.show_inline, diff.revert, diff.reverting, diff.revert_done, diff.revert_failed.
+
+**테스트 (`tests/DiffCard.test.tsx`, 5 case):**
+- `countLines` 0/1/n 케이스
+- `unifiedDiff` newline split
+- small edit → path + replaced + inline 표시
+- large edit (>20 라인) → 토글 누르면 Monaco DiffEditor 노출
+- Revert: GET 으로 fetch → PUT 으로 invert 텍스트 (`"a = 1\n"`) 전송 → "Reverted" 배지
+
+**Gate:** runtime 104 pass, web lint clean (1 issue → 수정), typecheck clean, 46 web test pass (+5), build 성공 (790 kB / 188 kB gz — DiffEditor 가 별도 청크로 분리되지 않아 main bundle 증가, Cycle 3.14 에서 manual chunking).
+
+#### Plan 카드 대비 변경
+
+- **Approve/Deny 라운드트립 대신 post-hoc Revert**: plan §3.6 가 "Approve/Deny/Edit 카드 + Approve 시 `POST /api/workspaces/{wid}/apply-diff`" 명시. 현재 `gapt_edit` 도구는 *호출 즉시 sandbox 안에서 적용* — "preview before apply" 모드가 없음. 두 옵션 중:
+  1. 도구 동작 변경 (preview → confirm → apply) — Cycle 2.4 의 도구 계약을 깨뜨림
+  2. 적용 후 시각화 + Revert 제공 — 본 cycle 채택
+  → M1-E4 가 PolicyEngine REQUIRE_USER_APPROVAL 흐름 + UI confirm 라운드트립 추가 시 pre-apply Approve/Deny 도 자연스럽게 wire-up (Cycle 2.9 `policy_hook.py` 가 이미 REQUIRE_* → block-with-reason 반환).
+- **DiffCard 가 file 컨텍스트를 모름**: plan 이 "사이드-바이-사이드 Monaco DiffEditor" 명시 — original 은 변경 *전*, modified 는 변경 *후* 전체 파일을 기대. 본 구현은 `old` vs `new` 만 표시 (find-and-replace 의 두 패턴). LLM 이 실제 보여주고 싶은 건 "이 두 글자 블록이 바뀜" 이므로 직관적. full-file diff 는 M1-E4 의 preview 모드와 함께.
+- **`permission_mode = yolo` 자동 적용 미구현**: plan 명시. 백엔드의 `permission_mode` field 가 아직 wire-up 안 됨 (geny-executor 의 `HookEventPayload.permission_mode` 만 존재). 추후 cycle.
+- **`Edit` 액션 미구현**: plan 의 "Approve / Deny / Edit" 세 옵션 중 Edit. 본 구현은 Revert 만 — Edit 은 결국 새 `gapt_edit` 호출이라 사용자가 채팅에서 LLM 에 요청하는 게 자연스러움.
 ### Cycle 3.7 — xterm.js 터미널 (대기)
 ### Cycle 3.8 — 채팅 패널 SSE 스트리밍 (✅ 완료 — *this commit*, 순서 조정)
 

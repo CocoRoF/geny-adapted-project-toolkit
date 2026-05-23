@@ -121,6 +121,17 @@ export const en = {
   "chat.cost.tokens": "{input}/{output} tokens",
   "chat.cost.usd": "${amount}",
 
+  // --- diff card ---
+  "diff.title": "Edit applied",
+  "diff.path": "Path",
+  "diff.replaced": "{count} replacement(s)",
+  "diff.show_full": "Show side-by-side",
+  "diff.show_inline": "Show inline",
+  "diff.revert": "Revert",
+  "diff.reverting": "Reverting…",
+  "diff.revert_done": "Reverted.",
+  "diff.revert_failed": "Could not revert this edit.",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

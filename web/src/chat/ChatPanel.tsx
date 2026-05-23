@@ -11,6 +11,7 @@ import {
   listSessions,
 } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
+import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
 
 interface Props {
@@ -201,7 +202,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
 
           <div className="chat-panel-events" ref={scrollRef} data-testid="chat-events">
             {stream.events.map((event) => (
-              <EventRow key={event.seq} event={event} />
+              <EventRow key={event.seq} event={event} workspaceId={workspaceId} />
             ))}
           </div>
 
@@ -249,7 +250,37 @@ function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function EventRow({ event }: { event: SessionStreamEvent }) {
+interface EventRowProps {
+  event: SessionStreamEvent;
+  workspaceId: string;
+}
+
+function maybeGaptEditPayload(data: Record<string, unknown>): GaptEditPayload | null {
+  // The runtime's `gapt_edit` echoes `path`, `old`, `new` into the
+  // tool result metadata (runtime/src/gapt_runtime/tools/edit.py).
+  // Any other tool_result is left to the generic JSON renderer.
+  const tool = asString(data["tool"]) || asString(data["tool_name"]);
+  if (tool !== "gapt_edit") return null;
+  const meta = data["metadata"];
+  if (!meta || typeof meta !== "object") return null;
+  const m = meta as Record<string, unknown>;
+  if (
+    typeof m["path"] !== "string" ||
+    typeof m["old"] !== "string" ||
+    typeof m["new"] !== "string"
+  ) {
+    return null;
+  }
+  return {
+    path: m["path"],
+    old: m["old"],
+    new: m["new"],
+    ...(typeof m["replaced"] === "number" ? { replaced: m["replaced"] } : {}),
+    ...(typeof m["all"] === "boolean" ? { all: m["all"] } : {}),
+  };
+}
+
+function EventRow({ event, workspaceId }: EventRowProps) {
   const { t } = useI18n();
   const kind: SessionEventKind = event.kind;
   if (kind === "text") {
@@ -269,6 +300,14 @@ function EventRow({ event }: { event: SessionStreamEvent }) {
     );
   }
   if (kind === "tool_result") {
+    const edit = maybeGaptEditPayload(event.data);
+    if (edit) {
+      return (
+        <div className="chat-event chat-event--tool_result" data-event-kind="tool_result">
+          <DiffCard workspaceId={workspaceId} payload={edit} />
+        </div>
+      );
+    }
     return (
       <div className="chat-event chat-event--tool_result" data-event-kind="tool_result">
         <strong>{t("chat.tool_result")}</strong>

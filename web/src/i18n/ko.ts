@@ -120,6 +120,17 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.cost.tokens": "{input}/{output} 토큰",
   "chat.cost.usd": "${amount}",
 
+  // --- diff card ---
+  "diff.title": "편집 적용됨",
+  "diff.path": "경로",
+  "diff.replaced": "{count}개 치환",
+  "diff.show_full": "사이드 바이 사이드",
+  "diff.show_inline": "인라인 보기",
+  "diff.revert": "되돌리기",
+  "diff.reverting": "되돌리는 중…",
+  "diff.revert_done": "되돌렸습니다.",
+  "diff.revert_failed": "이 편집을 되돌리지 못했습니다.",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

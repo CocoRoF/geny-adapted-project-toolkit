@@ -91,5 +91,16 @@ class GaptEdit:
         target.write_text(mutated, encoding="utf-8")
         return ToolResult(
             content=f"replaced {replaced} occurrence(s) in {raw_path}",
-            metadata={"replaced": replaced, "all": replace_all},
+            # `path / old / new` are echoed so the UI can render a
+            # diff card from the SSE tool_result event without a
+            # follow-up read (Cycle 3.6). They're already in `args`
+            # but the chat layer never sees `args` on its own — only
+            # the result.
+            metadata={
+                "replaced": replaced,
+                "all": replace_all,
+                "path": raw_path,
+                "old": old,
+                "new": new,
+            },
         )
