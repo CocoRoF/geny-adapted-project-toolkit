@@ -77,12 +77,12 @@ def get_container(request: Request) -> AppContainer:
     return container
 
 
-def get_app_settings(container: AppContainer = Depends(get_container)) -> Settings:
+def get_app_settings(container: AppContainer = Depends(get_container)) -> Settings:  # noqa: B008
     return container.settings
 
 
 async def get_db_session(
-    container: AppContainer = Depends(get_container),
+    container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> AsyncIterator[AsyncSession]:
     if container.session_factory is None:
         raise RuntimeError(
