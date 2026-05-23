@@ -115,7 +115,38 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 - **server-side `AdhocToolProvider` 미구현**: 위에 명시. claude_code_cli 흐름에서는 불필요. 향후 SDK provider 용 wrapper 가 필요할 때 `agent/tools/provider.py` 로 추가 — daemon RPC 만 호출하면 되므로 trivial.
 - **rg/fd 대신 Python**: plan §2.4 가 `rg` / `fd` 사용 명시. 본 cycle 은 Python `pathlib.glob` + `re` 만 — 추가 system dep 0, workspace-sized 트리에 충분. 큰 monorepo 성능 이슈 시 후속 perf cycle 에서 swap.
 - **PolicyEngine 미연결**: plan §2.4 의 PRE_TOOL_USE veto 는 Cycle 2.9 (HookRunner) 에서 wire. 본 cycle 의 `ToolError` 는 *입력 검증* + *path traversal* 만 — 진짜 policy 평가는 다음 cycle.
-### Cycle 2.5 — GitHub OAuth Device Flow (대기)
+### Cycle 2.5 — GitHub OAuth Device Flow (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/auth/github_oauth.py`:
+  - `GithubDeviceFlow` — `start()` / `poll_once()` / `poll_until_complete()` / `revoke()` against GitHub's documented Device Authorization endpoints
+  - `DeviceFlowSession` 데이터클래스 (device_code / user_code / verification_uri / expires_at / interval_s)
+  - `IssuedToken` (access_token / token_type / scope)
+  - `GithubOAuthError` + 4 stable codes (`auth.github.transport` / `malformed_response` / `device_code_expired` / `denied` / `unknown`)
+  - RFC 8628 의 `authorization_pending` / `slow_down` → `None` (poll 계속), `expired_token` / `access_denied` → 즉시 raise
+  - `poll_until_complete` 가 GitHub 가 알려준 `interval_s` 지키며 polling, `sleep` 콜백 주입 가능 (테스트 wall-clock 회피)
+  - `revoke()` 404 idempotent (이미 폐기된 token 재시도 안전)
+  - `client_factory` 주입 → 테스트가 `httpx.MockTransport` 사용
+  - `github_secret_key_name(user_id)` 헬퍼 — vault scope=USER 의 key 명 표준화 (`github_oauth_token::{user_id}`)
+- `settings.py` — `github_oauth_client_id` (operator 가 설정), `github_oauth_secret_key` (client_secret 의 vault key), `github_oauth_scopes` (default `repo,workflow`)
+- 12 신규 테스트 (`tests/auth/test_github_oauth.py`):
+  - `start` 행복 경로 + form-encoded body (`client_id` + `scope`) 검증
+  - malformed response → `auth.github.malformed_response`
+  - 5xx → `auth.github.transport`
+  - poll 성공 시 IssuedToken 반환
+  - `authorization_pending` / `slow_down` → None
+  - `access_denied` → `auth.github.denied`
+  - `expired_token` → `auth.github.device_code_expired`
+  - `poll_until_complete` 가 2 회 pending 후 성공, fake sleep callback 호출 정확히 2 회
+  - revoke happy path + Basic Auth 헤더 첨부 검증
+  - revoke 404 idempotent
+  - revoke 500 → transport
+- 결과: server 159 PASS (+12), 합 224 PASS. ruff + mypy strict + openapi 그린.
+
+#### Plan 카드 대비 변경
+
+- **router 미와이어**: plan §2.5 가 `POST /api/integrations/github/connect` + callback 명시. 본 cycle 은 *flow driver 자체* 만 — router 는 Cycle 2.8 (SessionManager) 의 통합 흐름 진입 시 같이 wire 하는 게 깔끔 (background polling task 가 SessionManager 의 ARQ 큐와 연결되어야 함). 분리 PR 이 안 깨끗하면 Cycle 2.8 에 묶음.
+- **token storage**: plan 은 "백엔드가 GitHub Device Flow polling → access_token → Secret Vault 저장 (scope=user, `git_provider=github`)". 본 cycle 의 `github_secret_key_name(user_id)` 가 vault key 표준화 완료. 실제 저장 wire-up 은 router 와 같이.
+- **client_secret 보관**: `revoke()` 가 client_secret 을 받지만 그 secret 자체는 운영자가 설정한 `github_oauth_secret_key` 로 vault scope=ORG 에 두는 게 자연. wire-up 은 Cycle 2.8.
 ### Cycle 2.6 — GitProvider + GithubProvider — 2 PR (대기)
 ### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)
 ### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)

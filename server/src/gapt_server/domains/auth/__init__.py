@@ -9,6 +9,13 @@ Exposes:
 - `get_current_user` dependency.
 """
 
+from gapt_server.domains.auth.github_oauth import (
+    DeviceFlowSession,
+    GithubDeviceFlow,
+    GithubOAuthError,
+    IssuedToken,
+    github_secret_key_name,
+)
 from gapt_server.domains.auth.idp import AuthIdp, MagicLinkIdp
 from gapt_server.domains.auth.session import (
     InMemorySessionStore,
@@ -20,10 +27,15 @@ from gapt_server.domains.auth.session import (
 
 __all__ = [
     "AuthIdp",
+    "DeviceFlowSession",
+    "GithubDeviceFlow",
+    "GithubOAuthError",
     "InMemorySessionStore",
     "InMemoryTokenStore",
+    "IssuedToken",
     "MagicLinkIdp",
     "Session",
     "SessionStore",
     "TokenStore",
+    "github_secret_key_name",
 ]

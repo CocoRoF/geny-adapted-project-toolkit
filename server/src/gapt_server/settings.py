@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     # --- HTTP trace id ---
     request_id_header: str = "X-Request-Id"
 
+    # --- GitHub OAuth Device Flow (Cycle 2.5) ---
+    # Operator must register a GitHub OAuth App and set the client id
+    # here. client_secret is only needed for `revoke` and is stored in
+    # the secret vault under the "system" scope.
+    github_oauth_client_id: str | None = None
+    github_oauth_secret_key: str = "github_oauth_client_secret"
+    github_oauth_scopes: str = "repo,workflow"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
