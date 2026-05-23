@@ -156,7 +156,19 @@
 - **rename `service.list` → `list_for_user`**: 메서드명이 builtin `list` 와 충돌, mypy 가 일부 어노테이션을 메서드 참조로 잘못 해석. 동일한 이름의 free function 이 SQLAlchemy mapping 에 잡히는 케이스도 회피.
 - **`include_archived` query param**: plan 명시 안 됐지만 archive 가 soft-delete 의 의미를 가지므로 toggle 필요. default `false` (archived 행 미노출), `?include_archived=true` 로 활성화.
 - **org 등록 별도 endpoint 미구현**: plan 은 D1 Project CRUD 만 명시. Org 는 `_ensure_user` 가 첫 로그인 시 default org 자동 생성 (Cycle 1.3). Org-level CRUD endpoint 는 M2 multi-tenant 시점에 추가.
-### Cycle 1.7 — D4 Sandbox Controller (Sysbox 어댑터) — 2 PR (대기)
+### Cycle 1.7 — D4 Sandbox Controller (Sysbox 어댑터) — 2 PR
+
+#### PR 1 (1.7a) — Protocol + invariants + MockSandboxBackend (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/sandbox/`:
+  - `backend.py` — `SandboxBackend` Protocol (`create/start/stop/inspect/destroy/exec_in`), `SandboxCreateSpec` / `SandboxRef` / `SandboxInfo` / `SandboxResources` / `MountSpec` / `ExecResult` 데이터클래스, **`SecurityInvariantError`** 별도 예외 (config 로 약화 불가, 코드 강제), `forbidden_mount_paths()` + `validate_mounts()` — 호스트 docker socket / `/proc` / `/sys` / `.ssh` / `.aws` / `.kube` / SSH agent socket 모두 거부
+  - `mock_backend.py` — `MockSandboxBackend` 상태머신 (creating → running → stopped → destroyed) + `exec_in` 의 canned response 주입 (테스트 친화), 모든 `create` 가 `validate_mounts` 통과 후에만 인스턴스화
+- 테스트 26개:
+  - `test_invariants.py` (23 parametrized): 17 위험 path 모두 거부 + 4 안전 path 허용 + first-violation 단락
+  - `test_mock_backend.py` (4): full state machine, docker.sock mount 거부, canned exec response, destroy 후 start 거부
+- 결과: 75 PASS (이전 49 → +26), ruff + mypy strict 그린.
+
+#### PR 2 (1.7b) — SysboxBackend (real docker SDK) — 대기
 ### Cycle 1.8 — Workspace 라이프사이클 (대기)
 ### Cycle 1.9 — toolkit-agent 데몬 v1 — 2 PR (대기)
 ### Cycle 1.10 — PolicyEngine 골격 (대기)
