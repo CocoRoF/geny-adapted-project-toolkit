@@ -1,0 +1,130 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type DockviewApi,
+  DockviewReact,
+  type IDockviewPanelProps,
+  type SerializedDockview,
+} from "dockview";
+
+import { useI18n } from "@/app/providers/i18n-context";
+import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
+import { PanelPlaceholder } from "@/ide/panels";
+
+import "dockview/dist/styles/dockview.css";
+
+const STORAGE_KEY_PREFIX = "gapt.ide.layout";
+
+function storageKey(workspaceId: string): string {
+  return `${STORAGE_KEY_PREFIX}.${workspaceId}`;
+}
+
+interface StoredLayout {
+  preset: LayoutPreset;
+  customSnapshot?: SerializedDockview;
+}
+
+function readStored(workspaceId: string): StoredLayout | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(storageKey(workspaceId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as StoredLayout;
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(workspaceId: string, value: StoredLayout): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(storageKey(workspaceId), JSON.stringify(value));
+}
+
+const components = {
+  placeholder: (props: IDockviewPanelProps<{ kind: string }>) => <PanelPlaceholder {...props} />,
+};
+
+interface Props {
+  workspaceId: string;
+}
+
+/** Full IDE shell: dockview component + preset switcher. Real panel
+ * implementations land in Cycles 3.4–3.10; today every leaf renders
+ * `<PanelPlaceholder>`. */
+export function DockviewShell({ workspaceId }: Props) {
+  const { t } = useI18n();
+  const initial = useMemo<StoredLayout>(
+    () => readStored(workspaceId) ?? { preset: "focus" },
+    [workspaceId],
+  );
+  const [preset, setPreset] = useState<LayoutPreset>(initial.preset);
+  const apiRef = useRef<DockviewApi | null>(null);
+
+  const loadPreset = useCallback(
+    (next: LayoutPreset) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const stored = readStored(workspaceId);
+      const layout =
+        next === "custom" && stored?.customSnapshot ? stored.customSnapshot : PRESETS[next];
+      api.fromJSON(layout);
+    },
+    [workspaceId],
+  );
+
+  // Apply preset whenever it changes (after the dockview has mounted).
+  useEffect(() => {
+    loadPreset(preset);
+    writeStored(workspaceId, {
+      preset,
+      // Preserve any previously captured custom snapshot.
+      ...(readStored(workspaceId)?.customSnapshot
+        ? { customSnapshot: readStored(workspaceId)!.customSnapshot }
+        : {}),
+    });
+  }, [preset, workspaceId, loadPreset]);
+
+  function onReady(event: { api: DockviewApi }): void {
+    apiRef.current = event.api;
+    loadPreset(preset);
+
+    // Persist user-driven changes to the custom snapshot so the
+    // `custom` preset survives reload.
+    event.api.onDidLayoutChange(() => {
+      const snapshot = event.api.toJSON();
+      writeStored(workspaceId, { preset: "custom", customSnapshot: snapshot });
+      setPreset((current) => (current === "custom" ? current : "custom"));
+    });
+  }
+
+  return (
+    <div className="ide-shell">
+      <nav className="ide-shell-toolbar" aria-label="layout presets">
+        {ALL_PRESETS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            aria-pressed={preset === p}
+            onClick={() => setPreset(p)}
+            className={preset === p ? "is-active" : undefined}
+          >
+            {t(`ide.layout.${p}`)}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            window.localStorage.removeItem(storageKey(workspaceId));
+            setPreset("focus");
+            loadPreset("focus");
+          }}
+          className="ide-shell-reset"
+        >
+          {t("ide.layout.reset")}
+        </button>
+      </nav>
+      <div className="ide-shell-body">
+        <DockviewReact components={components} onReady={onReady} />
+      </div>
+    </div>
+  );
+}

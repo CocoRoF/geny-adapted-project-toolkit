@@ -77,6 +77,23 @@ export const ko: Record<keyof typeof en, string> = {
 
   // --- nav / shell ---
   "nav.back_to_projects": "← 프로젝트로",
+  "nav.back_to_project": "← 프로젝트",
+
+  // --- IDE shell ---
+  "ide.layout.focus": "포커스",
+  "ide.layout.review": "리뷰",
+  "ide.layout.debug": "디버그",
+  "ide.layout.custom": "사용자 정의",
+  "ide.layout.reset": "레이아웃 초기화",
+  "ide.panel.tree": "파일",
+  "ide.panel.editor": "에디터",
+  "ide.panel.diff": "Diff",
+  "ide.panel.terminal": "터미널",
+  "ide.panel.preview": "프리뷰",
+  "ide.panel.chat": "채팅",
+  "ide.panel.ci": "CI",
+  "ide.panel.audit": "Audit",
+  "ide.placeholder": "이후 cycle 에서 추가됩니다.",
 
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",

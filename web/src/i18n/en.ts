@@ -78,6 +78,23 @@ export const en = {
 
   // --- nav / shell ---
   "nav.back_to_projects": "← Projects",
+  "nav.back_to_project": "← Project",
+
+  // --- IDE shell ---
+  "ide.layout.focus": "Focus",
+  "ide.layout.review": "Review",
+  "ide.layout.debug": "Debug",
+  "ide.layout.custom": "Custom",
+  "ide.layout.reset": "Reset layout",
+  "ide.panel.tree": "Files",
+  "ide.panel.editor": "Editor",
+  "ide.panel.diff": "Diff",
+  "ide.panel.terminal": "Terminal",
+  "ide.panel.preview": "Preview",
+  "ide.panel.chat": "Chat",
+  "ide.panel.ci": "CI",
+  "ide.panel.audit": "Audit",
+  "ide.placeholder": "Lands in a later cycle.",
 
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      dockview:
+        specifier: ^6.5.0
+        version: 6.5.0(react@19.2.6)
       react:
         specifier: ^19.0.0
         version: 19.2.6
@@ -869,6 +872,14 @@ packages:
   dequal@2.0.3:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
+
+  dockview-core@6.5.0:
+    resolution: {integrity: sha512-ywdlF95ISqk0IiYot6dg9oyRyri4xA++SJTGSiegkn6KUPKVxyL8hXnqHWuV5U23eNvUNyiEP3CsoGSozy0SUA==}
+
+  dockview@6.5.0:
+    resolution: {integrity: sha512-RkCJgxM6BIhS3mlULbsutecGFfjXkyeZszMQX0fEeOg0NpziU6TE4q8qsoocvwD0q8ya2ecJQsNKF3a4E5FPNg==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -2293,6 +2304,13 @@ snapshots:
   deep-is@0.1.4: {}
 
   dequal@2.0.3: {}
+
+  dockview-core@6.5.0: {}
+
+  dockview@6.5.0(react@19.2.6):
+    dependencies:
+      dockview-core: 6.5.0
+      react: 19.2.6
 
   dom-accessibility-api@0.5.16: {}
 

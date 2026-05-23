@@ -110,7 +110,38 @@
 
 **Gate:** lint clean, typecheck clean, 24 web test pass (+3), build 260 kB / 82 kB gz.
 
-#### PR 2 (3.3b) — dockview shell + 4 프리셋 레이아웃 (대기)
+#### PR 2 (3.3b) — dockview shell + 4 프리셋 레이아웃 (✅ 완료 — *this commit*)
+
+**의존성 추가:** `dockview@6.5.0` (React 19 호환, peer deps 충족).
+
+**구성 (3 module + 1 test + WorkspaceIde 교체):**
+- `src/ide/layouts.ts` — 4 `LayoutPreset` (`focus | review | debug | custom`) + `PRESETS: Record<LayoutPreset, SerializedDockview>` 매핑.
+  - `focus`: [Tree | Editor | Chat] 가로 3-pane
+  - `review`: [Tree | DiffEditor | (Chat 위, CI 아래)] — 우측 컬럼이 세로 분할
+  - `debug`: [Tree | (Editor 위, Terminal/Preview 탭 아래)] — 중앙 컬럼이 세로 분할
+  - `custom`: 초기에는 focus 기준선, 사용자가 드래그하면 그 스냅샷이 LocalStorage 에 저장되어 다음 진입 시 복원
+- `src/ide/panels.tsx` — `<PanelPlaceholder>` 가 `params.kind` 를 받아 "{kind} — lands in a later cycle" 표시. Cycle 3.4 부터 panel 단위로 교체.
+- `src/ide/DockviewShell.tsx` — DockviewReact 마운트, 4 프리셋 토글 버튼 + Reset 버튼, LocalStorage 영속 (key: `gapt.ide.layout.<workspaceId>`). 사용자가 드래그하여 레이아웃을 바꾸면 `onDidLayoutChange` 에서 snapshot 캡처 + preset 을 자동으로 "custom" 으로 전환.
+- `src/routes/WorkspaceIde.tsx` — `getWorkspace(wid)` 호출 후 헤더 (branch + status) + `<DockviewShell workspaceId={wid}>` 마운트.
+- i18n 13 키 추가 (`ide.layout.*`, `ide.panel.*`, `ide.placeholder`, `nav.back_to_project`).
+
+**테스트 (`tests/ide-layouts.test.ts`, 6 case):**
+- ALL_PRESETS = [focus, review, debug, custom]
+- 각 preset 이 grid + panels 보유
+- focus 가 정확히 tree/editor/chat 패널
+- review 가 diff + ci 포함
+- debug 가 terminal 포함
+- custom = focus 기준선
+
+**Gate:** lint clean (1 issue → 수정), typecheck clean, 30 web test pass (+6), build 성공 (585 kB JS / 155 kB gz — dockview 포함, 500 kB 경고는 dynamic chunking 으로 Cycle 3.14 에서 해결).
+
+#### Plan 카드 대비 변경 (Cycle 3.3 통합)
+
+- **백엔드 레이아웃 영속 미구현**: plan §3.3 이 "패널 상태 (`api/workspaces/{wid}/layout`) GET/PUT" 명시. 현재 구현은 LocalStorage 만 — 서버 endpoint 가 추가되면 LocalStorage 가 cache 로 떨어지고 SSOT 는 서버. DoD checklist 의 마지막 항목 "dockview 패널 상태가 사용자별로 LocalStorage + 백엔드에 저장" 중 LocalStorage 부분만 만족 (백엔드는 추후).
+- **단축키 미구현**: plan 이 "단축키: `Ctrl+Alt+1/2/3/4` 토글" 명시. Cycle 3.11 (명령 팔레트) 에서 keymap binding 으로 wire-up.
+- **헤더 cost/sandbox 미구현**: plan 이 "헤더: Project ▼ / Workspace ▼ / env: dev / cost: $0.42 (라이브)" 명시. 비용 표시는 Cycle 3.10 (cost panel), sandbox status 는 Cycle 3.13 (CI/Audit).
+- **status bar 미구현**: plan 이 "상태바: CPU / Mem / sandbox status" 명시. Cycle 3.10/3.13 에서 추가.
+- **번들 크기 경고**: dockview 가 ~330 kB 차지하여 빌드 chunk 가 500 kB 초과. Cycle 3.14 (PWA) 에서 dynamic import + manual chunking 으로 분할 예정. M1 dogfood 단계에서는 single-bundle 로 충분.
 ### Cycle 3.4 — 파일 트리 (대기)
 ### Cycle 3.5 — Monaco 에디터 + 자동 저장 (대기, 2 PR)
 ### Cycle 3.6 — Monaco DiffEditor 카드 (대기)
