@@ -679,7 +679,63 @@ curl https://random-attacker-slug.preview.gapt.example.com/
 - **첫 PR 사이클 로그 미작성**: 위와 동일 사유.
 - **GAPT 의 메일 SMTP wiring 미구현**: 매직 링크 토큰이 콘솔 로그에만 출력 — 운영 단계에서 SMTP 어댑터 (M2).
 - **Cycle 4.7 의 Grafana JSON 이 여기로 흡수**: 4.7 deferred 카탈로그 → 본 cycle 의 compose/grafana/provisioning/ 으로 ship.
-### Cycle 4.11 — Geny 첫 어댑트 (M1 마지막 게이트) (대기)
+### Cycle 4.11 — Geny 첫 어댑트 인프라 + 운영 가이드 (✅ assistant 측 완료 — *this commit*, 실 첫 어댑트는 사용자 단계)
+
+[plan §4.11](../../plan/m1/e4_integration_dogfood_geny.md#cycle-411-——-geny-첫-어댑트-m1-마지막-게이트-1-pr).
+
+**스코프 분리**: plan 의 "Geny에 첫 어댑트 사이클 실행 + 데스크탑 Cursor 0회 + prod 배포 + 학습 정리" 는 사용자 자신이 자신의 GAPT 인스턴스에서 Geny 레포에 대해 직접 수행해야 검증 가능. 본 cycle 은 **그것을 가능하게 하는 미싱 기능 + 운영 가이드** 까지. 실 첫 어댑트 사이클 + lessons 파일 작성은 사용자 별도 PR.
+
+**미싱 기능 보강: 다중 compose 파일 체인 (Geny 의 G-1 함정)**
+
+[docs/12_geny_case_study.md §12.5 G-1](../../12_geny_case_study.md#g-1) — Geny 는 `docker-compose.yml -f dev.yml -f dev-core.yml` 처럼 *여러 compose 파일을 체인* 으로 사용. 기존 GAPT 의 `DeployRequest.compose_path: str` 은 단일 파일만 지원했음. Cycle 4.11 에서 추가:
+
+- `DeployRequest.compose_paths: list[str]` (default `[]`) + `resolved_compose_paths()` helper
+- `LocalComposeTarget` 가 `_compose_flags(paths)` 로 `-f a -f b ...` 체인 argv 생성. pull / up / rollback 모두 동일 패턴.
+- `DeployOrchestrator.deploy/rollback` 가 `compose_paths` 인자 받음
+- `routers/deploy.py` 가 env_row.deploy_target_config 의 `compose_paths` 필드를 파싱 → orchestrator 로 전달
+- 단일 path 의 기존 behavior 100% 호환 (빈 `compose_paths` → fallback)
+
+테스트:
+- `tests/deploy/test_local.py::test_deploy_chains_multiple_compose_files` — `compose_paths=[a, b]` 인 deploy 가 pull/up argv 에 `-f a -f b` 를 *순서대로* 포함
+
+**운영 가이드 (`docs/operations/geny-adapt.md`):**
+
+[12_geny_case_study.md](../../12_geny_case_study.md) §12.3 Step 1–9 를 실제 curl / UI 절차로 변환:
+
+1. 프로젝트 등록 (`POST /api/projects` payload)
+2. dev + prod env 생성 (각각 3-file compose chain, prod 는 `require_2fa: true`)
+3. 시크릿 (`.env.*` + SSH key) SecretVault 등록
+4. 워크스페이스 생성 + Sysbox sandbox 부팅 + compose up + Caddy 서브도메인
+5. 채팅 첫 메시지로 도메인 시드 (`CLAUDE.md` + 한 문단 컨텍스트 — S18 메모리에 영구 저장)
+6. 실제 cycle 실행 (read → edit → test → commit → push → PR → CI → merge → deploy dev → deploy prod 2FA)
+7. §12.5 함정 8 가지 (sudo HOME / 다중 compose / vendor 크기 / 1500줄 파일 line-range / Bash vs gapt_bash 게이트 우회 등) 체크리스트
+8. After-action review (`analysis/{date}_geny_first_adapt_lessons.md` 템플릿)
+
+**Gate:** server ruff/mypy clean (91 src), 350 server tests (+1: multi-compose chain test).
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *Geny 레포 + GAPT 인스턴스 보유 시 가능*:**
+
+본 cycle 자체가 **사용자의 Geny 첫 어댑트** 가 가능하게 하는 인프라. 사용자 측 검증 시나리오:
+
+```bash
+# 운영 가이드 따라 절차 실행:
+# 1. docs/operations/install.md — GAPT 인스턴스 부팅 (4.10)
+# 2. docs/operations/geny-adapt.md — Geny 등록 + 시크릿 + 워크스페이스 + 첫 PR 사이클
+#
+# 사용자가 검증할 DoD 항목:
+#  - [ ] Geny 의 cycle 1 개를 GAPT 안에서 완수 (desktop IDE 0회)
+#  - [ ] 비용 ≤ 일 cap
+#  - [ ] prod 배포 성공 (2FA gate 작동)
+#  - [ ] 모든 도구 호출이 audit 에 보임
+#  - [ ] 다음 cycle 도 GAPT 에서 하고 싶다고 느낌
+```
+
+#### Plan 카드 대비 변경
+
+- **실제 첫 어댑트 사이클 미실행**: assistant 가 사용자 Geny GitHub 권한 / Anthropic API 키 / VPS 에 접근 없음. 사용자 별도 PR.
+- **`analysis/20260XXX_geny_first_adapt_lessons.md` 미작성**: 사용자가 실제 사이클을 끝낸 뒤 채우는 템플릿이 운영 가이드 §8 에 명시.
+- **추가 GAPT 도구 PR 미발생**: plan 의 "추가 GAPT 도구 필요 시 executor 에 PR" — 첫 어댑트 동안 사용자가 부족한 도구를 발견하면 그때 PR. 본 cycle 은 *이미 발견된* G-1 (다중 compose) 만 처리.
+- **데스크탑 Cursor 0회 검증 자동화 없음**: 사용자 자기보고. M2 에서 active window 추적 / 시간 추적 도구 통합 검토.
 ### Cycle 4.12 — M1 종합 검증 + 사용자 검토 (대기)
 
 ## DoD 진행
@@ -693,7 +749,7 @@ curl https://random-attacker-slug.preview.gapt.example.com/
 - [x] Audit dashboard (4.6)
 - [x] OTel + Prometheus exporter (4.7 — pull only; OTLP push deferred)
 - [~] 🎯 Dogfood: GAPT 가 GAPT 유지보수 (4.10 — 인프라/문서 ship, 실제 사이클 사용자 검증)
-- [ ] 🎯 Geny 첫 어댑트: 외부 IDE 0회 (4.11)
+- [~] 🎯 Geny 첫 어댑트: 외부 IDE 0회 (4.11 — 인프라 + 가이드 ship, 실 사이클 사용자 검증)
 
 ## 사용자 검증 게이트
 

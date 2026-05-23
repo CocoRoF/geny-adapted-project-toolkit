@@ -108,3 +108,35 @@ async def test_secret_env_is_zeroized_after_deploy() -> None:
 
 async def _noop_runner(argv: list[str], env: dict[str, str]) -> tuple[int, str, str]:
     return (0, "", "")
+
+
+@pytest.mark.asyncio
+async def test_deploy_chains_multiple_compose_files() -> None:
+    """compose_paths = [a, b] should yield `-f a -f b` in argv —
+    this is the path Geny's multi-file setup goes through."""
+    calls: list[list[str]] = []
+
+    async def runner(argv: list[str], env: dict[str, str]) -> tuple[int, str, str]:
+        calls.append(argv)
+        return (0, "", "")
+
+    target = LocalComposeTarget(docker_binary="/usr/bin/docker", runner=runner)
+    request = DeployRequest(
+        project_id="01KSXXXXXXXXXXXXXXXXXXXXXX",
+        environment="dev",
+        version="abc",
+        compose_path="compose/dev.yml",  # ignored when compose_paths is set
+        compose_paths=["compose/dev.yml", "compose/dev-core.yml"],
+    )
+    ctx = DeployContext(run_id="run-multi", request=request)
+    result = await target.deploy(ctx)
+    assert result.status is DeployStatusKind.SUCCESS
+
+    # `pull` and `up` argv must both carry both -f flags in order.
+    pull = next(a for a in calls if "pull" in a)
+    up = next(a for a in calls if "up" in a)
+    for argv in (pull, up):
+        f_indices = [i for i, x in enumerate(argv) if x == "-f"]
+        assert len(f_indices) == 2
+        assert argv[f_indices[0] + 1] == "compose/dev.yml"
+        assert argv[f_indices[1] + 1] == "compose/dev-core.yml"

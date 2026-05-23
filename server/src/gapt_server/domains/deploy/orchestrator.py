@@ -87,6 +87,7 @@ class DeployOrchestrator:
         compose_path: str,
         secret_refs: list[str],
         target_options: dict[str, object],
+        compose_paths: list[str] | None = None,
         two_factor_code: str | None = None,
     ) -> DeployResult:
         run_id = new_ulid()
@@ -177,6 +178,7 @@ class DeployOrchestrator:
             environment=environment_name,
             version=version,
             compose_path=compose_path,
+            compose_paths=compose_paths or [],
             env_secrets=env_secrets,
             target_options=target_options,
         )
@@ -217,6 +219,7 @@ class DeployOrchestrator:
         compose_path: str,
         target_options: dict[str, object],
         to_version: str,
+        compose_paths: list[str] | None = None,
         two_factor_code: str | None = None,
     ) -> RollbackResult:
         """Roll back a prior deploy run by re-applying `to_version`."""
@@ -243,6 +246,7 @@ class DeployOrchestrator:
             environment=environment_name,
             version=to_version,
             compose_path=compose_path,
+            compose_paths=compose_paths or [],
             target_options=target_options,
         )
         ctx = DeployContext(run_id=run_id, request=request)

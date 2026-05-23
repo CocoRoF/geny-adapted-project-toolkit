@@ -176,11 +176,12 @@ async def trigger_deploy(
         two_factor=two_factor,
     )
 
-    compose_path = (
-        env_row.deploy_target_config.get("compose_path", "docker-compose.yml")
-        if isinstance(env_row.deploy_target_config, dict)
-        else "docker-compose.yml"
+    compose_cfg = (
+        env_row.deploy_target_config if isinstance(env_row.deploy_target_config, dict) else {}
     )
+    compose_path = compose_cfg.get("compose_path", "docker-compose.yml")
+    raw_paths = compose_cfg.get("compose_paths") or []
+    compose_paths: list[str] = [p for p in raw_paths if isinstance(p, str)]
     # Merge env-level options with caller overrides (caller wins, eg
     # one-off SSH host). secret_refs come from the env row.
     target_options: dict[str, Any] = {
@@ -197,6 +198,7 @@ async def trigger_deploy(
                 environment_name=env_row.name,
                 version=payload.version,
                 compose_path=compose_path,
+                compose_paths=compose_paths,
                 secret_refs=list(env_row.secret_refs or []),
                 target_options=target_options,
                 two_factor_code=payload.two_factor_code,
@@ -270,11 +272,12 @@ async def trigger_rollback(
         audit_sink=audit_sink,
         two_factor=two_factor,
     )
-    compose_path = (
-        env_row.deploy_target_config.get("compose_path", "docker-compose.yml")
-        if isinstance(env_row.deploy_target_config, dict)
-        else "docker-compose.yml"
+    compose_cfg = (
+        env_row.deploy_target_config if isinstance(env_row.deploy_target_config, dict) else {}
     )
+    compose_path = compose_cfg.get("compose_path", "docker-compose.yml")
+    raw_paths = compose_cfg.get("compose_paths") or []
+    compose_paths: list[str] = [p for p in raw_paths if isinstance(p, str)]
     target_options: dict[str, Any] = {
         **(env_row.deploy_target_config or {}),
         **payload.target_options,
@@ -289,6 +292,7 @@ async def trigger_rollback(
                 environment_name=env_row.name,
                 run_id=payload.run_id,
                 compose_path=compose_path,
+                compose_paths=compose_paths,
                 target_options=target_options,
                 to_version=payload.to_version,
                 two_factor_code=payload.two_factor_code,

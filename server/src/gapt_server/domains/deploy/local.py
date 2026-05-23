@@ -56,6 +56,16 @@ async def _default_runner(argv: list[str], env: dict[str, str]) -> tuple[int, st
     )
 
 
+def _compose_flags(paths: list[str]) -> list[str]:
+    """Chain `-f a -f b ...` for every path. Empty input falls back to
+    a single `-f docker-compose.yml` to keep the argv shape consistent."""
+    chosen = paths or ["docker-compose.yml"]
+    out: list[str] = []
+    for p in chosen:
+        out.extend(["-f", p])
+    return out
+
+
 def _ensure_binary(override: str | None, name: str) -> str:
     if override:
         return override
@@ -167,8 +177,7 @@ class LocalComposeTarget:
                     "compose",
                     "-p",
                     project,
-                    "-f",
-                    request.compose_path,
+                    *_compose_flags(request.resolved_compose_paths()),
                     "pull",
                 ],
                 env,
@@ -191,8 +200,7 @@ class LocalComposeTarget:
                     "compose",
                     "-p",
                     project,
-                    "-f",
-                    request.compose_path,
+                    *_compose_flags(request.resolved_compose_paths()),
                     "up",
                     "-d",
                     "--remove-orphans",
@@ -262,8 +270,7 @@ class LocalComposeTarget:
                     "compose",
                     "-p",
                     project,
-                    "-f",
-                    request.compose_path,
+                    *_compose_flags(request.resolved_compose_paths()),
                     "up",
                     "-d",
                 ],

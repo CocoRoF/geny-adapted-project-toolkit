@@ -54,10 +54,20 @@ class DeployRequest:
     environment: str  # "dev" | "staging" | "prod" | user-defined
     version: str
     compose_path: str = "docker-compose.yml"
+    # When non-empty, the target chains all paths via `-f a -f b` so
+    # multi-file projects (e.g. Geny's dev/dev-core split) work
+    # without flattening upstream. `compose_path` is the fallback
+    # when this list is empty.
+    compose_paths: list[str] = field(default_factory=list)
     env_secrets: dict[str, str] = field(default_factory=dict)
     # Free-form per-target options (e.g. ssh host, webhook URL). The
     # adapter validates its own subset.
     target_options: dict[str, object] = field(default_factory=dict)
+
+    def resolved_compose_paths(self) -> list[str]:
+        """Return the effective list — `compose_paths` if set,
+        otherwise a single-element list around `compose_path`."""
+        return list(self.compose_paths) if self.compose_paths else [self.compose_path]
 
 
 @dataclass(frozen=True)
