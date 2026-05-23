@@ -52,11 +52,6 @@ ignore = ["PLR0913", "PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004", "S101"]
-# Tool implementations do filesystem I/O on small workspace trees;
-# sync pathlib is fine and matches the rest of the daemon.
-# PLR0912/15 are too noisy for tools that legitimately have one
-# big traversal branch.
-"src/gapt_runtime/tools/**" = ["ASYNC240", "PLR0912", "PLR0915"]
 
 [tool.ruff.format]
 quote-style = "double"

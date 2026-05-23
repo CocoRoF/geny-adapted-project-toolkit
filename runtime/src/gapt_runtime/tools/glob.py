@@ -51,7 +51,7 @@ class GaptGlob:
             raise ToolError("exec.tool.invalid_input", "`limit` must be int ≥ 1")
         limit = min(limit_raw, _MAX_RESULTS)
 
-        root = Path(invocation.workspace_root).resolve()
+        root = Path(invocation.workspace_root).resolve()  # noqa: ASYNC240
         if not root.exists():
             raise ToolError(
                 "exec.tool.invalid_input",
