@@ -100,15 +100,27 @@ _DEFAULTS: dict[str, PolicyDecision] = {
 
 
 class PolicyEngine:
-    """Single-layer policy engine.
+    """Multi-layer policy engine.
 
-    Multi-layer override + ABAC arrive in M1-E4. This class is the
-    interface the rest of the control plane talks to today, so future
-    layering is a constructor-only change.
+    L1 built-in defaults (`_DEFAULTS`) merged with L2 server YAML
+    overrides (`overrides`) passed at construction. L3 / L4 (org /
+    project DB overrides) wrap this same instance via a future
+    factory and pre-merge into `overrides` before instantiation.
+
+    Existing callers that constructed `PolicyEngine(audit_sink=...)`
+    keep working — `overrides` is opt-in.
     """
 
-    def __init__(self, *, audit_sink: AuditSink | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        audit_sink: AuditSink | None = None,
+        overrides: dict[str, PolicyDecision] | None = None,
+        override_reasons: dict[str, str] | None = None,
+    ) -> None:
         self._audit = audit_sink
+        self._overrides: dict[str, PolicyDecision] = dict(overrides or {})
+        self._override_reasons: dict[str, str] = dict(override_reasons or {})
 
     async def evaluate(
         self,
@@ -121,8 +133,14 @@ class PolicyEngine:
         scope = scope or Scope()
         context = context or {}
 
-        decision = _DEFAULTS.get(action, PolicyDecision.ALLOW)
-        reason = _DEFAULT_REASONS.get(action, "default bundle: action not listed → allow")
+        if action in self._overrides:
+            decision = self._overrides[action]
+            reason = self._override_reasons.get(
+                action, f"server override: {action} → {decision.value}"
+            )
+        else:
+            decision = _DEFAULTS.get(action, PolicyDecision.ALLOW)
+            reason = _DEFAULT_REASONS.get(action, "default bundle: action not listed → allow")
 
         # An agent session *can* read secrets (so the LLM picks up its
         # API keys at boot) but *cannot* mutate them. Other restrictive
@@ -161,6 +179,36 @@ class PolicyEngine:
                 )
             )
         return evaluation
+
+    def effective_table(self) -> list[dict[str, str]]:
+        """Snapshot of every known action plus its current decision +
+        source. Used by `GET /api/policies` so the operator can see
+        what the merged policy actually does.
+
+        The "source" string is `builtin` for L1 defaults and
+        `server` when an override is in effect. Future L3/L4 layers
+        plug in by overriding this method to surface their own
+        labels."""
+        actions = sorted(set(_DEFAULTS.keys()) | set(self._overrides.keys()))
+        out: list[dict[str, str]] = []
+        for action in actions:
+            if action in self._overrides:
+                decision = self._overrides[action]
+                source = "server"
+                reason = self._override_reasons.get(action, "")
+            else:
+                decision = _DEFAULTS[action]
+                source = "builtin"
+                reason = _DEFAULT_REASONS.get(action, "")
+            out.append(
+                {
+                    "action": action,
+                    "decision": decision.value,
+                    "source": source,
+                    "reason": reason,
+                }
+            )
+        return out
 
 
 _AGENT_FORBIDDEN_ACTIONS: frozenset[str] = frozenset(

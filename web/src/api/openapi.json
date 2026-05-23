@@ -723,6 +723,69 @@
         "title": "OrgMembershipResponse",
         "type": "object"
       },
+      "PolicyRow": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "invariant_floor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invariant Floor"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "decision",
+          "source"
+        ],
+        "title": "PolicyRow",
+        "type": "object"
+      },
+      "PolicyTableResponse": {
+        "properties": {
+          "invariants": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Invariants",
+            "type": "object"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "invariants"
+        ],
+        "title": "PolicyTableResponse",
+        "type": "object"
+      },
       "PreviewResponse": {
         "properties": {
           "host": {
@@ -1611,6 +1674,27 @@
         "summary": "Trigger Rollback",
         "tags": [
           "deploy"
+        ]
+      }
+    },
+    "/api/policies": {
+      "get": {
+        "operationId": "get_effective_policy_api_policies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyTableResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Effective Policy",
+        "tags": [
+          "policies"
         ]
       }
     },

@@ -37,8 +37,30 @@ from gapt_server.domains.sandbox import (
     SysboxBackend,
     make_default_client,
 )
+from gapt_server.policy.config_loader import PolicyConfigError, load_yaml
 from gapt_server.policy.engine import PolicyEngine
 from gapt_server.settings import Settings, get_settings
+
+
+def _engine_from_settings(settings: Settings, audit_sink: AuditSink) -> PolicyEngine:
+    """Load the L2 YAML override (if configured) and build the engine."""
+    from gapt_server.policy.engine import PolicyDecision  # noqa: PLC0415
+
+    overrides: dict[str, PolicyDecision] = {}
+    reasons: dict[str, str] = {}
+    if settings.policy_config_path:
+        try:
+            override_set = load_yaml(settings.policy_config_path, source_layer="server")
+        except PolicyConfigError:
+            # The loader's stable code is preserved; we re-raise so a
+            # bad config makes startup loud rather than silently
+            # ignored. Operators want to know.
+            raise
+        for action, override in override_set.by_action.items():
+            overrides[action] = override.decision
+            if override.reason:
+                reasons[action] = override.reason
+    return PolicyEngine(audit_sink=audit_sink, overrides=overrides, override_reasons=reasons)
 
 
 @dataclass
@@ -87,7 +109,7 @@ def build_container(
 
     if settings.postgres_dsn is None:
         sink_noop = audit_sink or NullAuditSink()
-        policy_noop = PolicyEngine(audit_sink=sink_noop)
+        policy_noop = _engine_from_settings(settings, sink_noop)
         return AppContainer(
             settings=settings,
             engine=None,
@@ -120,7 +142,7 @@ def build_container(
         session_factory=factory,
         audit_sink=sink,
         sandbox_backend=sandbox_backend,
-        policy_engine=PolicyEngine(audit_sink=sink),
+        policy_engine=_engine_from_settings(settings, sink),
         env_service=env_service,
         session_manager=ProjectAwareSessionManager(env_service=env_service, audit_sink=sink),
         session_registry=SessionRegistry(),

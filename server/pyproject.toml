@@ -54,6 +54,9 @@ dependencies = [
 
     # Deploy (D6) — Remote SSH target.
     "asyncssh>=2.18",
+
+    # Policy config (Cycle 4.5) — server-wide YAML overrides.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -147,3 +150,8 @@ filterwarnings = [
 [tool.coverage.run]
 branch = true
 source = ["src/gapt_server"]
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20260518",
+]

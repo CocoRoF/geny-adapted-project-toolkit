@@ -268,7 +268,69 @@ curl -b /tmp/cookies.txt -X POST \
 - **공유 토글 UI 미연결**: backend `share` endpoint 만. PreviewPanel (Cycle 3.12) 에 share 버튼 추가는 추후 cycle / dogfood 단계.
 - **Caddy 설정 자체는 별도**: 서버는 admin API 호출만 함. Caddyfile / Caddy JSON config 의 `apps.http.servers.preview` server 정의는 운영자가 미리 부팅해야 함 — `docs/operations/install.md` (Cycle 4.12) 에 가이드 예정.
 - **routes_path 의 `...`**: Caddy 의 array append 시맨틱 — `/routes/...` 가 array 끝에 push. 직접 index 지정 (`/routes/0`) 보다 안전.
-### Cycle 4.5 — PolicyEngine 4계층 config (대기, 2 PR)
+
+### Cycle 4.5 — PolicyEngine 4계층 config (✅ L1 + L2 완료 — *this commit*, L3/L4 deferred)
+
+[plan §4.5](../../plan/m1/e4_integration_dogfood_geny.md#cycle-45-——-policyengine-config-시스템-——-4계층-2-pr).
+
+**스코프 축소 사유**: plan 의 4계층 (L1 built-in / L2 server YAML / L3 org DB / L4 project DB + `.gapt/policy.yaml`) 중 L3/L4 는 Alembic migration (`org_policies` / `project_policies`) + PUT API 가 필요. 본 cycle 은 **L1 + L2 + 불변식 강제 + 효과 정책 조회 API** 까지. L3/L4 + PUT 편집은 별도 cycle.
+
+**의존성 추가:** `pyyaml>=6.0`, `types-pyyaml` (dev).
+
+**구성 (3 module + 1 router + 3 test, 13 case):**
+- `policy/config_loader.py`:
+  - `INVARIANT_FLOORS` — 5 액션의 최대 허용 완화 수준: `deploy.prod` (REQUIRE_2FA), `secret.create/update/delete` (REQUIRE_USER_APPROVAL), `git.push.force` (DENY)
+  - 순서: ALLOW < REQUIRE_USER_APPROVAL < REQUIRE_2FA < DENY
+  - `check_invariant(action, decision)` — floor 보다 *느슨* 시 `PolicyConfigError("policy.config.invariant_violated")`. 더 엄격은 허용.
+  - `load_yaml(path)` / `parse_dict(raw)` — short form `action: decision_str` + long form `action: {decision, reason}` 모두 지원. 파싱 시점에 invariant 체크.
+- `policy/engine.py`:
+  - `PolicyEngine.__init__(audit_sink, overrides, override_reasons)` — `overrides: dict[str, PolicyDecision]` 가 L2 결과
+  - `evaluate()` 가 overrides 먼저 lookup, 없으면 `_DEFAULTS`
+  - `effective_table()` — `[{action, decision, source: "server"|"builtin", reason}]` 반환
+- `settings.py` — `policy_config_path: str | None` (`GAPT_POLICY_CONFIG_PATH`)
+- `container.py` — `_engine_from_settings(settings, audit)` 가 startup 시 YAML 로드 + invariant 검증 + PolicyEngine 생성. 잘못된 config 는 startup 시점에 raise.
+- `routers/policies.py` — `GET /api/policies` (인증 필수): `{rows, invariants}`
+
+**테스트 (13 case):**
+- `test_config_loader.py` (7): 누락 파일 → 빈 set, short/long form, invariant raise (ALLOW for deploy.prod / git.push.force), 미지 decision, INVARIANT_FLOORS 커버
+- `test_layered_engine.py` (4): override 우선, override 없으면 builtin, agent forbidden 이 override 보다 우선, effective_table source 라벨링
+- `test_routes.py` (2): YAML 적용된 효과 테이블, 비인증 → 401
+
+**Gate:** ruff/mypy clean (78 src), 313 server tests (+13), openapi 갱신.
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. 정책 YAML 작성
+cat > /tmp/gapt-policies.yaml <<'EOF'
+actions:
+  git.push.protected:
+    decision: allow
+    reason: "local CI is the gate"
+EOF
+
+# 2. 서버 부팅 + 정책 조회
+export GAPT_POLICY_CONFIG_PATH=/tmp/gapt-policies.yaml
+cd server && uv run uvicorn gapt_server.app:app --port 8001
+
+curl -b /tmp/cookies.txt http://localhost:8001/api/policies | jq
+# rows[git.push.protected] = {source: "server", decision: "allow", reason: "..."}
+# rows[secret.create]      = {source: "builtin", decision: "deny"}
+# invariants               = {"deploy.prod": "require_2fa", ...}
+
+# 3. 잘못된 YAML (invariant 위반):
+echo 'actions: {deploy.prod: allow}' > /tmp/bad.yaml
+GAPT_POLICY_CONFIG_PATH=/tmp/bad.yaml uv run uvicorn gapt_server.app:app
+# → PolicyConfigError on startup (서버 부팅 실패)
+```
+
+#### Plan 카드 대비 변경
+
+- **L3 (org DB) + L4 (project DB + `.gapt/policy.yaml`) deferred**: Alembic migration + scope 별 PUT API + diff UI 가 별도 cycle. 본 cycle 의 `PolicyEngine.overrides` dict + `effective_table` source 라벨이 L3/L4 wrap 시 그대로 사용됨.
+- **PUT API 미구현**: L3/L4 없으면 PUT 대상 없음.
+- **5 invariant floor**: plan 의 "5개 코드 강제 불변식" → `INVARIANT_FLOORS`. 단순 deny 강제가 아니라 *floor* 모델 (operator 가 *더 엄격하게* 만드는 건 항상 가능).
+- **YAML 핫 리로드 미구현**: startup-only. SIGHUP handler / file watcher 는 M2.
+- **변경 diff UI 미구현**: PUT 없으니 diff UI 도 없음.
 ### Cycle 4.6 — Audit Dashboard (대기)
 ### Cycle 4.7 — 비용 대시보드 + OTel + Prometheus (대기, 2 PR)
 ### Cycle 4.8 — 알림 (대기)

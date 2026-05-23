@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # TTL ceiling for share links (seconds). Default 24h.
     share_link_max_ttl_s: int = 24 * 3600
 
+    # --- PolicyEngine config (Cycle 4.5) ---
+    # Path to the server-wide policy YAML (L2). When unset or missing
+    # the built-in defaults (L1) apply. The loader enforces the
+    # invariant floors (deploy.prod / secret.* / git.push.force) at
+    # parse time so a misconfigured file never loosens the gates.
+    policy_config_path: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
