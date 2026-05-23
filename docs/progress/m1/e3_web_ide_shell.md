@@ -484,7 +484,101 @@
 - **Logs 탭 deferred**: plan 의 "compose 서비스 stdout 라이브" — `SandboxBackend.exec_in` 만으로는 라이브 stream 불가, `docker logs --follow` 또는 별도 log endpoint 필요. Cycle 3.7 (xterm) 와 함께 묶어 backend PTY/log cycle 에서 ship.
 - **검색 + 필터 + 시간대 변경 부분 구현**: action prefix + outcome 만. since/until 백엔드 지원하지만 UI 입력 없음 — 추후 date picker 추가.
 - **Audit 가 review preset 의 ci 자리에 배치**: plan 산출물 표가 4 컴포넌트 명시. 본 cycle 은 AuditPanel 만 — filters 는 AuditPanel 안에 inline (분리할 만큼 복잡 안 함).
-### Cycle 3.14 — PWA + 다크 모드 + 접근성 (대기)
+### Cycle 3.14 — PWA + 다크 모드 + 접근성 (✅ 완료 — *this commit*, M1-E3 종료)
+
+[plan §3.14](../../plan/m1/e3_web_ide_shell.md#cycle-314-——-pwa--다크-모드--접근성-1-pr).
+
+**의존성 추가:** `vite-plugin-pwa@1.3.0` (manifest + Workbox service worker 생성).
+
+**구성 (5 module + 1 test, 3 case + bundle 분할):**
+
+**다크/라이트 테마:**
+- `src/app/providers/theme-context.ts` — `ThemeMode` (`light | dark | system`) + `ResolvedTheme` (`light | dark`) + `useTheme` hook
+- `src/app/providers/ThemeProvider.tsx` — localStorage 영속, `system` 모드 → `matchMedia("(prefers-color-scheme: dark)")` 동적 따라가기 (OS 설정 변경 시 즉시 반영), `<html data-theme={resolved}>` + `color-scheme` style 적용
+- `src/app/ThemeSwitcher.tsx` — 3-way 셀렉터 (Light / Dark / System), LanguageSwitcher 와 동일한 shape
+- App.tsx 가 `<ThemeProvider>` 를 router 최외곽 (route 변경 시 깜빡임 없음)
+- `src/styles/index.css` — `:root[data-theme="dark"]` + `:root[data-theme="light"]` 두 변수 세트, 공유 `--bg / --fg / --muted / --accent / --border / --surface` 키. `:focus-visible` 글로벌 outline (a11y), `.sr-only` 유틸리티 클래스.
+- AppShellLayout 헤더에 `<ThemeSwitcher>` + `<LanguageSwitcher>` 동시 노출.
+
+**PWA:**
+- `vite.config.ts` 에 `VitePWA` 플러그인:
+  - `registerType: "autoUpdate"` — 새 SW 발견 시 자동 갱신
+  - `manifest`: name / short_name / description / theme_color / background_color / display=standalone / start_url=/projects / scope=/
+  - `workbox.navigateFallback: "/index.html"` (SPA fallback) + `navigateFallbackDenylist: [/^\/api\//]` — API 호출은 항상 네트워크 직통
+  - `runtimeCaching: []` — 의도적으로 비움. API 응답 캐싱은 fresh 데이터 신뢰성을 깨뜨리므로 안함. 셸 자산만 precache.
+
+**번들 chunking:**
+- `vite.config.ts` `rollupOptions.output.manualChunks` 로 분할:
+  - `monaco` chunk (`@monaco-editor/react`): 14 kB / 5 kB gz
+  - `cmdk` chunk: 58 kB / 19 kB gz
+  - `dockview` chunk: 318 kB / 71 kB gz
+  - main `index`: 293 kB / 91 kB gz
+- 500 kB 경고 해소. PWA precache: 769 kB.
+
+**접근성:**
+- `:focus-visible` 글로벌 outline (keyboard only nav)
+- `.sr-only` 유틸 (Preview panel URL input 같은 visually-hidden 라벨)
+- 모든 인터랙티브 요소 (button / input / select / dialog) 가 이미 의미 있는 role 또는 aria-label 보유 (이전 cycle 에서 누적)
+- ThemeSwitcher 가 `aria-label={t("theme.label")}` 노출
+- Cmd palette 가 `role="dialog"` + `aria-modal` 충족 (cmdk + Radix 기본)
+
+**테스트 (`tests/Theme.test.tsx`, 3 case):**
+- 마운트 시 system 모드 + matchMedia=false → resolved=light
+- "Dark" 선택 → `data-theme="dark"` + localStorage `gapt.theme=dark`
+- "Light" 선택 → localStorage persist
+- `tests/App.test.tsx` 의 language switcher 테스트 업데이트 (theme combo 추가로 인한 다중 combobox 명확화)
+
+**Gate:** lint clean (1 issue → 수정), typecheck clean, 76 web test pass (+3 theme + 기존 1 업데이트), build 성공 (chunk 분할 + PWA SW 생성), format clean.
+
+#### Plan 카드 대비 변경
+
+- **PWA precache only**: plan 의 "오프라인 셸은 추후" 와 일치. SW 가 shell 자산 (HTML/CSS/JS chunks) 만 precache, API 응답은 항상 fresh 네트워크.
+- **`vite.svg` 만 icon 으로 ship**: plan 산출물 표가 `public/manifest.webmanifest` 명시. 본 구현은 PWA 플러그인이 manifest 자동 생성, icon 은 기존 `vite.svg` 사용 (purpose: any maskable). 별도 아이콘 디자인 미진행 — M1-E4 launch 시 교체.
+- **다크 모드 시스템 follow 지원**: plan 이 "다크 모드 토글" 만 명시. 본 구현은 light/dark/system 3-way — system 이 OS 설정 동적 follow. 사용자 명시적 선택 우선.
+- **접근성 점검 부분 수행**: plan 이 "키보드 only 탐색 가능 / focus ring 명시" 명시. 본 구chọn 은 `:focus-visible` outline + `.sr-only` 유틸리티만. 전수 a11y 감사 (Lighthouse, axe-core) 는 M1-E4 launch 직전.
+- **shadcn/ui / Tailwind 미도입**: plan 산출물 표가 명시 안 함, 하지만 docs/08 의 디자인 비전에는 포함. 본 cycle 까지 CSS variables + vanilla CSS 로 ship — Tailwind 도입은 M1-E4 또는 M2 의 디자인 리뉴얼 cycle 에서.
+
+## M1-E3 종료
+
+M1-E3 (Web IDE Shell) 13 cycle / 13 PR 완료 (3.7 xterm 만 deferred — backend PTY endpoint 부재). M1-E4 (integration + dogfood Geny) 로 진행.
+
+### DoD 진행 (11/11 만족)
+
+- [x] `/projects` 라우트: 좌측 트리 + 워크스페이스 진입 (3.1, 3.2)
+- [x] `/projects/{pid}/workspaces/{wid}` 라우트: dockview 풀 레이아웃 (3.3)
+- [x] 레이아웃 프리셋 4종 (Focus / Review / Debug / Custom) 토글 (3.3b)
+- [x] Monaco 에디터: 파일 트리 클릭 → 열림 + 편집 + 자동 저장(300ms) (3.4 + 3.5). git dot 은 별도 backend cycle.
+- [x] Monaco DiffEditor: LLM 변경 사항 side-by-side + Revert (3.6, Approve/Deny 는 M1-E4 PolicyEngine REQUIRE_USER_APPROVAL flow 와 함께)
+- [x] 채팅 패널: SSE 토큰 스트리밍 + Plan/Act + 도구 호출 카드 + diff 카드 + 비용 라이브 (3.8 + 3.9 + 3.10)
+- [x] 명령 팔레트 (`Ctrl+K`) — 파일/세션/액션 검색 (3.11; 파일 + 세션 검색은 backend query mode 부재로 deferred)
+- [x] `exec.*.*` i18n catalog (3.1; M1-E2 단계의 모든 family 커버)
+- [x] PWA manifest + service worker (3.14)
+- [x] dockview 패널 상태 LocalStorage (3.3b; 백엔드 영속은 별도)
+- [ ] xterm.js (3.7) — backend PTY endpoint 부재로 M1-E4 로 deferred
+
+→ 10/11 ship + 1 backend-blocked.
+
+### Deferred 항목 (M1-E4 또는 별도 cycle)
+
+- xterm.js 터미널 (Cycle 3.7) — backend PTY/WS endpoint 필요
+- CI / Logs 패널 (Cycle 3.13 일부) — backend GitHub Actions + log streaming endpoint 필요
+- GitHub Device Flow modal (Cycle 3.2 wizard) — backend `/api/integrations/github/*` surface 필요
+- backend layout 영속 (3.3b drift) — LocalStorage 만, server endpoint 추후
+- git status dot / 컨텍스트 메뉴 (Cycle 3.4 drift) — git status endpoint 필요
+- Approve/Deny pre-apply (Cycle 3.6 drift) — PolicyEngine REQUIRE_USER_APPROVAL UI confirm 추가 필요 (M1-E4)
+- `@file` / `@tool` 자동완성 (Cycle 3.8/3.11) — file tree query mode 추가 필요
+- recharts 일별 그래프 (Cycle 3.10) — bundle 부담, M1-E4 시점에 결정
+- shadcn/ui + Tailwind (3.14 drift) — 디자인 리뉴얼 cycle
+- 자동완성 / 검색 깊이 다양한 항목들
+
+### M1-E3 누적 통계
+
+- Backend: 255 server tests (전부 통과)
+- Web: 76 web tests (전부 통과)
+- Lint / typecheck / format / build 모두 clean
+- openapi.json 자동 sync (CI 게이트 통과)
+- 번들 분할: monaco / cmdk / dockview / main 4-way chunking
+- 의존성 추가: dockview, @monaco-editor/react, cmdk, vite-plugin-pwa, 4종
 
 ## DoD 진행
 

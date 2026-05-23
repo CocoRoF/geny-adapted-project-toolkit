@@ -66,10 +66,14 @@ describe("<App /> router", () => {
 
     render(<App />);
 
+    // The header now hosts two combos: theme + language.
+    // The language switcher is the one with an aria-label that
+    // matches the locale label string ("Language" / "언어").
     await waitFor(() => {
-      expect(screen.getByRole("combobox")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: /Language|언어/ })).toBeInTheDocument();
     });
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    const langSelect = screen.getByRole("combobox", { name: /Language|언어/ });
+    expect(langSelect.querySelectorAll("option")).toHaveLength(2);
   });
 
   it("shows a friendly error banner when `/me` is non-401", async () => {

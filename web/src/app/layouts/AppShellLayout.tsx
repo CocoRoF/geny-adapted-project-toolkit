@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { ThemeSwitcher } from "@/app/ThemeSwitcher";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { LanguageSwitcher } from "@/i18n/LanguageSwitcher";
@@ -18,6 +19,7 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
           <h1>{t("app.title")}</h1>
         </Link>
         <nav className="app-header-actions">
+          <ThemeSwitcher />
           <LanguageSwitcher locale={locale} onChange={setLocale} />
           {status === "signed_in" && me ? (
             <button type="button" className="app-header-signout" onClick={() => void signOut()}>

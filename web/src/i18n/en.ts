@@ -199,6 +199,12 @@ export const en = {
   "audit.col.outcome": "Outcome",
   "audit.col.exec_code": "exec code",
 
+  // --- Theme ---
+  "theme.label": "Theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "System",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

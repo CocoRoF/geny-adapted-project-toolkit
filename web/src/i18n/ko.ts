@@ -198,6 +198,12 @@ export const ko: Record<keyof typeof en, string> = {
   "audit.col.outcome": "결과",
   "audit.col.exec_code": "exec 코드",
 
+  // --- Theme ---
+  "theme.label": "테마",
+  "theme.light": "라이트",
+  "theme.dark": "다크",
+  "theme.system": "시스템",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

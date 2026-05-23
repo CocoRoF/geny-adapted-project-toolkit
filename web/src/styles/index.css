@@ -1,10 +1,27 @@
-/* Minimal Phase 0 styles. Tailwind + shadcn/ui land in M1-E3. */
+/* M1-E3 Cycle 3.14: light/dark theme variables driven by
+ * <html data-theme="light|dark">. ThemeProvider writes the attribute;
+ * CSS branches on the selector. */
 
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg: #0b0d10;
   --fg: #e8eaed;
   --muted: #9aa3ad;
   --accent: #6ea8fe;
+  --border: #2a2f36;
+  --surface: #14181d;
+}
+
+:root[data-theme="light"] {
+  --bg: #fafbfc;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --accent: #1f6feb;
+  --border: #d1d5db;
+  --surface: #ffffff;
+}
+
+:root {
   font-family:
     ui-sans-serif,
     system-ui,
@@ -12,6 +29,28 @@
     "Inter",
     sans-serif;
   color-scheme: dark light;
+}
+
+/* Focus ring — visible across both themes for keyboard-only nav. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* sr-only — visually hide labels but keep them in the accessibility
+ * tree. The Preview panel URL input uses this so screen readers still
+ * announce the field. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 * {
