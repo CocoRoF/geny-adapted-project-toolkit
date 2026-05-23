@@ -132,6 +132,18 @@ export const en = {
   "diff.revert_done": "Reverted.",
   "diff.revert_failed": "Could not revert this edit.",
 
+  // --- Plan / Act + tool call card ---
+  "chat.mode.plan": "Plan",
+  "chat.mode.act": "Act",
+  "chat.mode.plan_hint": "Plan mode — the agent will outline before changing anything.",
+  "chat.tool.running": "Running…",
+  "chat.tool.ok": "OK",
+  "chat.tool.error": "Failed",
+  "chat.tool.expand": "Show output",
+  "chat.tool.collapse": "Hide output",
+  "chat.tool.args": "Arguments",
+  "chat.shortcut.esc": "Press Esc to interrupt.",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

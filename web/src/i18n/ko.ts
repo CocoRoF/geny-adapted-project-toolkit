@@ -131,6 +131,18 @@ export const ko: Record<keyof typeof en, string> = {
   "diff.revert_done": "되돌렸습니다.",
   "diff.revert_failed": "이 편집을 되돌리지 못했습니다.",
 
+  // --- Plan / Act + tool call card ---
+  "chat.mode.plan": "Plan",
+  "chat.mode.act": "Act",
+  "chat.mode.plan_hint": "Plan 모드 — 에이전트가 변경 전에 계획을 설명합니다.",
+  "chat.tool.running": "실행 중…",
+  "chat.tool.ok": "성공",
+  "chat.tool.error": "실패",
+  "chat.tool.expand": "출력 보기",
+  "chat.tool.collapse": "출력 숨기기",
+  "chat.tool.args": "인자",
+  "chat.shortcut.esc": "Esc 키로 중단할 수 있습니다.",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

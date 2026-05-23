@@ -303,7 +303,41 @@
 - **`@file` / `@tool` / slash commands 미구현**: plan 이 명령 자동완성 + 슬래시 명령 명시. Cycle 3.11 (명령 팔레트) 가 키맵 binding 으로 wire-up.
 - **자동 스크롤 정지 미구현**: plan 이 "사용자가 위로 올린 상태면 자동 스크롤 정지" 명시. 본 구현은 unconditional auto-scroll. scroll-position 추적은 Cycle 3.11 에서 추가.
 - **cost 헤더 = 마지막 cost 이벤트**: plan 이 "1초 디바운스" 명시. backend 는 POST_TOOL_USE 빈도 (~1 Hz max) 로 자연 디바운스 (Cycle 2.9/2.10). 클라이언트는 마지막 cost 이벤트만 reduce — 추가 throttle 불필요.
-### Cycle 3.9 — Plan/Act 모드 + 도구 호출 카드 (대기, 2 PR)
+### Cycle 3.9 — Plan/Act 모드 + 도구 호출 카드 (✅ 완료 — *this commit*)
+
+[plan §3.9](../../plan/m1/e3_web_ide_shell.md#cycle-39-——-planact-모드--도구-호출-카드-2-pr).
+
+**구성 (3 module + 2 test, 8 case):**
+- `src/chat/tool-pair.ts` — `ToolPair` 인터페이스 (`call / result / error / running`) + `pairToolEvents(events)` reducer. SSE 가 `tool_call` 과 `tool_result` (또는 `error`) 를 분리 frame 으로 emit → 카드 하나로 묶으려면 walk 후 페어링 필요. 페어링 키: `call_id` (런타임이 echo 시) → 없으면 `name:<tool>`. 동일 tool 이 연속 호출되면 새 call 이 pending 포인터를 덮어쓰는 LRU 동작.
+- `src/chat/ToolCallCard.tsx` — 컴팩트 카드:
+  - 헤더: tool name + 상태 pill (`Running… / OK / Failed`) + 첫 60자 인자 요약 (key=value 공백 구분) + 토글 버튼
+  - body (확장 시): full args JSON + full result JSON (성공) 또는 `exec_code` 박스 + 친화 메시지 (`execMessage()` i18n) + raw reason (에러)
+  - `data-testid="tool-card"` + `data-tool-name`
+- `src/chat/ChatPanel.tsx` 통합:
+  - `toolPairs = pairToolEvents(stream.events)`, `pairedEventSeqs = Set<seq>` — 매핑된 result/error 는 EventRow 가 skip
+  - `tool_call` 이벤트 → `<ToolCallCard>` 렌더 (chronology 위치 유지)
+  - `gapt_edit` tool_result 는 추가로 `<DiffCard>` 도 렌더 (시각화는 더 유용함, 카드와 공존)
+  - 헤더에 Plan/Act 토글 (`aria-pressed`) + plan 모드 시 hint 줄
+  - Plan 모드 ON: 메시지 앞에 `(Plan mode) Outline the steps without modifying any files:` prefix 자동 추가
+  - 슬래시 명령: `/plan` / `/act` 가 메시지에 있으면 mode 전환 + 나머지 텍스트만 전송 (단독 명령은 invoke 발화 안 함)
+  - **Esc 인터럽트**: `window.addEventListener("keydown", ...)` 가 `inflight tool_call` 또는 `pending invoke` 시 Esc 캡처 → `interrupt()` 호출. 세션 없으면 listener 등록 안 함.
+  - 헤더 아래 `chat.shortcut.esc` 힌트 텍스트 (세션 활성 시).
+- i18n 11 키 추가 (en/ko): chat.mode.plan / act / plan_hint, chat.tool.running / ok / error / expand / collapse / args, chat.shortcut.esc.
+
+**테스트:**
+- `tool-pair.test.ts` (4): tool_call+tool_result 페어, running 상태 (outcome 없음), error frame 페어, call_id 로 interleaved 페어링
+- `ToolCallCard.test.tsx` (4): Running pill, OK pill, Failed pill + 친화 메시지, expand/collapse 토글
+
+**Gate:** lint clean (1 issue → asString 패턴으로 수정), typecheck clean, 54 web test pass (+8), build 성공 (791 kB / 188 kB gz), format clean.
+
+#### Plan 카드 대비 변경
+
+- **2 PR → 1 PR**: plan 이 2 PR (Plan/Act + 도구 카드) 명시. 두 surface 가 ChatPanel 같은 reducer 안에 자연스럽게 fit — 함께 ship.
+- **Plan/Act = 프롬프트 prefix, 별도 서버 모드 없음**: plan 카드는 "ON → 첫 응답은 *계획만*" 명시. 백엔드 `agent_sessions.permission_mode` 가 아직 wire-up 안 됨 (Cycle 2.10 기준). 현재 구현은 클라이언트 prefix — 같은 LLM, 다른 지시. M1-E4 가 permission_mode='plan' 서버 동작 (예: 도구 호출 차단) 추가 시 wrap.
+- **인터럽트 단축키 Esc**: plan 이 "Esc 단축키" 명시 — 본 구현은 inflight 가 있을 때만 캡처. 빈 채팅에서 Esc 가 다른 동작 (예: 모달 닫기) 을 가로채지 않도록 가드.
+- **`@file` / `@tool` 자동완성 미구현**: plan §3.8 에 명시 — Cycle 3.11 (명령 팔레트) 가 키맵 binding 으로 wire-up.
+- **결과 접힘 toggle 만 — markdown render 없음**: plan §3.8 의 "memoized markdown render" 는 텍스트 메시지용. 본 cycle 의 ToolCallCard 는 raw JSON `<pre>` — 도구 결과는 구조화 데이터라 markdown 부적절. text chunk 렌더링용 markdown 은 추후 cycle (사용자 채팅 텍스트가 markdown 인 경우).
+- **gapt_edit 의 이중 카드**: tool_call → ToolCallCard, 그리고 tool_result → DiffCard. 의도적 — 카드는 "도구가 호출됐다" 의 메타데이터, DiffCard 는 변경 내용 시각화. 둘 다 가치 있음.
 ### Cycle 3.10 — 비용 / 컨텍스트 라이브 패널 (대기)
 ### Cycle 3.11 — 명령 팔레트 + 단축키 (대기)
 ### Cycle 3.12 — 프리뷰 iframe + 외부 공유 (대기)

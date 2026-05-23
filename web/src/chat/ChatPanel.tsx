@@ -12,7 +12,13 @@ import {
 } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
 import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
+import { ToolCallCard } from "@/chat/ToolCallCard";
+import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
+
+type ChatMode = "plan" | "act";
+
+const PLAN_PREFIX = "(Plan mode) Outline the steps without modifying any files:";
 
 interface Props {
   projectId: string;
@@ -45,6 +51,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ChatMode>("act");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Pull existing sessions on mount so a reload doesn't strand the
@@ -90,7 +97,29 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       if (!session) return;
       setError(null);
       setPending(true);
-      void invokeSession(session.id, text)
+      // Slash commands let the user flip modes mid-conversation
+      // without reaching for the toggle.
+      let outgoing = text;
+      let nextMode: ChatMode | null = null;
+      if (outgoing.startsWith("/plan")) {
+        nextMode = "plan";
+        outgoing = outgoing.slice("/plan".length).trim();
+      } else if (outgoing.startsWith("/act")) {
+        nextMode = "act";
+        outgoing = outgoing.slice("/act".length).trim();
+      }
+      if (nextMode) setMode(nextMode);
+      const activeMode = nextMode ?? mode;
+      if (activeMode === "plan" && outgoing.length > 0) {
+        outgoing = `${PLAN_PREFIX}\n\n${outgoing}`;
+      }
+      // Pure mode-switch commands with no payload — don't fire an
+      // empty invoke.
+      if (outgoing.length === 0) {
+        setPending(false);
+        return;
+      }
+      void invokeSession(session.id, outgoing)
         .catch((err: unknown) => {
           setError(
             err instanceof ApiError
@@ -102,7 +131,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         })
         .finally(() => setPending(false));
     },
-    [session],
+    [session, mode],
   );
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -144,6 +173,35 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       });
   }, [session, stream]);
 
+  // Esc anywhere inside the panel cancels the running invocation —
+  // matches Cursor / Aider muscle memory.
+  useEffect(() => {
+    if (!session) return undefined;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const hasInflight = stream.events.some((ev) => ev.kind === "tool_call");
+      if (!hasInflight && !pending) return;
+      e.preventDefault();
+      interrupt();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [session, stream.events, pending, interrupt]);
+
+  // Tool pairs derived from the live event list — drives the
+  // tool-call cards inline. We render them in the position of their
+  // *call* event so the chronology stays intact.
+  const toolPairs = useMemo<ToolPair[]>(() => pairToolEvents(stream.events), [stream.events]);
+  const pairedEventSeqs = useMemo(() => {
+    const set = new Set<number>();
+    for (const pair of toolPairs) {
+      set.add(pair.call.seq);
+      if (pair.result) set.add(pair.result.seq);
+      if (pair.error) set.add(pair.error.seq);
+    }
+    return set;
+  }, [toolPairs]);
+
   const cost = useMemo<CostSnapshot>(() => {
     // Pull the most recent `cost` event for the live header.
     for (let i = stream.events.length - 1; i >= 0; i -= 1) {
@@ -167,15 +225,43 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           {session ? session.env_manifest_id : t("chat.empty").split(".")[0]}
         </span>
         {session ? (
-          <span className="chat-panel-cost" data-testid="chat-cost">
-            {t("chat.cost.live")} ·{" "}
-            {t("chat.cost.usd").replace("{amount}", cost.cost_usd.toFixed(4))} ·{" "}
-            {t("chat.cost.tokens")
-              .replace("{input}", String(cost.input_tokens))
-              .replace("{output}", String(cost.output_tokens))}
-          </span>
+          <>
+            <div className="chat-panel-mode" role="group" aria-label="chat mode">
+              <button
+                type="button"
+                aria-pressed={mode === "plan"}
+                onClick={() => setMode("plan")}
+                className={mode === "plan" ? "is-active" : undefined}
+              >
+                {t("chat.mode.plan")}
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === "act"}
+                onClick={() => setMode("act")}
+                className={mode === "act" ? "is-active" : undefined}
+              >
+                {t("chat.mode.act")}
+              </button>
+            </div>
+            <span className="chat-panel-cost" data-testid="chat-cost">
+              {t("chat.cost.live")} ·{" "}
+              {t("chat.cost.usd").replace("{amount}", cost.cost_usd.toFixed(4))} ·{" "}
+              {t("chat.cost.tokens")
+                .replace("{input}", String(cost.input_tokens))
+                .replace("{output}", String(cost.output_tokens))}
+            </span>
+          </>
         ) : null}
       </header>
+      {session && mode === "plan" ? (
+        <p className="chat-panel-mode-hint">{t("chat.mode.plan_hint")}</p>
+      ) : null}
+      {session ? (
+        <p className="chat-panel-shortcut" data-testid="chat-shortcut">
+          {t("chat.shortcut.esc")}
+        </p>
+      ) : null}
 
       {!session ? (
         <div className="chat-panel-empty">
@@ -201,9 +287,38 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           ) : null}
 
           <div className="chat-panel-events" ref={scrollRef} data-testid="chat-events">
-            {stream.events.map((event) => (
-              <EventRow key={event.seq} event={event} workspaceId={workspaceId} />
-            ))}
+            {stream.events.map((event) => {
+              // The call event renders as a ToolCallCard (with its
+              // matched outcome folded in). Result/error events that
+              // belong to a paired call are suppressed — they live
+              // inside the card. gapt_edit's tool_result still gets
+              // a DiffCard *in addition* because the diff
+              // visualisation is more useful than a JSON dump; the
+              // tool card itself shows the call shell.
+              if (event.kind === "tool_call") {
+                const pair = toolPairs.find((p) => p.call.seq === event.seq);
+                if (pair) return <ToolCallCard key={`pair-${event.seq}`} pair={pair} />;
+              }
+              if (event.kind === "tool_result") {
+                const edit = maybeGaptEditPayload(event.data);
+                if (edit) {
+                  return (
+                    <div
+                      key={`diff-${event.seq}`}
+                      className="chat-event chat-event--tool_result"
+                      data-event-kind="tool_result"
+                    >
+                      <DiffCard workspaceId={workspaceId} payload={edit} />
+                    </div>
+                  );
+                }
+                if (pairedEventSeqs.has(event.seq)) return null;
+              }
+              if (event.kind === "error" && pairedEventSeqs.has(event.seq)) {
+                return null;
+              }
+              return <EventRow key={event.seq} event={event} workspaceId={workspaceId} />;
+            })}
           </div>
 
           <form className="chat-panel-form" onSubmit={onSubmit}>
