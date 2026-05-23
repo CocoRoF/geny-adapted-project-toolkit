@@ -723,6 +723,24 @@
         "title": "OrgMembershipResponse",
         "type": "object"
       },
+      "PreviewResponse": {
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "workspace_id"
+        ],
+        "title": "PreviewResponse",
+        "type": "object"
+      },
       "ProjectResponse": {
         "properties": {
           "archived_at": {
@@ -814,6 +832,28 @@
           "archived_at"
         ],
         "title": "ProjectResponse",
+        "type": "object"
+      },
+      "RegisterPreviewBody": {
+        "properties": {
+          "upstream_host": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Upstream Host",
+            "type": "string"
+          },
+          "upstream_port": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Upstream Port",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "upstream_host",
+          "upstream_port"
+        ],
+        "title": "RegisterPreviewBody",
         "type": "object"
       },
       "RollbackRequestBody": {
@@ -1045,6 +1085,29 @@
           "created_at"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "ShareLinkResponse": {
+        "properties": {
+          "expires_in_s": {
+            "title": "Expires In S",
+            "type": "integer"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "url",
+          "expires_in_s"
+        ],
+        "title": "ShareLinkResponse",
         "type": "object"
       },
       "StoreSecretRequest": {
@@ -3046,6 +3109,144 @@
         "summary": "Write Workspace File",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/preview": {
+      "delete": {
+        "operationId": "unregister_preview_api_workspaces__workspace_id__preview_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unregister Preview",
+        "tags": [
+          "preview"
+        ]
+      },
+      "post": {
+        "operationId": "register_preview_api_workspaces__workspace_id__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Preview",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/share": {
+      "post": {
+        "operationId": "mint_share_link_api_workspaces__workspace_id__share_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ttl_s",
+            "required": false,
+            "schema": {
+              "default": 3600,
+              "minimum": 60,
+              "title": "Ttl S",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Share Link",
+        "tags": [
+          "preview"
         ]
       }
     },

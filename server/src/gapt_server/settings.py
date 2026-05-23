@@ -86,6 +86,20 @@ class Settings(BaseSettings):
     # `projects.git_auth_secret_ref`.
     ci_github_token: str | None = None
 
+    # --- Caddy preview subdomain (Cycle 4.4) ---
+    # Caddy admin API URL (typically http://caddy:2019). When unset,
+    # preview-subdomain endpoints return 412 `preview.disabled` so the
+    # UI can render a "configure Caddy" hint.
+    caddy_admin_url: str | None = None
+    # Wildcard domain — workspaces resolve to
+    # `{workspace_slug}.{caddy_preview_domain}/`. Required when
+    # `caddy_admin_url` is set.
+    caddy_preview_domain: str | None = None
+    # Share link HMAC secret. Do not leave the dev default in prod.
+    share_link_secret: str = "dev-only-share-secret-change-me"
+    # TTL ceiling for share links (seconds). Default 24h.
+    share_link_max_ttl_s: int = 24 * 3600
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

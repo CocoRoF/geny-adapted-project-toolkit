@@ -202,7 +202,72 @@ curl -b /tmp/cookies.txt \
 - **GitHub Webhook ingress (`POST /api/integrations/github/webhook`) 미구현**: HMAC 검증 자체는 Cycle 4.1 의 `WebhookTarget` 에 패턴 있지만 ingress 라우터는 별도. 사용자 호스트가 외부 도달 가능한 경우만 의미 — M1 dogfood 단계는 manual polling 으로 충분.
 - **per-project SecretVault token lookup 미구현**: `settings.ci_github_token` 서버-wide dev 토큰만. 멀티 프로젝트 / 멀티 owner 시나리오는 `projects.git_auth_secret_ref` 룩업 추가 (별도 cycle).
 - **review/debug preset 에 CI 패널 자동 배치 안 함**: Cycle 3.13 에서 review preset 의 "ci" slot 을 audit panel 로 교체했음. CI 패널은 dockview component 로 등록되어 있어 사용자가 *custom layout* 으로 드래그 가능. 자동 배치는 dashboard cycle (4.6/4.7) 와 함께 재구성 예정.
-### Cycle 4.4 — Caddy subdomain 동적 등록 (대기)
+### Cycle 4.4 — Caddy subdomain 동적 등록 (✅ 완료 — *this commit*)
+
+[plan §4.4](../../plan/m1/e4_integration_dogfood_geny.md#cycle-44-——-caddy-subdomain-동적-등록-1-pr).
+
+**구성 (4 module + 1 router + 3 test, 18 case):**
+- `domains/caddy/admin_api.py` — `CaddyAdminClient` (`get/put/post/delete`) + `CaddyHttpTransport` (httpx 기반, 5s 타임아웃) + `CaddyAdminError` (stable code suffix `caddy.admin.{get,put,post,delete}_failed` / `server_error`). Transport 가 protocol — 테스트는 hand-rolled async callable 주입.
+- `domains/caddy/subdomain.py` — `SubdomainManager.register(binding) / unregister(slug) / list_routes()`:
+  - 라우트 페이로드: `@id`=`gapt-workspace-{slug}` (DELETE 시 `/id/{route_id}` 패턴으로 정확 1개 노드 타겟), `match.host`=`{slug}.{preview_domain}`, `handle.reverse_proxy.upstreams.dial`=`{host}:{port}`
+  - POST `/config/apps/http/servers/preview/routes/...` (Caddy 의 append-array 시맨틱), DELETE `/id/{route_id}`
+  - 404 on DELETE = 멱등 no-op (이미 없어진 라우트 재요청 안전)
+- `domains/caddy/share.py` — `issue_share_link / parse_share_link`:
+  - 형식: `{workspace_id}.{expiry_unix}.{hex_signature}`
+  - 서명: `HMAC-SHA256(secret, "{workspace_id}.{expiry}")`
+  - `hmac.compare_digest` 로 constant-time 비교 (timing side channel 방지)
+  - 에러 코드: `share.{invalid_ttl, malformed, bad_signature, expired}`
+- `routers/preview.py` — 3 endpoint:
+  - `POST /api/workspaces/{wid}/preview {upstream_host, upstream_port}` → 201 + `{host, workspace_id}` (Caddy 미설정 시 412 `preview.disabled`)
+  - `DELETE /api/workspaces/{wid}/preview` → 204 (Caddy 없어도 멱등 200)
+  - `POST /api/workspaces/{wid}/share?ttl_s=` → `{token, url, expires_in_s}` (`ttl_s > share_link_max_ttl_s` 면 400 `share.ttl_too_long`)
+  - 모든 endpoint `fetch_project_for` 멤버십 게이트 (403 if non-member)
+- `settings.py` — `caddy_admin_url`, `caddy_preview_domain`, `share_link_secret`, `share_link_max_ttl_s` (24h default).
+- `app.py` 가 `preview.router` include.
+
+**테스트 (18 case):**
+- `test_admin_and_subdomain.py` (7): GET 200/404, PUT 500 → CaddyAdminError, DELETE 404 swallow, register POST 페이로드 검증 (@id / host / dial), unregister /id/{slug} 타겟, unregister 404 멱등
+- `test_share.py` (5): round-trip, malformed token, bad signature (1 hex flip), expired, ttl ≤ 0
+- `test_routes.py` (6): register → Caddy POST, unregister → Caddy DELETE, Caddy 미설정 → 412 preview.disabled, share round-trip + URL 형식, ttl cap → 400, 비멤버 → 403
+
+**Gate:** ruff/mypy clean (76 src), 300 server tests (+18), openapi up to date.
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *Caddy 설정 시 가능*:**
+
+```bash
+# 1. Caddy 설정 (compose 또는 별도)
+# docker compose up caddy  # admin :2019, on-demand TLS, server "preview" 정의 필요
+# (compose/Caddyfile 의 정비는 Cycle 4.10 dogfood 와 함께)
+
+export GAPT_CADDY_ADMIN_URL="http://localhost:2019"
+export GAPT_CADDY_PREVIEW_DOMAIN="preview.localhost.dev"
+export GAPT_SHARE_LINK_SECRET="$(openssl rand -hex 32)"
+
+# 2. 서버 부팅 + 로그인 + 워크스페이스 생성 (이전 cycle 흐름)
+
+# 3. 프리뷰 등록
+curl -b /tmp/cookies.txt -X POST \
+  http://localhost:8001/api/workspaces/{wid}/preview \
+  -H "Content-Type: application/json" \
+  -d '{"upstream_host": "10.0.0.5", "upstream_port": 3000}'
+# → {"host": "01k....preview.localhost.dev", "workspace_id": "01K..."}
+
+# 4. 브라우저: https://01k....preview.localhost.dev/
+#    (Caddy on-demand TLS 가 자체서명 또는 Let's Encrypt 발급)
+
+# 5. 외부 공유 링크 발급
+curl -b /tmp/cookies.txt -X POST \
+  "http://localhost:8001/api/workspaces/{wid}/share?ttl_s=3600"
+# → {"token": "01K...12345.abcdef...", "url": "https://01k.../?share=...", "expires_in_s": 3600}
+```
+
+#### Plan 카드 대비 변경
+
+- **on-demand TLS 설정 미포함**: plan 의 "on-demand TLS" — Caddy 자체 설정. 본 cycle 은 admin API 만 wire (라우트 등록/해제). on-demand TLS 의 `ask` endpoint (등록된 워크스페이스만 cert 발급 허용) 는 Caddy 설정 + 별도 endpoint 필요 — Cycle 4.10 dogfood 의 compose 정비 단계에서 추가.
+- **사용자 SSO 인증 게이트 미연결**: plan 의 "M1-E1 세션 cookie 검증 — 기본". Caddy forward_auth 또는 reverse_proxy 의 인증 middleware 가 필요. 본 cycle 은 워크스페이스 멤버만 *프리뷰를 register* 할 수 있음 — *접근* 시 게이트는 Caddy 측 설정.
+- **공유 토글 UI 미연결**: backend `share` endpoint 만. PreviewPanel (Cycle 3.12) 에 share 버튼 추가는 추후 cycle / dogfood 단계.
+- **Caddy 설정 자체는 별도**: 서버는 admin API 호출만 함. Caddyfile / Caddy JSON config 의 `apps.http.servers.preview` server 정의는 운영자가 미리 부팅해야 함 — `docs/operations/install.md` (Cycle 4.12) 에 가이드 예정.
+- **routes_path 의 `...`**: Caddy 의 array append 시맨틱 — `/routes/...` 가 array 끝에 push. 직접 index 지정 (`/routes/0`) 보다 안전.
 ### Cycle 4.5 — PolicyEngine 4계층 config (대기, 2 PR)
 ### Cycle 4.6 — Audit Dashboard (대기)
 ### Cycle 4.7 — 비용 대시보드 + OTel + Prometheus (대기, 2 PR)
