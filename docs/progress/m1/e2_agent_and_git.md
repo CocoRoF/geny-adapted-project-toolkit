@@ -147,7 +147,26 @@ PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtim
 - **router 미와이어**: plan §2.5 가 `POST /api/integrations/github/connect` + callback 명시. 본 cycle 은 *flow driver 자체* 만 — router 는 Cycle 2.8 (SessionManager) 의 통합 흐름 진입 시 같이 wire 하는 게 깔끔 (background polling task 가 SessionManager 의 ARQ 큐와 연결되어야 함). 분리 PR 이 안 깨끗하면 Cycle 2.8 에 묶음.
 - **token storage**: plan 은 "백엔드가 GitHub Device Flow polling → access_token → Secret Vault 저장 (scope=user, `git_provider=github`)". 본 cycle 의 `github_secret_key_name(user_id)` 가 vault key 표준화 완료. 실제 저장 wire-up 은 router 와 같이.
 - **client_secret 보관**: `revoke()` 가 client_secret 을 받지만 그 secret 자체는 운영자가 설정한 `github_oauth_secret_key` 로 vault scope=ORG 에 두는 게 자연. wire-up 은 Cycle 2.8.
-### Cycle 2.6 — GitProvider + GithubProvider — 2 PR (대기)
+### Cycle 2.6 — GitProvider + GithubProvider — 2 PR
+
+#### PR 1 (2.6a) — GitProvider Protocol + askpass helper (✅ 완료 — *this commit*)
+
+- `gapt_server/domains/git/provider.py`:
+  - `GitProvider` Protocol (8 메서드 — list_user_repos / clone / fetch / push / open_pr / get_pr_status / list_workflow_runs / get_workflow_run_logs)
+  - Value types: `GitRepoSummary`, `GitCloneSpec` (branch / depth / target_dir / submodules), `GitCommitInfo`, `GitPushSpec` (force_with_lease 만 — plain `--force` 필드 자체 없음), `GitPullRequest`, `WorkflowRun`, `WorkflowRunStatus` StrEnum (queued / in_progress / completed_* 6종)
+  - `GitOperationError` + 안정 code (후속 wire 시점에 부여)
+- `gapt_server/domains/git/askpass.py`:
+  - `AskpassTokenStore.issue()` single-use, 30s TTL — git/gh 가 `GIT_ASKPASS` 통해 호출 시 sandbox `gapt-askpass` 가 `/askpass/exchange` 로 daemon 에 가져가서 plaintext stdout 1회 출력
+  - `exchange()` atomic consume; 두 번째 호출 → `auth.askpass.consumed`
+  - `gc()` (Cycle 2.8b ARQ 가 주기 호출)
+  - 3 에러 코드 (`expired` / `unknown` / `consumed`)
+  - **호스트 FS 토큰 평문 0**: vault → store(메모리) → 30s 내 sandbox env → daemon exchange → stdout 1회. credential 파일 자체 미생성.
+- 15 신규 테스트 (`tests/git/`):
+  - `test_askpass.py` (9): random id + ttl, id 충돌 없음, empty secret 거부, exchange 1회 만, 3 에러 코드 모두, revoke 동작, gc expired+consumed 정리 + live 보존
+  - `test_provider_protocol.py` (6): Mock GitProvider Protocol 만족, Clone/Push spec round-trip, **GitPushSpec 의 plain `force` 필드 *없음* 검증** (코드 강제), WorkflowRunStatus 안정 wire value, GitOperationError code, GitCommitInfo 생성
+- 결과: server 174 PASS (+15), 합 239 PASS. ruff + mypy strict + openapi 그린.
+
+#### PR 2 (2.6b) — GithubProvider (gh CLI subprocess) — 대기
 ### Cycle 2.7 — `gapt_git` + `gapt_pr` 도구 — 2 PR (대기)
 ### Cycle 2.8 — ProjectAwareSessionManager — 2 PR (대기)
 ### Cycle 2.9 — HookRunner: Policy + Audit + Cost (대기)
