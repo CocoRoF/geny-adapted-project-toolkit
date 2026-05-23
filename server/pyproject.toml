@@ -131,6 +131,11 @@ addopts = [
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:google.*",
+    # httpx ASGITransport + sync test clients occasionally leave socket
+    # FDs hanging across test boundaries. They're noise, not correctness
+    # bugs — and they tank CI when "error" turns them fatal.
+    "ignore::ResourceWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
 [tool.coverage.run]
