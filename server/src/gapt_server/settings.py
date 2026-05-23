@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # TTL ceiling for share links (seconds). Default 24h.
     share_link_max_ttl_s: int = 24 * 3600
 
+    # --- Notification webhooks (Cycle 4.8) ---
+    # Operator-set incoming webhook URLs. When unset, only the
+    # in-memory bell receives notifications. Per-user subscriptions
+    # land with a settings UI later.
+    slack_webhook_url: str | None = None
+    discord_webhook_url: str | None = None
+
     # --- PolicyEngine config (Cycle 4.5) ---
     # Path to the server-wide policy YAML (L2). When unset or missing
     # the built-in defaults (L1) apply. The loader enforces the

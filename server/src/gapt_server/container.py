@@ -31,6 +31,12 @@ from gapt_server.domains.audit.sink import (
     NullAuditSink,
     PostgresAuditSink,
 )
+from gapt_server.domains.notifications import (
+    DiscordWebhookChannel,
+    InMemoryChannel,
+    NotificationService,
+    SlackWebhookChannel,
+)
 from gapt_server.domains.sandbox import (
     MockSandboxBackend,
     SandboxBackend,
@@ -76,6 +82,7 @@ class AppContainer:
     session_manager: ProjectAwareSessionManager
     session_registry: SessionRegistry
     registry: MetricsRegistry
+    notifications: NotificationService
 
     async def aclose(self) -> None:
         await self.session_registry.aclose()
@@ -108,6 +115,7 @@ def build_container(
         sandbox_backend = _build_default_sandbox(settings)
 
     env_service = GaptEnvironmentService()
+    notifications = _build_notifications(settings)
 
     if settings.postgres_dsn is None:
         sink_noop = audit_sink or NullAuditSink()
@@ -125,6 +133,7 @@ def build_container(
             ),
             session_registry=SessionRegistry(),
             registry=MetricsRegistry(),
+            notifications=notifications,
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
@@ -150,7 +159,21 @@ def build_container(
         session_manager=ProjectAwareSessionManager(env_service=env_service, audit_sink=sink),
         session_registry=SessionRegistry(),
         registry=MetricsRegistry(),
+        notifications=notifications,
     )
+
+
+def _build_notifications(settings: Settings) -> NotificationService:
+    """Assemble channels from the operator-set env. M1 is always
+    operator-set; per-user URLs land with a settings UI later."""
+    from gapt_server.domains.notifications.channel import Channel  # noqa: PLC0415
+
+    channels: list[Channel] = [InMemoryChannel()]
+    if settings.slack_webhook_url:
+        channels.append(SlackWebhookChannel(settings.slack_webhook_url))
+    if settings.discord_webhook_url:
+        channels.append(DiscordWebhookChannel(settings.discord_webhook_url))
+    return NotificationService(channels=channels)
 
 
 def _build_default_sandbox(settings: Settings) -> SandboxBackend:
@@ -226,6 +249,12 @@ def get_session_registry(
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> SessionRegistry:
     return container.session_registry
+
+
+def get_notifications(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> NotificationService:
+    return container.notifications
 
 
 def attach_container(app: FastAPI, container: AppContainer) -> None:

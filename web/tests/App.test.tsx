@@ -9,10 +9,23 @@ import App from "@/app/App";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
+function pathOf(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.pathname + input.search;
+  return input.url;
+}
+
 function mockFetchOnce(handler: (input: RequestInfo | URL, init?: RequestInit) => Response) {
-  globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
-    Promise.resolve(handler(input, init)),
-  );
+  globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    // The notification bell polls in the background; route it to an
+    // empty array so it doesn't piggyback on the main handler.
+    if (pathOf(input).startsWith("/api/notifications")) {
+      return Promise.resolve(
+        new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    }
+    return Promise.resolve(handler(input, init));
+  });
 }
 
 beforeEach(() => {

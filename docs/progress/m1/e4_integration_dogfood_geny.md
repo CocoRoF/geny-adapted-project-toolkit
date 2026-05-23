@@ -463,7 +463,81 @@ curl http://localhost:8001/metrics
 - **CAP 게이지 + UI 미구현**: plan 의 "cap 설정 + 게이지". cap 설정 자체가 SettingsService UI 가 필요 — 4.8 알림 cycle 의 cost-cap-80%-도달 트리거와 함께.
 - **recharts 미사용**: plan 명시. 기존 메모리 (no decorative chrome / bundle size 우려) + Plan 3.10 deferred 카탈로그 → CSS 바로 대체.
 - **prometheus_client 의존성 추가 안 함**: 자체 14줄짜리 exposition format 렌더가 충분. global registry / process collector 가 가져오는 부작용 회피.
-### Cycle 4.8 — 알림 (대기)
+### Cycle 4.8 — 알림 (✅ 완료 — *this commit*, per-user subscription UI deferred)
+
+[plan §4.8](../../plan/m1/e4_integration_dogfood_geny.md#cycle-48-——-알림-1-pr).
+
+**스코프 축소 사유**: plan 의 "사용자별 알림 설정 페이지 + 이메일 채널 + cost cap 80% 트리거" 는 cost-cap 설정 UI + SMTP 통합 + per-user webhook URL 저장 (SecretVault wire) 가 필요. 본 cycle 은 **3 채널 (메모리/Slack/Discord) + bell UI + deploy 후 자동 emit + test endpoint** 까지. 운영자가 GAPT_SLACK_WEBHOOK_URL / GAPT_DISCORD_WEBHOOK_URL 환경변수로 wire — per-user 는 4.10 dogfood 와 함께.
+
+**서버 (3 module + 1 router + 2 test, 9+3 case):**
+- `domains/notifications/channel.py` — `Channel` Protocol + 3 impl:
+  - `InMemoryChannel` (no-op marker — 서비스 ring buffer 가 실제 저장소)
+  - `SlackWebhookChannel` (Slack incoming webhook POST, severity 별 emoji + color)
+  - `DiscordWebhookChannel` (Discord webhook POST, embed 사용)
+  - 둘 다 `WebhookPoster` callable injectable → 테스트는 hand-rolled poster, 기본은 httpx
+  - `NotificationError("notification.{slack,discord}.http_status")` for 4xx/5xx
+- `domains/notifications/service.py` — `NotificationService`:
+  - Per-actor ring buffer (`deque(maxlen=50)`), broadcast bucket (`actor_id=None`)
+  - `emit(...)` → ring 추가 + 모든 channel 에 deliver (channel 에러는 swallow + log, 호출자 crash 없음)
+  - `list_for(actor_id, limit)` → 자기 ring + broadcast ring merge, ts desc sort
+  - asyncio.Lock 으로 ring mutation 직렬화
+- `routers/notifications.py` — 2 endpoint:
+  - `GET /api/notifications?limit` → 현재 actor 의 ring 반환
+  - `POST /api/notifications/test {kind?, title?, body?, severity?}` → 등록된 모든 채널로 테스트 emit (운영자가 Slack/Discord wire 확인)
+- `settings.py` — `slack_webhook_url`, `discord_webhook_url` (모두 optional). 미설정 시 InMemoryChannel 만.
+- `container.py` — `AppContainer.notifications: NotificationService` 필드 + `_build_notifications(settings)` 가 channel 조합.
+- `routers/deploy.py` — `trigger_deploy` 결과에 따라 `notifications.emit(kind=DEPLOY_SUCCESS/FAILED, severity=info/error, project_id, details)` 자동 호출. Slack/Discord 설정 시 외부로도 push.
+
+**테스트 (12 case):**
+- `tests/notifications/test_service.py` (6, unit, no DB): emit → ring append, broadcast → 모든 actor 가 봄, Slack body 검증 (color + project field), Discord embed, channel 실패 swallow, ring 50 cap
+- `tests/notifications/test_routes.py` (3, Postgres): test endpoint → feed 반영, per-user 격리 (alice's note 가 mallory 에게 안 보임), 비인증 → 401
+
+**Gate:** server ruff/mypy clean (90 src), 339 server tests (+9, unit 6 + integration 3). Web typecheck/lint/format clean, 89 web tests (+3).
+
+**웹 (3 file + 1 test, 3 case, i18n 3 키):**
+- `src/api/notifications.ts` — `listNotifications(limit)` + `emitTestNotification(payload)` + 타입
+- `src/notifications/NotificationBell.tsx`:
+  - 헤더 chip (🔔 + unread 배지)
+  - 30s polling + dropdown 열 때 refresh
+  - lastSeenRef 로 "이전 열기 이후 새 알림" unread 카운트
+  - dropdown: title/body/relative time/kind code, severity별 className
+  - 배열 아닌 응답 방어 (Array.isArray)
+- `src/app/layouts/AppShellLayout.tsx` 헤더에 `<NotificationBell />` (로그인 시만)
+- i18n 3 키 (en+ko): notifications.title / empty / refresh
+- `tests/NotificationBell.test.tsx` (3 case): 응답 → 배지 + 리스트 / empty state / 500 → alert
+- `tests/App.test.tsx` mockFetchOnce 가 /api/notifications 를 빈 배열로 라우팅 (헤더 폴링이 메인 mock 가로채는 것 방지)
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. (옵션) Slack/Discord webhook 설정
+export GAPT_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export GAPT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+
+cd server && uv run uvicorn gapt_server.app:app --port 8001
+
+# 2. 로그인 후 테스트 알림 발사
+curl -b /tmp/cookies.txt -X POST http://localhost:8001/api/notifications/test \
+  -H "Content-Type: application/json" \
+  -d '{"title": "hello", "body": "wired!", "severity": "warn"}'
+# → 메모리 ring + Slack + Discord 모두에 도착
+
+# 3. 알림 피드 확인
+curl -b /tmp/cookies.txt http://localhost:8001/api/notifications | jq
+
+# 4. 웹 UI: 헤더 우측 🔔 아이콘 → unread 배지 → 드롭다운 펼침
+#    Slack/Discord 가 설정돼 있으면 그곳에서도 즉시 메시지 수신
+#    Deploy 트리거 (POST /api/environments/:eid/deploy) 후 자동 알림 발사
+```
+
+#### Plan 카드 대비 변경
+
+- **per-user 알림 설정 페이지 미구현**: plan 의 사용자별 webhook/이메일 등록 UI. SecretVault 에 per-user `notify.slack_url` 등을 저장하는 wire 필요 — 4.10 dogfood 단계에서 통합.
+- **이메일 채널 미구현**: SMTP 통합 + 이메일 템플릿 디자인. 4.10 또는 M2.
+- **cost cap 80% 도달 트리거 미구현**: cost cap 설정 자체가 SettingsService UI 부재 (4.7 도 deferred). 4.10 에서 cap settings + 트리거.
+- **CI 그린/실패 트리거 미구현**: 4.3 의 CI 가 polling-only (no Redis/ARQ). 자동 trigger 는 webhook ingress 가 들어와야 함 (M2).
+- **정책 거부 자동 알림 미구현**: 현재는 audit 만. policy hook 에 `notifications.emit` 추가는 PolicyHookConfig 가 NotificationService 의존성 받아야 — separate cycle.
+- **per-channel retry/backoff 미구현**: 4xx/5xx 한번 시도 후 fail. 신뢰성 강화는 M2.
 ### Cycle 4.9 — 헤드리스 oneshot API (대기)
 ### Cycle 4.10 — Dogfood: GAPT에 GAPT 등록 (대기)
 ### Cycle 4.11 — Geny 첫 어댑트 (M1 마지막 게이트) (대기)

@@ -5,6 +5,7 @@ import { ThemeSwitcher } from "@/app/ThemeSwitcher";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { LanguageSwitcher } from "@/i18n/LanguageSwitcher";
+import { NotificationBell } from "@/notifications/NotificationBell";
 
 /** Top-level chrome shared by every authenticated route. Header has
  * locale switcher + sign-out; main slot is the route. */
@@ -19,6 +20,7 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
           <h1>{t("app.title")}</h1>
         </Link>
         <nav className="app-header-actions">
+          {status === "signed_in" && me ? <NotificationBell /> : null}
           <ThemeSwitcher />
           <LanguageSwitcher locale={locale} onChange={setLocale} />
           {status === "signed_in" && me ? (

@@ -24,6 +24,7 @@ from sqlalchemy import select
 from gapt_server.container import (
     get_audit_sink,
     get_db_session,
+    get_notifications,
     get_policy_engine,
 )
 from gapt_server.db import enums, models
@@ -41,6 +42,7 @@ from gapt_server.domains.deploy import (
     TwoFactorVerifier,
     WebhookTarget,
 )
+from gapt_server.domains.notifications import NotificationKind, NotificationService
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.policy.engine import PolicyEngine  # noqa: TC001
 from gapt_server.routers.auth import get_current_user
@@ -158,6 +160,7 @@ async def trigger_deploy(
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
+    notifications: NotificationService = Depends(get_notifications),  # noqa: B008
 ) -> DeployResultResponse:
     env_row = await _resolve_env(db, env_id=env_id)
     try:
@@ -215,6 +218,22 @@ async def trigger_deploy(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"code": exc.code, "reason": str(exc)},
             ) from exc
+
+    # Emit a notification regardless of channel — the in-memory ring
+    # buffer is always populated so the web bell sees it.
+    is_success = result.status == DeployStatusKind.SUCCESS
+    await notifications.emit(
+        kind=NotificationKind.DEPLOY_SUCCESS if is_success else NotificationKind.DEPLOY_FAILED,
+        title=f"Deploy {result.status.value}: {env_row.name}",
+        body=(
+            f"Project={env_row.project_id} version={payload.version}"
+            + (f" exec_code={result.exec_code}" if result.exec_code else "")
+        ),
+        actor_id=user.id,
+        project_id=env_row.project_id,
+        severity="info" if is_success else "error",
+        details={"run_id": result.run_id, "env_id": env_row.id},
+    )
 
     return DeployResultResponse(
         run_id=result.run_id,

@@ -181,6 +181,11 @@ export const en = {
   "cost.daily.empty": "No sessions for this project in the window.",
   "cost.daily.error": "Failed to load daily breakdown.",
 
+  // --- Notifications (Cycle 4.8) ---
+  "notifications.title": "Notifications",
+  "notifications.empty": "No notifications yet.",
+  "notifications.refresh": "Refresh notifications",
+
   // --- Command palette ---
   "palette.open": "Command palette",
   "palette.placeholder": "Type a command…",

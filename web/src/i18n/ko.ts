@@ -180,6 +180,11 @@ export const ko: Record<keyof typeof en, string> = {
   "cost.daily.empty": "이 프로젝트에 해당 범위의 세션이 없습니다.",
   "cost.daily.error": "일별 집계를 불러오지 못했습니다.",
 
+  // --- Notifications (Cycle 4.8) ---
+  "notifications.title": "알림",
+  "notifications.empty": "아직 알림이 없습니다.",
+  "notifications.refresh": "알림 새로고침",
+
   // --- Command palette ---
   "palette.open": "명령 팔레트",
   "palette.placeholder": "명령 입력…",

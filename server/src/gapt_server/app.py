@@ -19,6 +19,7 @@ from gapt_server.routers import (
     deploy,
     health,
     metrics,
+    notifications,
     policies,
     preview,
     projects,
@@ -97,6 +98,7 @@ def create_app(
     app.include_router(policies.router)
     app.include_router(cost.router)
     app.include_router(metrics.router)
+    app.include_router(notifications.router)
     return app
 
 
