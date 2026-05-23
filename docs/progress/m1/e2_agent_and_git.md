@@ -67,7 +67,30 @@
 
 - **함수명/시그너처 통일**: plan §2.2 의 `build_for_session(project, workspace, session, secret_vault, daemon_socket, bridge_token)` 시그너처를 본 cycle 은 더 narrow 하게 가져감 — `daemon_socket` / `bridge_token` 은 Cycle 2.3 (MCP bridge) 가 mcp_config 구조 안에 인라인으로 넣을 예정이라 여기서 받지 않음. `project` / `workspace` / `session` 객체 통째 전달도 본 cycle 은 `actor_id` 만 받아 audit 에 쓰는 식으로 가벼움 유지. ProjectAwareSessionManager (Cycle 2.8) 가 wrapper 로 객체→인자 풀어주는 역할.
 - **plaintext zeroize**: plan 명시 "메모리에만, 부팅 후 즉시 zeroize". Python 한계 — `str` 은 true zeroize 불가. `del plaintext` + loop 다음 iter 진입으로 reference 빠르게 drop 하는 best-effort 수준. 모듈 docstring 에 명시.
-### Cycle 2.3 — MCP stdio bridge 프로덕션화 (대기)
+### Cycle 2.3 — MCP stdio bridge 프로덕션화 (✅ 완료 — *this commit*)
+
+PoC `poc/mcp_bridge/server.py` (인라인 dispatch) 를 `runtime/src/gapt_runtime/mcp_bridge/` 패키지로 promote 하면서 데몬 RPC 모델로 재구성.
+
+- `runtime/src/gapt_runtime/mcp_bridge/client.py` — `DaemonClient` (HTTP-over-unix-socket via `httpx.AsyncHTTPTransport(uds=...)`). `list_tools()` + `call_tool()`. 401 → `exec.tool.transport`, 404 on call → 페이로드 `exec.tool.unknown` (예외 X — MCP layer 가 `isError=true` 로 변환할 수 있도록), 5xx → 1회 retry 후 `exec.tool.transport`. Bearer JWT 자동 첨부.
+- `runtime/src/gapt_runtime/mcp_bridge/server.py` — MCP stdio server. `build_server(daemon=...)` 가 DI 친화 (테스트 / 부팅 모두 동일 코드). 환경변수 `GAPT_BRIDGE_DAEMON_SOCK` + `GAPT_BRIDGE_TOKEN` 검증, `GAPT_BRIDGE_AUDIT` 옵셔널 JSONL, `GAPT_BRIDGE_TIMEOUT_S` per-RPC timeout. `tools/list` 실패 시 *빈 도구 목록* 반환 (CLI 가 "no tools" 로 정상 표시). `tools/call` 의 transport error / policy denial 모두 MCP `TextContent` 로 변환되어 LLM 이 자연어 설명 가능.
+- `runtime/pyproject.toml` — `mcp>=1.0.0` + `httpx>=0.27` 의존성 추가, `gapt-mcp-bridge` console script 등록.
+- 테스트 10개 (`runtime/tests/test_mcp_bridge_client.py`):
+  - 실 aiohttp + UnixSite 위에서 happy path list/call
+  - 401 unauthorized → `exec.tool.transport`
+  - 5xx server error → `exec.tool.transport`
+  - 404 unknown tool → 페이로드 `exec.tool.unknown` (raise X)
+  - 200 ok=false policy denied → 페이로드 `exec.tool.access_denied`
+  - malformed list response → `exec.tool.transport`
+  - dead socket → retry 1 회 후 transport error (attempts 카운트 포함 메시지)
+  - `_build_client_from_env` 가 env 미설정 시 RuntimeError raise
+  - `_audit` 가 env 없으면 noop, 있으면 JSONL write
+- 결과: runtime 37 PASS (+10), server 147 PASS 유지 → 합 184 PASS. ruff + mypy strict 그린.
+
+#### Plan 카드 대비 변경
+
+- **mTLS 미적용**: plan §2.3 는 "mTLS unix socket". 본 cycle 은 unix socket + JWT (Bearer) 만 — sandbox 내부 동일 호스트라 mTLS 의 추가 보안 이득이 낮음 + Sysbox 격리가 socket 접근 제어. mTLS 는 다중 노드 배치 시 (M2+) 도입.
+- **streaming 응답 미지원**: plan §2.3 가 "응답 streaming (긴 결과)". 본 cycle 은 일회성 JSON 응답 — MCP `tools/call` 자체가 single-shot 이라 LLM 측 변화 없음. 큰 결과 (예: 대형 파일 read) 는 Cycle 2.4 `gapt_read` 가 chunk 분할로 처리 예정.
+- **PolicyEngine 평가 위치**: plan §2.3 가 "PolicyEngine 평가 결과를 컨트롤 플레인이 반환". 본 cycle 의 bridge 는 policy-blind — 데몬이 응답 `ok=false` + `error.code` 로 정책 거부를 표현, bridge 는 코드 그대로 `TextContent` 에 형식화. 데몬 측 PolicyEngine 호출은 Cycle 2.4 / 2.9 에서 wire-up.
 ### Cycle 2.4 — GaptToolProvider (Read/Glob/Grep/Edit) (대기)
 ### Cycle 2.5 — GitHub OAuth Device Flow (대기)
 ### Cycle 2.6 — GitProvider + GithubProvider — 2 PR (대기)
