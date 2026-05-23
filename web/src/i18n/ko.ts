@@ -143,6 +143,21 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.tool.args": "인자",
   "chat.shortcut.esc": "Esc 키로 중단할 수 있습니다.",
 
+  // --- Cost panel ---
+  "cost.open": "비용 세부",
+  "cost.title": "세션 비용",
+  "cost.close": "닫기",
+  "cost.session_total": "이 세션 누적",
+  "cost.tokens.input": "입력 토큰",
+  "cost.tokens.output": "출력 토큰",
+  "cost.tool_calls": "도구 호출",
+  "cost.tool_duration": "도구 실행 시간",
+  "cost.by_tool": "도구별",
+  "cost.no_tools": "아직 호출된 도구가 없습니다.",
+  "cost.guard_rejected.title": "비용 또는 정책 한도에 도달했습니다",
+  "cost.guard_rejected.body": "에이전트가 설정된 가드레일에 도달하여 이번 턴을 중단했습니다.",
+  "cost.guard_rejected.dismiss": "닫기",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   "exec.api.auth.expired": "제공자 토큰이 만료되었습니다 — 재인증 필요.",
   "exec.api.auth.invalid_key": "API 키가 잘못되었거나 제공자가 거부했습니다.",

@@ -338,7 +338,38 @@
 - **`@file` / `@tool` 자동완성 미구현**: plan §3.8 에 명시 — Cycle 3.11 (명령 팔레트) 가 키맵 binding 으로 wire-up.
 - **결과 접힘 toggle 만 — markdown render 없음**: plan §3.8 의 "memoized markdown render" 는 텍스트 메시지용. 본 cycle 의 ToolCallCard 는 raw JSON `<pre>` — 도구 결과는 구조화 데이터라 markdown 부적절. text chunk 렌더링용 markdown 은 추후 cycle (사용자 채팅 텍스트가 markdown 인 경우).
 - **gapt_edit 의 이중 카드**: tool_call → ToolCallCard, 그리고 tool_result → DiffCard. 의도적 — 카드는 "도구가 호출됐다" 의 메타데이터, DiffCard 는 변경 내용 시각화. 둘 다 가치 있음.
-### Cycle 3.10 — 비용 / 컨텍스트 라이브 패널 (대기)
+### Cycle 3.10 — 비용 / 컨텍스트 라이브 패널 (✅ 완료 — *this commit*)
+
+[plan §3.10](../../plan/m1/e3_web_ide_shell.md#cycle-310-——-비용--컨텍스트-라이브-패널-1-pr).
+
+**구성 (3 module + 1 test, 8 case):**
+- `src/chat/cost-snapshot.ts` — `CostSnapshot` 인터페이스 (`cost_usd / input_tokens / output_tokens / tool_calls / tool_duration_ms / by_tool`) — `gapt_server.agent.hooks.cost_hook.CostAccumulator.snapshot()` (Cycle 2.9) 와 1:1 매핑. `deriveCostSnapshot(events)` 가 events 배열 끝에서부터 최근 `cost` 이벤트 찾아 reduce, 누락 필드 0 fallback. `formatMs(ms)` 헬퍼 (sub-second → "340 ms", 그 외 "1.23 s").
+- `src/chat/CostModal.tsx` — `<dialog role="dialog" aria-modal>` 모달:
+  - `<dl>` 그리드 (cost_usd / input_tokens / output_tokens / tool_calls / tool_duration_ms)
+  - by_tool 도구별 카운트 (descending sort) — 없으면 "No tools" 메시지
+  - 닫기 버튼 (헤더 × + 푸터)
+- `src/chat/GuardRejectedAlert.tsx` — `role="alertdialog"` 배너 모달. `exec.stage.guard_rejected` exec_code 친화 메시지 (`execMessage` 자동 i18n) + raw reason + Dismiss 버튼.
+- ChatPanel 통합:
+  - 인라인 cost 헤더가 `<button>` 으로 바뀜 (`onClick → setShowCostModal(true)`, aria-haspopup="dialog")
+  - `<CostModal>` conditionally 마운트, snapshot 은 `deriveCostSnapshot` 결과 전달
+  - `useEffect` 가 stream.events 의 최근 error 를 watch — `exec_code === "exec.stage.guard_rejected"` 면 `setGuardSeq(seq)` → `<GuardRejectedAlert>` open. `dismissedGuardSeq` ref 가 같은 seq 의 재오픈 방지.
+  - 기존 inline `CostSnapshot` 타입 / reducer 제거, `deriveCostSnapshot` 으로 통합.
+- i18n 14 키 추가 (en/ko): cost.open / title / close / session_total, cost.tokens.input/output, cost.tool_calls / tool_duration / by_tool / no_tools, cost.guard_rejected.title/body/dismiss.
+
+**테스트 (`tests/cost.test.tsx`, 8 case):**
+- `deriveCostSnapshot`: 빈 events → zero snapshot, 여러 cost 이벤트 중 최근 선택, 누락 필드 0 coerce
+- `formatMs`: 340 → "340 ms", 1234 → "1.23 s"
+- `<CostModal>`: total 표시, by_tool descending list 렌더, 빈 by_tool → "No tools" 메시지
+- `<GuardRejectedAlert>`: 친화 메시지 + reason 표시, Dismiss 콜백 호출
+
+**Gate:** lint clean, typecheck clean, 62 web test pass (+8), build 성공 (793 kB / 188 kB gz), format clean.
+
+#### Plan 카드 대비 변경
+
+- **recharts 일별 그래프 미구현**: plan §3.10 이 "일별 그래프 (recharts)" 명시. recharts (~150 KB) 가 번들 부담이고, M1 의 dogfood 단계에서는 세션 스냅샷이면 충분. 추후 Cycle 3.13 (audit panel) 가 일별 집계와 함께 ship 하는 게 자연.
+- **1초 디바운스 미적용**: plan 이 "1초 디바운스" 명시. 백엔드 `on_cost_update` (Cycle 2.9) 가 POST_TOOL_USE 빈도 (~1 Hz max) 로 자연 디바운스. 클라이언트 추가 throttle 불필요. M2 Redis 단계에서 frequency 가 변하면 wrap.
+- **"더 진행" 정책 완화 가이드 링크 미구현**: plan 이 guard_rejected 모달의 "더 진행 (정책 완화 가이드 링크)" 명시. 본 구현은 Dismiss 만 — 정책 편집 UI 자체가 M1-E4 영역.
+- **cost 헤더가 버튼화**: plan 산출물 표에 `CostHeader.tsx` 명시. 본 구현은 ChatPanel 헤더 안의 `<button>` (별도 컴포넌트 분리 안 함) — Cycle 3.11 명령 팔레트에서 cost 관련 액션 추가 시 분리 고려.
 ### Cycle 3.11 — 명령 팔레트 + 단축키 (대기)
 ### Cycle 3.12 — 프리뷰 iframe + 외부 공유 (대기)
 ### Cycle 3.13 — CI / Audit / Logs 패널 (대기)

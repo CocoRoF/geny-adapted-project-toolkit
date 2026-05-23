@@ -144,6 +144,21 @@ export const en = {
   "chat.tool.args": "Arguments",
   "chat.shortcut.esc": "Press Esc to interrupt.",
 
+  // --- Cost panel ---
+  "cost.open": "Cost details",
+  "cost.title": "Session cost",
+  "cost.close": "Close",
+  "cost.session_total": "Total this session",
+  "cost.tokens.input": "Input tokens",
+  "cost.tokens.output": "Output tokens",
+  "cost.tool_calls": "Tool calls",
+  "cost.tool_duration": "Tool wall time",
+  "cost.by_tool": "By tool",
+  "cost.no_tools": "No tools have been called yet.",
+  "cost.guard_rejected.title": "Cost or policy limit reached",
+  "cost.guard_rejected.body": "The agent paused this turn because it hit a configured guard rail.",
+  "cost.guard_rejected.dismiss": "Dismiss",
+
   // --- exec.*.* error codes (geny-executor stable identifiers) ---
   // Source: geny_executor.errors. Keep keys spelt verbatim.
   "exec.api.auth.expired": "Provider token expired — re-authenticate.",

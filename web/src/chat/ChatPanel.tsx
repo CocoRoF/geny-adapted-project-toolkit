@@ -11,7 +11,10 @@ import {
   listSessions,
 } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
+import { CostModal } from "@/chat/CostModal";
+import { deriveCostSnapshot, type CostSnapshot as FullCostSnapshot } from "@/chat/cost-snapshot";
 import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
+import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
 import { ToolCallCard } from "@/chat/ToolCallCard";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
@@ -23,12 +26,6 @@ const PLAN_PREFIX = "(Plan mode) Outline the steps without modifying any files:"
 interface Props {
   projectId: string;
   workspaceId: string;
-}
-
-interface CostSnapshot {
-  cost_usd: number;
-  input_tokens: number;
-  output_tokens: number;
 }
 
 /** Live chat panel.
@@ -52,6 +49,9 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("act");
+  const [showCostModal, setShowCostModal] = useState(false);
+  const [guardSeq, setGuardSeq] = useState<number | null>(null);
+  const dismissedGuardSeq = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Pull existing sessions on mount so a reload doesn't strand the
@@ -202,21 +202,27 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     return set;
   }, [toolPairs]);
 
-  const cost = useMemo<CostSnapshot>(() => {
-    // Pull the most recent `cost` event for the live header.
+  const cost = useMemo<FullCostSnapshot>(() => deriveCostSnapshot(stream.events), [stream.events]);
+
+  // Surface `exec.stage.guard_rejected` errors as a modal alert. We
+  // track which seq fired so the modal doesn't re-pop if the user
+  // dismissed it and another event arrives.
+  useEffect(() => {
     for (let i = stream.events.length - 1; i >= 0; i -= 1) {
       const ev = stream.events[i];
-      if (ev?.kind === "cost") {
-        const data = ev.data as Partial<CostSnapshot>;
-        return {
-          cost_usd: typeof data.cost_usd === "number" ? data.cost_usd : 0,
-          input_tokens: typeof data.input_tokens === "number" ? data.input_tokens : 0,
-          output_tokens: typeof data.output_tokens === "number" ? data.output_tokens : 0,
-        };
+      if (ev?.kind !== "error") continue;
+      const code = typeof ev.data["exec_code"] === "string" ? ev.data["exec_code"] : "";
+      if (code === "exec.stage.guard_rejected" && dismissedGuardSeq.current !== ev.seq) {
+        setGuardSeq(ev.seq);
       }
+      break; // only care about the most recent error
     }
-    return { cost_usd: 0, input_tokens: 0, output_tokens: 0 };
   }, [stream.events]);
+
+  const guardEvent = useMemo(
+    () => (guardSeq != null ? (stream.events.find((e) => e.seq === guardSeq) ?? null) : null),
+    [guardSeq, stream.events],
+  );
 
   return (
     <div className="chat-panel" data-panel-kind="chat">
@@ -244,13 +250,20 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 {t("chat.mode.act")}
               </button>
             </div>
-            <span className="chat-panel-cost" data-testid="chat-cost">
+            <button
+              type="button"
+              className="chat-panel-cost chat-panel-cost-button"
+              data-testid="chat-cost"
+              onClick={() => setShowCostModal(true)}
+              aria-haspopup="dialog"
+              aria-label={t("cost.open")}
+            >
               {t("chat.cost.live")} ·{" "}
               {t("chat.cost.usd").replace("{amount}", cost.cost_usd.toFixed(4))} ·{" "}
               {t("chat.cost.tokens")
                 .replace("{input}", String(cost.input_tokens))
                 .replace("{output}", String(cost.output_tokens))}
-            </span>
+            </button>
           </>
         ) : null}
       </header>
@@ -357,6 +370,18 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           ) : null}
         </>
       )}
+
+      {showCostModal ? <CostModal snapshot={cost} onClose={() => setShowCostModal(false)} /> : null}
+
+      {guardEvent ? (
+        <GuardRejectedAlert
+          reason={typeof guardEvent.data["reason"] === "string" ? guardEvent.data["reason"] : null}
+          onDismiss={() => {
+            dismissedGuardSeq.current = guardEvent.seq;
+            setGuardSeq(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
