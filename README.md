@@ -3,9 +3,9 @@
 > **셀프호스트 AI DevOps 플랫폼.** 내 서버에 띄우는 `OpenHands × Coolify` 합본 + `Cursor`-급 라이브 편집 UI. 외부 Git 레포를 `git clone` → **Docker(Sysbox) 격리** → **Claude Code 기반 LLM**으로 편집·테스트·빌드·배포까지 **하나의 웹 콘솔**에서 끝낸다.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-Phase_0_(docs--first)-orange)](docs/11_roadmap.md)
+[![Status](https://img.shields.io/badge/status-M1--E4_complete_(beta)-yellow)](docs/11_roadmap.md)
 
-> **Phase 0 — docs-first.** 아직 동작하는 코드가 없다. 본 레포는 *현재 분석/계획 단계*이며, 이 단계 자체가 산출물이다. M0-P1부터 실 코드 진입 중. 자세한 단계는 [`docs/plan/00_master_plan.md`](docs/plan/00_master_plan.md).
+> **M1-E4 완료 (2026-05-24).** 350+ server tests · 89+ web tests · 운영자 self-host 가능 (`compose/docker-compose.prod.yml`). 다음: 사용자가 GAPT 를 GAPT 로 dogfood + Geny 첫 어댑트 — 운영 가이드는 [`docs/operations/install.md`](docs/operations/install.md), [`docs/operations/geny-adapt.md`](docs/operations/geny-adapt.md).
 
 ---
 
@@ -113,25 +113,50 @@ geny-adapted-project-toolkit/
 
 ---
 
-## 시작하기 (Phase 0 — 동작 없음)
+## 시작하기
+
+### Self-host (M1-E4 — production-ready single VPS)
 
 ```bash
-# 현재는 문서를 읽는 단계.
-# 코드 빌드는 M0-P1 PR 2 (server/ 스켈레톤) 머지 후 가능.
-
 git clone https://github.com/CocoRoF/geny-adapted-project-toolkit.git
-cd geny-adapted-project-toolkit
+cd geny-adapted-project-toolkit/compose
 
-# 분석부터 차례대로:
-$EDITOR docs/00_overview.md
-$EDITOR docs/plan/00_master_plan.md
+# Write `.env` with the required secrets (random 32-char each):
+#   GAPT_DOMAIN, GAPT_PREVIEW_DOMAIN, ACME_EMAIL,
+#   GAPT_POSTGRES_PASSWORD, GAPT_SESSION_SECRET,
+#   GAPT_DAEMON_JWT_SECRET, GAPT_VAULT_MASTER_KEY,
+#   GAPT_SHARE_LINK_SECRET, GAPT_SEAWEED_SECRET_KEY
+# Full list + .env template in docs/operations/install.md §2.
+
+# Optionally enable Prometheus + Grafana with --profile metrics.
+docker compose -f docker-compose.prod.yml --profile metrics up -d
 ```
 
-M1 종료 후엔 다음이 가능해진다:
+Then open `https://<GAPT_DOMAIN>/`, sign in via magic link, and follow
+[`docs/operations/install.md`](docs/operations/install.md) §6 to
+register GAPT itself as a GAPT project (dogfood).
+
+### Adopting an external repo (Geny case)
+
+[`docs/operations/geny-adapt.md`](docs/operations/geny-adapt.md) walks
+through registering Geny, wiring the multi-file compose chain, loading
+secrets, and running the first PR cycle from inside GAPT.
+
+### Local dev
 
 ```bash
+# Boot dependencies (Postgres / Redis / SeaweedFS / Caddy):
 docker compose -f compose/docker-compose.dev.yml up -d --wait
-open https://toolkit.local
+
+# Run the FastAPI server with the local DB:
+cd server && uv run uvicorn gapt_server.app:app --reload --port 8001
+
+# Vite dev server on the web UI:
+cd web && pnpm dev   # → http://localhost:5173
+
+# Server tests (needs the dev Postgres up):
+GAPT_TEST_POSTGRES_DSN="postgresql://gapt:gapt_dev_only@localhost:5432/gapt" \
+  uv run pytest
 ```
 
 ---

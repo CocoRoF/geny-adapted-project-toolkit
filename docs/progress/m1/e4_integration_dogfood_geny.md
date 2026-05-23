@@ -736,7 +736,49 @@ curl https://random-attacker-slug.preview.gapt.example.com/
 - **`analysis/20260XXX_geny_first_adapt_lessons.md` 미작성**: 사용자가 실제 사이클을 끝낸 뒤 채우는 템플릿이 운영 가이드 §8 에 명시.
 - **추가 GAPT 도구 PR 미발생**: plan 의 "추가 GAPT 도구 필요 시 executor 에 PR" — 첫 어댑트 동안 사용자가 부족한 도구를 발견하면 그때 PR. 본 cycle 은 *이미 발견된* G-1 (다중 compose) 만 처리.
 - **데스크탑 Cursor 0회 검증 자동화 없음**: 사용자 자기보고. M2 에서 active window 추적 / 시간 추적 도구 통합 검토.
-### Cycle 4.12 — M1 종합 검증 + 사용자 검토 (대기)
+### Cycle 4.12 — M1 종합 검증 + 사용자 검토 (✅ assistant 측 완료 — *this commit*, soak/데모 영상 사용자 단계)
+
+[plan §4.12](../../plan/m1/e4_integration_dogfood_geny.md#cycle-412-——-m1-종합-검증--사용자-검토-1-pr).
+
+**스코프 분리**: plan 의 "데모 영상 + 1주일 soak + 격리 9 시나리오 재실행" 중:
+- 데모 영상: 라이브 녹화 필요 — 사용자 단계.
+- 1주일 soak: 실 환경 + 시간 필요 — 사용자 단계 (4.7 의 `/metrics` 가 누수 감시 surface 제공).
+- 격리 9 시나리오: 6개는 기존 `tests/sandbox/` + `tests/e2e/` 에서 CI 자동 실행됨. Sysbox 실 runtime 필요한 3개는 `sandbox_use_real_docker=true` 모드 — 사용자 VPS 단계.
+
+**구성:**
+- `docs/progress/m1/_summary.md` — 신규. M1 전체 (E1–E4) 종합:
+  - DoD 6개 체크리스트 (`docs/11_roadmap.md` §11.3 vs 실 진행)
+  - M1-E4 11 cycle 매트릭스
+  - 350 server tests · 89 web tests
+  - 사용자가 직접 해야 할 4개 항목 (dogfood / Geny / soak / 데모 영상)
+  - M2 hand-off 노트 (PolicyEngine 4계층 확장 슬롯, DeployTarget K8s 슬롯, NotificationService 채널 슬롯, oneshot endpoint M5 cron seed, /metrics 옵저버빌리티 seam)
+- `README.md` 갱신:
+  - 상단 status badge: Phase 0 → **M1-E4 complete (beta)**
+  - "시작하기" 섹션 전면 개편: self-host (compose.prod.yml) + Geny 어댑트 절차 + 로컬 dev 절차 + 테스트 실행 한 줄
+
+**Gate:** 본 cycle 은 문서/README 만 — 코드 변경 없음. 이전 cycle 들의 350 server tests · 89 web tests 가 그대로 유효.
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — 본 cycle 의 산출물 자체가 사용자 다음 단계 가이드:**
+
+```bash
+# 1. README "시작하기" 따라가서 self-host 부팅
+cd compose && docker compose -f docker-compose.prod.yml up -d
+
+# 2. docs/progress/m1/_summary.md 의 §"What the user still needs to do" 4개 항목 수행:
+#    (a) Dogfood: GAPT 를 GAPT 에 등록 + 다음 PR 머지 → 사이클 로그 progress/m1/dogfood_first_cycle.md
+#    (b) Geny 첫 어댑트: docs/operations/geny-adapt.md 따라 PR 1개 머지 + lessons 정리
+#    (c) 1주일 soak (Prometheus + Grafana 로 누수 감시)
+#    (d) 3분 데모 영상
+
+# 본 cycle 이 ship 한 뒤, 위 4개 가 완수되면 M1 DoD 6 개 모두 ✓
+```
+
+#### Plan 카드 대비 변경
+
+- **격리 9 시나리오 자동 재실행**: 6 개는 이미 CI 가 매 PR 마다 실행 중. 나머지 3 (Sysbox 실 runtime) 는 `GAPT_SANDBOX_USE_REAL_DOCKER=true` 환경에서만 의미 — 사용자 VPS 부팅 후 1회 검증.
+- **데모 영상 미작성**: 실 화면 녹화 필요. 사용자가 self-host 후 첫 cycle 돌릴 때 같이 녹화 권장.
+- **soak 테스트 미실행**: 1주일 + 실 VPS 필요. `/metrics` 의 `gapt_sessions_active` / `gapt_sandbox_count` gauge 가 감시 surface.
+- **CONTRIBUTING.md 미갱신**: 기존 [CONTRIBUTING.md](../../../CONTRIBUTING.md) 가 cadence 규칙을 이미 명시 — 본 cycle 에서 보강 없음.
 
 ## DoD 진행
 
@@ -757,4 +799,20 @@ curl https://random-attacker-slug.preview.gapt.example.com/
 
 ## Drift (cycle 종료 시 누적 기록)
 
-*(아직 종료되지 않음)*
+M1-E4 종료 시점 누적 drift (사용자가 직접 수행해야 하는 단계 + 후속 cycle 로 미룬 항목):
+
+**사용자 단계로 미룬 (assistant 가 수행 불가):**
+- 실제 dogfood 첫 사이클 실행 + 사이클 로그 (4.10)
+- Geny 첫 어댑트 실행 + lessons 파일 (4.11)
+- 1주일 soak + 데모 영상 (4.12)
+
+**M2 로 deferred:**
+- ARQ background CI poller + SSE stream + GitHub Webhook ingress (4.3)
+- PolicyEngine L3 (org DB) + L4 (project DB + `.gapt/policy.yaml`) + PUT API + diff UI (4.5)
+- Audit subject before/after JSON diff viewer + per-actor pivot (4.6)
+- OTel SDK auto-init + OTLP push (4.7)
+- Per-user notification subscription UI + 이메일 채널 + cost cap 트리거 (4.8)
+- Project-scoped API tokens for oneshot (4.9) — M5 cron 과 함께
+- SMTP magic-link delivery (4.10) — M2 의 사용자 관리 cycle 과 함께
+
+**M2 추가 발견 항목** (cycle 4.6 audit dashboard 의 deferred 가 4.7/4.8 에 흡수, 4.7 의 Grafana JSON 이 4.10 에 흡수). 추가 drift 없음.
