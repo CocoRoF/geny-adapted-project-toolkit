@@ -166,9 +166,9 @@ def build_container(
 def _build_notifications(settings: Settings) -> NotificationService:
     """Assemble channels from the operator-set env. M1 is always
     operator-set; per-user URLs land with a settings UI later."""
-    from gapt_server.domains.notifications.channel import Channel  # noqa: PLC0415
-
-    channels: list[Channel] = [InMemoryChannel()]
+    channels: list[InMemoryChannel | SlackWebhookChannel | DiscordWebhookChannel] = [
+        InMemoryChannel()
+    ]
     if settings.slack_webhook_url:
         channels.append(SlackWebhookChannel(settings.slack_webhook_url))
     if settings.discord_webhook_url:

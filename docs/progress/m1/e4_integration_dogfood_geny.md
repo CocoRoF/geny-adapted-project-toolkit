@@ -538,7 +538,63 @@ curl -b /tmp/cookies.txt http://localhost:8001/api/notifications | jq
 - **CI 그린/실패 트리거 미구현**: 4.3 의 CI 가 polling-only (no Redis/ARQ). 자동 trigger 는 webhook ingress 가 들어와야 함 (M2).
 - **정책 거부 자동 알림 미구현**: 현재는 audit 만. policy hook 에 `notifications.emit` 추가는 PolicyHookConfig 가 NotificationService 의존성 받아야 — separate cycle.
 - **per-channel retry/backoff 미구현**: 4xx/5xx 한번 시도 후 fail. 신뢰성 강화는 M2.
-### Cycle 4.9 — 헤드리스 oneshot API (대기)
+### Cycle 4.9 — 헤드리스 oneshot API (✅ 완료 — *this commit*, project-scoped API token deferred)
+
+[plan §4.9](../../plan/m1/e4_integration_dogfood_geny.md#cycle-49-——-헤드리스-api--단일-액션-트리거-1-pr).
+
+**스코프 축소 사유**: plan 의 "project-scoped API token (`agent.run` 권한)" 는 별도 token 모델 + auth depends 가 필요. 본 cycle 은 **기존 쿠키 인증 재사용 + endpoint 인터페이스 형태**. project-scoped API token 은 M5 의 cron 스케줄러 UI 와 함께 wrap — 본 endpoint 의 형태는 그대로 유지.
+
+**서버 (1 router + 1 test, 7 case):**
+- `routers/oneshot.py` — `POST /api/sessions/oneshot`:
+  - 입력: `{workspace_id, env_id?, message, timeout_s?}` (timeout 1–600s, default 120s)
+  - 흐름: session create → hook runner 부착 → bus subscribe → invoke → drain until DONE/ERROR/timeout → archive
+  - 출력: `{session_id, status: "ok"|"error"|"timeout", exec_code?, error_reason?, text, tool_calls[], tool_results[], cost, events[]}`
+  - DONE 이벤트가 도착할 때까지 TEXT/TOOL_CALL/TOOL_RESULT 를 모아 단일 JSON 으로 통합
+  - timeout 발생 시 `runtime.interrupt()` 호출 + status=timeout
+  - 마지막에 항상 archive (성공/실패/timeout 무관) → registry/runtime/DB 모두 정리
+  - 기존 interactive endpoint 와 동일한 hook chain (policy + audit + cost) → 정책/감사 일관성 유지
+- 동일한 cost delta wiring (Prometheus counter + DB writeback) — `sessions.py` 와 똑같은 패턴
+- `app.py` 에 `oneshot.router` include
+
+**테스트 (`tests/sessions/test_oneshot.py`, 7 case):**
+- `_ScriptedPipeline` 가 `_StubEvent(type, data)` 리스트를 `run_stream` 으로 yield — 실 Claude binary 불필요
+- text chunks → text 필드로 합산, tool.invoke/tool.result → 각각 배열, pipeline.error → status=error + exec_code 그대로, archive 후 session row.status=archived, workspace 미존재 → 404, 비인증 → 401, hang pipeline + timeout_s=1 → status=timeout
+
+**Gate:** server ruff/mypy clean (91 src), 346 server tests (+7). 웹 변경 없음.
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. 서버 부팅 + 매직 링크 로그인 + 프로젝트 + 워크스페이스 생성 (이전 cycle 흐름)
+# 2. 단일 호출
+curl -b /tmp/cookies.txt -X POST http://localhost:8001/api/sessions/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id": "{wid}", "message": "list files in src/", "timeout_s": 60}'
+# → 200 {
+#     "session_id": "...",
+#     "status": "ok",
+#     "text": "src/foo.py\nsrc/bar.py\n...",
+#     "tool_calls": [{"name":"gapt_list","input":{"path":"src/"}}, ...],
+#     "tool_results": [{"name":"gapt_list","output":"..."}],
+#     "cost": {"cost_usd":0.012, "input_tokens":150, "output_tokens":40, ...},
+#     "events": [모든 SSE 프레임을 JSON 으로 stack],
+#     "session_id": "01K..." (이미 archived)
+#   }
+
+# 3. timeout 트리거
+curl -b /tmp/cookies.txt -X POST http://localhost:8001/api/sessions/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id": "{wid}", "message": "do something slow", "timeout_s": 5}'
+# → 200 {status: "timeout", exec_code: "exec.session.timeout", ...}
+```
+
+M5 의 cron 스케줄러 / webhook ingress 가 이 endpoint 호출하면 자동화 가능. 현재는 사용자 (또는 외부 스크립트) 가 직접 curl.
+
+#### Plan 카드 대비 변경
+
+- **project-scoped API token + `agent.run` 권한 미구현**: plan 명시. 별도 `api_tokens` 모델 + `Depends(get_api_token_actor)` + permission 체크 필요. token 발급/철회 UI 도 같이. M5 cron 스케줄러 cycle 에서 wrap — endpoint 인터페이스는 동일하게 재사용.
+- **cron 스케줄러 UI 부재**: plan 명시 "M5". 본 cycle 은 endpoint 만.
+- **webhook ingress 미구현**: M5 의 webhook trigger (이 endpoint 를 호출하는 GAPT 외부 트리거). HMAC 검증 패턴은 Cycle 4.1 의 WebhookTarget + 4.4 의 share_link 에 이미 있어 재활용 가능.
 ### Cycle 4.10 — Dogfood: GAPT에 GAPT 등록 (대기)
 ### Cycle 4.11 — Geny 첫 어댑트 (M1 마지막 게이트) (대기)
 ### Cycle 4.12 — M1 종합 검증 + 사용자 검토 (대기)

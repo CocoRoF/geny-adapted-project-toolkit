@@ -21,6 +21,8 @@ import structlog
 from gapt_server.db.ulid import new_ulid
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from gapt_server.domains.notifications.channel import Channel
 
 
@@ -73,7 +75,7 @@ class Notification:
 
 
 class NotificationService:
-    def __init__(self, channels: list[Channel] | None = None) -> None:
+    def __init__(self, channels: Sequence[Channel] | None = None) -> None:
         self._channels: list[Channel] = list(channels or [])
         self._ring: dict[str | None, deque[Notification]] = {}
         self._lock = asyncio.Lock()
