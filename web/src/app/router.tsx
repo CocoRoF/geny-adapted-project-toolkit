@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShellLayout } from "@/app/layouts/AppShellLayout";
 import { RequireAuth } from "@/app/RequireAuth";
 import { AuthCallback } from "@/routes/AuthCallback";
+import { Cost } from "@/routes/Cost";
 import { Login } from "@/routes/Login";
 import { ProjectDetail } from "@/routes/ProjectDetail";
 import { ProjectsIndex } from "@/routes/ProjectsIndex";
@@ -60,6 +61,16 @@ export function AppRouter() {
           <RequireAuth>
             <AppShellLayout>
               <WorkspaceIde />
+            </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/cost"
+        element={
+          <RequireAuth>
+            <AppShellLayout>
+              <Cost />
             </AppShellLayout>
           </RequireAuth>
         }

@@ -10,12 +10,15 @@ from gapt_server.container import AppContainer, attach_container, build_containe
 from gapt_server.domains.audit.sink import PostgresAuditSink
 from gapt_server.logging import configure_logging
 from gapt_server.middleware.trace_id import TraceIdMiddleware
+from gapt_server.observability.instruments import register_default_metrics
 from gapt_server.routers import (
     audit,
     auth,
     ci,
+    cost,
     deploy,
     health,
+    metrics,
     policies,
     preview,
     projects,
@@ -64,6 +67,7 @@ def create_app(
     )
     app.state.settings = settings
     attach_container(app, container)
+    register_default_metrics(container)
 
     # Trace-id binding runs *first* so every other middleware + handler
     # logs against the same request id.
@@ -91,6 +95,8 @@ def create_app(
     app.include_router(ci.router)
     app.include_router(preview.router)
     app.include_router(policies.router)
+    app.include_router(cost.router)
+    app.include_router(metrics.router)
     return app
 
 

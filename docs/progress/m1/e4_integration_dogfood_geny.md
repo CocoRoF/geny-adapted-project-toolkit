@@ -392,7 +392,77 @@ curl -b /tmp/cookies.txt \
 - **별도 dashboard 페이지 없음**: 기존 dockview audit panel 을 확장 — 별도 route 추가하지 않음. M1 의 IDE-centric IA 와 일관.
 - **export 5000 cap**: plan 명시 없음. JSONB 페치 + 직렬화 비용 vs 사용자 기대값 균형 — 큰 export 는 추후 streaming chunked 으로 무제한화.
 
-### Cycle 4.7 — 비용 대시보드 + OTel + Prometheus (대기, 2 PR)
+### Cycle 4.7 — 비용 대시보드 + Prometheus exporter (✅ 완료 — *this commit*, OTel push 부분 deferred)
+
+[plan §4.7](../../plan/m1/e4_integration_dogfood_geny.md#cycle-47-——-비용-대시보드--otel-prometheus-2-pr).
+
+**스코프 축소 사유**: plan 의 OTel SDK init + Grafana dashboard JSON + compose Prometheus/Grafana profile 은 별도 dogfood (4.10) 와 함께. 본 cycle 은 **pull-based /metrics + cost dashboard endpoint + UI** 까지. opentelemetry-sdk 는 이미 deps 에 있어 운영자가 자체 OTLP collector 와 wire 가능 — push 측 wiring 은 deferred.
+
+**서버 (4 module + 1 router + 2 test, 13 case):**
+- `domains/cost/service.py` — `aggregate_summary(db, project_ids, since?, until?)` + `aggregate_daily_for_project(db, project_id, since?, until?)`. 둘 다 `agent_sessions` 테이블 직접 집계 (`cost_usd / input_tokens / output_tokens`). 일별 집계는 `created_at` 의 UTC date cast.
+- `routers/cost.py` — 2 endpoint:
+  - `GET /api/cost/summary?since&until` → 액터의 멤버십 프로젝트만 집계. `rows` + `total_*` 필드.
+  - `GET /api/projects/{pid}/cost/daily?since&until` → 일별 row (sparse — 0인 날 미생성).
+- `observability/metrics.py` — 자체 Counter / Gauge (no `prometheus_client` 의존, 모듈 메타클래스 회피). `MetricsRegistry` 가 dict 컨테이너. Gauge 는 `set_collector(async fn)` 로 scrape 시점 live refresh 지원.
+- `observability/render.py` — Prometheus text exposition format 직접 렌더 (HELP/TYPE/value 라인 + label escape).
+- `observability/instruments.py` — GAPT 메트릭 정의:
+  - 카운터: `gapt_agent_cost_usd_total{project_id}`, `gapt_agent_input_tokens_total{project_id}`, `gapt_agent_output_tokens_total{project_id}`
+  - 게이지: `gapt_sessions_active` (DB collector), `gapt_sandbox_count{state}` (DB collector)
+  - `register_default_metrics(container)` 가 startup 시 collector wire — 컨테이너별 fresh registry (테스트 cross-pollution 방지).
+- `routers/metrics.py` — `GET /metrics` (Prometheus pull). `refresh_collectors()` 호출 후 render.
+- `container.py` — `AppContainer.registry: MetricsRegistry` 필드 추가. `app.py` 가 lifespan 아닌 `create_app` 시점에 `register_default_metrics` 호출 (테스트 lifespan 부재 케이스 커버).
+- `routers/sessions.py` — `create_session` 의 cost callback 이 SSE publish 뿐 아니라 (a) 델타 기반 Prometheus counter 증분 (b) `agent_sessions` row 의 cost_usd / input_tokens / output_tokens 누적 update. fresh session 사용 — 외부 요청 트랜잭션과 deadlock 방지.
+
+**테스트 (13 case):**
+- `tests/observability/test_metrics.py` (7): counter 음수 거부, label 별 누적, gauge set, gauge collector refresh on render, label quote escape, empty registry → 빈 출력, reset idempotent
+- `tests/cost/test_routes.py` (6, Postgres): summary 프로젝트별 집계, 비멤버 프로젝트 제외, since/until 윈도우, daily 일별 버킷 + 같은 날 합산, daily 403 (비멤버), /metrics 텍스트 형식 + `gapt_sessions_active`
+
+**Gate:** server ruff/mypy clean (86 src), 330 server tests (+13). Web typecheck/lint/format clean, 86 web tests (+5), build 성공 (PWA precache 782 KiB).
+
+**웹 (4 file + 1 route + 1 panel + 1 test, 5 case, i18n 19 키):**
+- `src/api/cost.ts` — `getCostSummary({since,until})` + `getProjectCostDaily(pid, {since,until})` + 타입.
+- `src/cost/CostPanel.tsx` — 비용 대시보드 패널:
+  - 범위 preset (7일/30일/90일/전체)
+  - 총합 dl (cost / tokens in / tokens out)
+  - 프로젝트별 테이블 (display_name + slug + cost + tokens + sessions)
+  - 프로젝트 row 클릭 → 일별 breakdown section + CSS 바 (max-day 대비 width %, no recharts)
+- `src/routes/Cost.tsx` + `/cost` route (RequireAuth + AppShell)
+- `src/ide/panels.tsx` 에 `CostPanelDock`, `DockviewShell.tsx` components 에 `cost: CostPanelDock` 등록 (워크스페이스 안에서도 패널 드래그 가능)
+- i18n 19 키 (en+ko): cost.dashboard.title / loading / empty / refresh / range.{label,7d,30d,90d,all} / totals.* (3) / col.* (5) / daily.{title,empty,error}
+- `tests/CostPanel.test.tsx` (5 case): 총합 + 테이블 렌더, 범위 변경 시 재페치, 프로젝트 클릭 → daily fetch, empty-state, API 에러 surface
+
+**🧪 사용자가 직접 테스트할 수 있는 부분 — *이제 가능*:**
+
+```bash
+# 1. 서버 부팅 + 매직 링크 로그인 + 프로젝트 생성 (이전 cycle 흐름)
+# 2. 채팅 세션 한 두번 돌려서 cost 누적 (agent 호출이 input/output tokens 채움)
+
+# 3. 비용 대시보드 endpoint 직접
+curl -b /tmp/cookies.txt "http://localhost:8001/api/cost/summary?since=2026-05-01T00:00:00Z" | jq
+# {"rows":[...], "total_cost_usd":0.123, ...}
+
+curl -b /tmp/cookies.txt "http://localhost:8001/api/projects/{pid}/cost/daily" | jq
+# [{"date":"2026-05-20","cost_usd":0.05,...}, ...]
+
+# 4. Prometheus scrape
+curl http://localhost:8001/metrics
+# # TYPE gapt_sessions_active gauge
+# gapt_sessions_active 0
+# # TYPE gapt_agent_cost_usd_total counter
+# gapt_agent_cost_usd_total{project_id="01K..."} 0.123
+# ...
+
+# 5. 웹 UI: /cost 라우트 → 범위 select 변경 → 프로젝트 row 클릭하면 일별 CSS 바 펼침
+```
+
+#### Plan 카드 대비 변경
+
+- **OTel SDK init + OTLP push 미구현**: plan 의 `gen_ai.*` semantic convention export. 이미 `opentelemetry-api/sdk/instrumentation-fastapi` 가 deps 에 있어 운영자가 자체 collector wire 가능. 자동 init 은 4.10 dogfood 단계.
+- **Grafana dashboard JSON 미동봉**: plan 의 `compose/grafana/dashboards/gapt-overview.json`. compose Prometheus/Grafana profile 정비와 함께 4.10 dogfood 에서.
+- **compose Prometheus/Grafana 미추가**: 4.10 dogfood 가 compose 전반 정비할 때 같이.
+- **CAP 게이지 + UI 미구현**: plan 의 "cap 설정 + 게이지". cap 설정 자체가 SettingsService UI 가 필요 — 4.8 알림 cycle 의 cost-cap-80%-도달 트리거와 함께.
+- **recharts 미사용**: plan 명시. 기존 메모리 (no decorative chrome / bundle size 우려) + Plan 3.10 deferred 카탈로그 → CSS 바로 대체.
+- **prometheus_client 의존성 추가 안 함**: 자체 14줄짜리 exposition format 렌더가 충분. global registry / process collector 가 가져오는 부작용 회피.
 ### Cycle 4.8 — 알림 (대기)
 ### Cycle 4.9 — 헤드리스 oneshot API (대기)
 ### Cycle 4.10 — Dogfood: GAPT에 GAPT 등록 (대기)
@@ -408,7 +478,7 @@ curl -b /tmp/cookies.txt \
 - [ ] CI 결과 라이브 표시 (4.3)
 - [ ] PolicyEngine config override 4계층 + UI 편집 + audit (4.5)
 - [x] Audit dashboard (4.6)
-- [ ] OTel + Prometheus exporter (4.7)
+- [x] OTel + Prometheus exporter (4.7 — pull only; OTLP push deferred)
 - [ ] 🎯 Dogfood: GAPT 가 GAPT 유지보수 (4.10)
 - [ ] 🎯 Geny 첫 어댑트: 외부 IDE 0회 (4.11)
 

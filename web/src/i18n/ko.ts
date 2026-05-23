@@ -158,6 +158,28 @@ export const ko: Record<keyof typeof en, string> = {
   "cost.guard_rejected.body": "에이전트가 설정된 가드레일에 도달하여 이번 턴을 중단했습니다.",
   "cost.guard_rejected.dismiss": "닫기",
 
+  // --- Cost dashboard (Cycle 4.7) ---
+  "cost.dashboard.title": "비용 대시보드",
+  "cost.loading": "비용 데이터 로딩 중…",
+  "cost.empty": "선택 범위에 에이전트 세션이 없습니다.",
+  "cost.refresh": "새로고침",
+  "cost.range.label": "범위",
+  "cost.range.7d": "최근 7일",
+  "cost.range.30d": "최근 30일",
+  "cost.range.90d": "최근 90일",
+  "cost.range.all": "전체",
+  "cost.totals.cost": "총 비용",
+  "cost.totals.input_tokens": "총 입력 토큰",
+  "cost.totals.output_tokens": "총 출력 토큰",
+  "cost.col.project": "프로젝트",
+  "cost.col.cost": "비용",
+  "cost.col.tokens_in": "입력",
+  "cost.col.tokens_out": "출력",
+  "cost.col.sessions": "세션 수",
+  "cost.daily.title": "일별 집계",
+  "cost.daily.empty": "이 프로젝트에 해당 범위의 세션이 없습니다.",
+  "cost.daily.error": "일별 집계를 불러오지 못했습니다.",
+
   // --- Command palette ---
   "palette.open": "명령 팔레트",
   "palette.placeholder": "명령 입력…",

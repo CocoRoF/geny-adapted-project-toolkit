@@ -47,7 +47,9 @@ from gapt_server.agent.session_registry import (
 )
 from gapt_server.agent.streaming import SessionEventKind
 from gapt_server.container import (
+    AppContainer,
     get_audit_sink,
+    get_container,
     get_db_session,
     get_policy_engine,
     get_session_manager,
@@ -56,6 +58,11 @@ from gapt_server.container import (
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001 — Depends inspects at runtime
 from gapt_server.domains.projects.service import ProjectError
+from gapt_server.observability.instruments import (
+    cost_counter,
+    input_tokens_counter,
+    output_tokens_counter,
+)
 from gapt_server.policy.engine import PolicyEngine  # noqa: TC001
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
@@ -181,6 +188,7 @@ async def create_session(
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
     try:
@@ -224,8 +232,38 @@ async def create_session(
         accumulator=placeholder_accumulator,
     )
 
+    # Track deltas so Prometheus counters get the increment, not the
+    # running total. Closure-captured mutables avoid the nonlocal dance.
+    _last = {"input": 0, "output": 0, "cost": 0.0}
+    _reg = container.registry
+    _project_label = {"project_id": handle.project_id}
+
     async def _on_cost_update(acc: CostAccumulator) -> None:
         await runtime.bus.publish(SessionEventKind.COST, acc.snapshot())
+        d_in = acc.input_tokens - _last["input"]
+        d_out = acc.output_tokens - _last["output"]
+        d_cost = acc.cost_usd - _last["cost"]
+        if d_in:
+            input_tokens_counter(_reg).inc(d_in, _project_label)
+            _last["input"] = acc.input_tokens
+        if d_out:
+            output_tokens_counter(_reg).inc(d_out, _project_label)
+            _last["output"] = acc.output_tokens
+        if d_cost:
+            cost_counter(_reg).inc(d_cost, _project_label)
+            _last["cost"] = acc.cost_usd
+        # Persist totals back to the agent_sessions row so the cost
+        # dashboard reflects in-flight usage. A fresh session is used
+        # so we don't deadlock against the outer request's session
+        # (which has already committed and may be closing).
+        if container.session_factory is not None and (d_in or d_out or d_cost):
+            async with container.session_factory() as bg_db:
+                row = await bg_db.get(models.AgentSession, handle.session_id)
+                if row is not None:
+                    row.cost_usd = acc.cost_usd
+                    row.input_tokens = acc.input_tokens
+                    row.output_tokens = acc.output_tokens
+                    await bg_db.commit()
 
     hook_runner, accumulator = build_hook_runner(
         engine=policy_engine,

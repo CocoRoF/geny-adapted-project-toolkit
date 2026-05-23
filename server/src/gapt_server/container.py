@@ -37,6 +37,7 @@ from gapt_server.domains.sandbox import (
     SysboxBackend,
     make_default_client,
 )
+from gapt_server.observability.metrics import MetricsRegistry
 from gapt_server.policy.config_loader import PolicyConfigError, load_yaml
 from gapt_server.policy.engine import PolicyEngine
 from gapt_server.settings import Settings, get_settings
@@ -74,6 +75,7 @@ class AppContainer:
     env_service: GaptEnvironmentService
     session_manager: ProjectAwareSessionManager
     session_registry: SessionRegistry
+    registry: MetricsRegistry
 
     async def aclose(self) -> None:
         await self.session_registry.aclose()
@@ -122,6 +124,7 @@ def build_container(
                 env_service=env_service, audit_sink=sink_noop
             ),
             session_registry=SessionRegistry(),
+            registry=MetricsRegistry(),
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
@@ -146,6 +149,7 @@ def build_container(
         env_service=env_service,
         session_manager=ProjectAwareSessionManager(env_service=env_service, audit_sink=sink),
         session_registry=SessionRegistry(),
+        registry=MetricsRegistry(),
     )
 
 

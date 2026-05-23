@@ -159,6 +159,28 @@ export const en = {
   "cost.guard_rejected.body": "The agent paused this turn because it hit a configured guard rail.",
   "cost.guard_rejected.dismiss": "Dismiss",
 
+  // --- Cost dashboard (Cycle 4.7) ---
+  "cost.dashboard.title": "Cost dashboard",
+  "cost.loading": "Loading cost data…",
+  "cost.empty": "No agent sessions in this window.",
+  "cost.refresh": "Refresh",
+  "cost.range.label": "Range",
+  "cost.range.7d": "Last 7 days",
+  "cost.range.30d": "Last 30 days",
+  "cost.range.90d": "Last 90 days",
+  "cost.range.all": "All time",
+  "cost.totals.cost": "Total cost",
+  "cost.totals.input_tokens": "Total input tokens",
+  "cost.totals.output_tokens": "Total output tokens",
+  "cost.col.project": "Project",
+  "cost.col.cost": "Cost",
+  "cost.col.tokens_in": "Input",
+  "cost.col.tokens_out": "Output",
+  "cost.col.sessions": "Sessions",
+  "cost.daily.title": "Daily breakdown",
+  "cost.daily.empty": "No sessions for this project in the window.",
+  "cost.daily.error": "Failed to load daily breakdown.",
+
   // --- Command palette ---
   "palette.open": "Command palette",
   "palette.placeholder": "Type a command…",

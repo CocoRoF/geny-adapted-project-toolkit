@@ -14,6 +14,7 @@ import {
   AuditPanelDock,
   ChatPanelDock,
   CiPanelDock,
+  CostPanelDock,
   EditorPanel,
   FileTreePanel,
   PanelPlaceholder,
@@ -59,9 +60,10 @@ const components = {
   preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
   audit: (props: IDockviewPanelProps<{ projectId: string }>) => <AuditPanelDock {...props} />,
   ci: (props: IDockviewPanelProps<{ projectId: string }>) => <CiPanelDock {...props} />,
+  cost: (props: IDockviewPanelProps<Record<string, never>>) => <CostPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "preview", "audit", "ci"]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "preview", "audit", "ci", "cost"]);
 
 interface Props {
   workspaceId: string;

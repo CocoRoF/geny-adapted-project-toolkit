@@ -5,6 +5,7 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { AuditPanel } from "@/audit/AuditPanel";
 import { ChatPanel } from "@/chat/ChatPanel";
 import { CiPanel } from "@/ci/CiPanel";
+import { CostPanel } from "@/cost/CostPanel";
 import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { FileTree } from "@/ide/FileTree";
@@ -41,6 +42,15 @@ export function CiPanelDock(props: IDockviewPanelProps<{ projectId: string }>) {
   return (
     <div className="ide-panel-ci" data-panel-kind="ci">
       <CiPanel projectId={props.params.projectId} />
+    </div>
+  );
+}
+
+/** Cost panel — org-wide cost dashboard (totals, per-project, daily). */
+export function CostPanelDock(_props: IDockviewPanelProps<Record<string, never>>) {
+  return (
+    <div className="ide-panel-cost" data-panel-kind="cost">
+      <CostPanel />
     </div>
   );
 }
