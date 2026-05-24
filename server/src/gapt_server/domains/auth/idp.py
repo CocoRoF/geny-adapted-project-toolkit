@@ -50,7 +50,7 @@ class AuthIdp(Protocol):
     """Minimal contract the auth router talks to. Multi-provider
     deployments wrap a registry around this protocol."""
 
-    async def request_login(self, *, email: str, base_url: str) -> None: ...
+    async def request_login(self, *, email: str, base_url: str) -> str: ...
 
     async def consume_token(self, *, token: str, db: AsyncSession) -> Session: ...
 
@@ -81,7 +81,9 @@ class MagicLinkIdp:
         self._token_ttl = token_ttl_s
         self._session_ttl = session_ttl_s
 
-    async def request_login(self, *, email: str, base_url: str) -> None:
+    async def request_login(self, *, email: str, base_url: str) -> str:
+        """Mint a magic-link token + deliver it. Returns the token so
+        dev surfaces can echo it back to the requester."""
         token = secrets.token_urlsafe(32)
         await self._tokens.put(token, email, self._token_ttl)
         callback_url = f"{base_url.rstrip('/')}/api/auth/magic-link/callback?token={token}"
@@ -91,6 +93,7 @@ class MagicLinkIdp:
             email=email,
             ttl_s=self._token_ttl,
         )
+        return token
 
     async def consume_token(self, *, token: str, db: AsyncSession) -> Session:
         email = await self._tokens.take(token)

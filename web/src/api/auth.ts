@@ -14,8 +14,15 @@ export interface MeResponse {
 }
 
 export interface MagicLinkResponse {
-  delivered: boolean;
-  token?: string; // dev-only — surfaced when SMTP isn't wired
+  status: string;
+  message: string;
+  delivered?: boolean;
+  /** dev-only fields — present when the server is in dev/staging env
+   * so the SPA can auto-complete sign-in without a real email. */
+  dev_callback_url?: string;
+  dev_token?: string;
+  /** legacy field name from older builds; keep for compat. */
+  token?: string;
 }
 
 export interface MagicLinkCallback {

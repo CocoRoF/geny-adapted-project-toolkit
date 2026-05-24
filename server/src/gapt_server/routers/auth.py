@@ -57,6 +57,12 @@ class MagicLinkRequest(BaseModel):
 class MagicLinkAccepted(BaseModel):
     status: str = "ok"
     message: str = "Magic link sent (or printed to server log in dev mode)."
+    # In dev (env != "prod") we echo the callback URL + token so the
+    # frontend can auto-complete sign-in without an SMTP provider.
+    # Production never includes these — the user must consume their
+    # emailed link.
+    dev_callback_url: str | None = None
+    dev_token: str | None = None
 
 
 class CallbackResponse(BaseModel):
@@ -72,10 +78,18 @@ class CallbackResponse(BaseModel):
 async def request_magic_link(
     payload: MagicLinkRequest,
     request: Request,
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
     idp: MagicLinkIdp = Depends(get_auth_idp),  # noqa: B008
 ) -> MagicLinkAccepted:
     base_url = str(request.base_url).rstrip("/")
-    await idp.request_login(email=payload.email, base_url=base_url)
+    token = await idp.request_login(email=payload.email, base_url=base_url)
+    # Dev mode: echo the callback so the SPA can auto-complete sign-in
+    # without an SMTP provider in front. Prod hides it.
+    if settings.env != "prod":
+        return MagicLinkAccepted(
+            dev_callback_url=f"{base_url}/api/auth/magic-link/callback?token={token}",
+            dev_token=token,
+        )
     return MagicLinkAccepted()
 
 

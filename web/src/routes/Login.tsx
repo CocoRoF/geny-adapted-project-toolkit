@@ -1,8 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Mail } from "lucide-react";
+import { Loader2, LogIn, Mail } from "lucide-react";
 
-import { requestMagicLink } from "@/api/auth";
+import { completeMagicLink, requestMagicLink } from "@/api/auth";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Button } from "@/ui/Button";
@@ -20,18 +20,24 @@ function resolveFromLocation(state: unknown): string {
   return "/projects";
 }
 
-/** `/login` — email field + "send magic link" submit. Centered card
- * on a full-bleed background. Once a link is requested we show the
- * dev token inline (dev mode prints it to the server log otherwise). */
+/** `/login` — single-step sign-in for dev/staging environments.
+ *
+ * Backend mints a magic-link token and (when not in prod) returns it
+ * in the response. The SPA immediately consumes the token to set the
+ * session cookie, then redirects to `/projects` — effectively a
+ * password-less signup + login in one click.
+ *
+ * In prod the server hides the token and the user has to consume
+ * the emailed link manually (SMTP wiring lands in M2). */
 export function Login() {
-  const { status } = useAuth();
+  const { status, refresh } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
 
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState<{ delivered: boolean; devToken?: string } | null>(null);
+  const [phase, setPhase] = useState<"idle" | "completing" | "emailed">("idle");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,20 +52,27 @@ export function Login() {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
-    void requestMagicLink(email)
-      .then((resp) => {
-        setSent(
-          resp.token
-            ? { delivered: resp.delivered, devToken: resp.token }
-            : { delivered: resp.delivered },
-        );
-      })
-      .catch((err: unknown) => {
+    void (async () => {
+      try {
+        const resp = await requestMagicLink(email);
+        const devToken = resp.dev_token ?? resp.token;
+        if (devToken) {
+          // Dev path: consume the token immediately. AuthProvider
+          // then flips to signed_in via the /me poll and the useEffect
+          // above navigates to /projects.
+          setPhase("completing");
+          await completeMagicLink(devToken);
+          await refresh();
+        } else {
+          setPhase("emailed");
+        }
+      } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
+        setPhase("idle");
+      } finally {
         setSubmitting(false);
-      });
+      }
+    })();
   }
 
   return (
@@ -77,7 +90,10 @@ export function Login() {
 
         <div className="rounded-lg border border-border bg-bg-elevated p-5 shadow-sm">
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
-            <Field label={t("auth.login.email.label")}>
+            <Field
+              label={t("auth.login.email.label")}
+              hint={t("auth.login.email.hint")}
+            >
               <Input
                 id="auth-email"
                 type="email"
@@ -96,22 +112,24 @@ export function Login() {
               size="lg"
               disabled={submitting || email.length === 0}
             >
-              <Mail className="h-4 w-4" />
-              {t("auth.login.submit")}
+              {phase === "completing" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("auth.login.completing")}
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-4 w-4" />
+                  {t("auth.login.continue")}
+                </>
+              )}
             </Button>
           </form>
 
-          {sent ? (
-            <div className="mt-4 rounded-md border border-success/40 bg-success/10 px-3 py-2">
+          {phase === "emailed" ? (
+            <div className="mt-4 flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2.5">
+              <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
               <p className="text-[12px] text-success">{t("auth.login.sent")}</p>
-              {sent.devToken ? (
-                <code
-                  data-testid="dev-magic-token"
-                  className="mt-2 block break-all rounded bg-bg px-2 py-1.5 text-[11px] text-fg-muted"
-                >
-                  {sent.devToken}
-                </code>
-              ) : null}
             </div>
           ) : null}
 
@@ -123,6 +141,10 @@ export function Login() {
               {error}
             </p>
           ) : null}
+
+          <p className="mt-4 text-center text-[11px] text-fg-subtle">
+            {t("auth.login.passwordless_note")}
+          </p>
         </div>
       </div>
     </div>
