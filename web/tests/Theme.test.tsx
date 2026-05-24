@@ -8,7 +8,6 @@ import { ThemeProvider } from "@/app/providers/ThemeProvider";
 beforeEach(() => {
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
-  // happy-dom defaults to no match — make the system query stable.
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: false,
     media: query,
@@ -39,19 +38,20 @@ describe("<ThemeSwitcher />", () => {
   it("defaults to system mode and resolves to light when matchMedia says so", () => {
     renderSwitcher();
     expect(document.documentElement.dataset["theme"]).toBe("light");
-    expect(screen.getByRole<HTMLSelectElement>("combobox").value).toBe("system");
+    const systemRadio = screen.getByRole("radio", { name: /System|시스템/ });
+    expect(systemRadio).toHaveAttribute("aria-checked", "true");
   });
 
   it("flips the html data-theme when the user picks dark", () => {
     renderSwitcher();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dark" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Dark|다크/ }));
     expect(document.documentElement.dataset["theme"]).toBe("dark");
     expect(window.localStorage.getItem("gapt.theme")).toBe("dark");
   });
 
   it("persists the choice across remounts", () => {
     renderSwitcher();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "light" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Light|라이트/ }));
     expect(window.localStorage.getItem("gapt.theme")).toBe("light");
   });
 });

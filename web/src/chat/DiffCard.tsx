@@ -104,33 +104,41 @@ export function DiffCard({ workspaceId, payload }: Props) {
   }, [payload, workspaceId]);
 
   return (
-    <div className="diff-card" data-testid="diff-card">
-      <header className="diff-card-header">
-        <strong>{t("diff.title")}</strong>
-        <span className="diff-card-path">
-          {t("diff.path")}: <code>{payload.path}</code>
+    <div
+      data-testid="diff-card"
+      className="overflow-hidden rounded-md border border-border bg-bg-elevated"
+    >
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-[12px]">
+        <strong className="text-fg">{t("diff.title")}</strong>
+        <span className="text-fg-muted">
+          {t("diff.path")}:{" "}
+          <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[11px] text-fg">
+            {payload.path}
+          </code>
         </span>
         {typeof payload.replaced === "number" ? (
-          <span className="diff-card-replaced">
+          <span className="text-fg-subtle">
             {t("diff.replaced").replace("{count}", String(payload.replaced))}
           </span>
         ) : null}
       </header>
 
-      <div className="diff-card-body">
+      <div className="bg-bg-subtle">
         {totalChanged > INLINE_THRESHOLD_LINES ? (
           mode === "split" ? (
-            <div className="diff-card-monaco">
+            <div className="overflow-hidden">
               <DiffEditor
                 height="320px"
                 original={payload.old}
                 modified={payload.new}
                 language="plaintext"
+                theme="vs-dark"
                 options={{
                   readOnly: true,
                   renderSideBySide: true,
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
+                  fontSize: 12,
                 }}
               />
             </div>
@@ -142,11 +150,12 @@ export function DiffCard({ workspaceId, payload }: Props) {
         )}
       </div>
 
-      <footer className="diff-card-actions">
+      <footer className="flex items-center justify-end gap-1.5 border-t border-border px-3 py-2">
         {totalChanged > INLINE_THRESHOLD_LINES ? (
           <button
             type="button"
             onClick={() => setMode((m) => (m === "inline" ? "split" : "inline"))}
+            className="h-7 rounded-md border border-border bg-surface px-2.5 text-[11px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
           >
             {mode === "inline" ? t("diff.show_full") : t("diff.show_inline")}
           </button>
@@ -155,6 +164,7 @@ export function DiffCard({ workspaceId, payload }: Props) {
           type="button"
           onClick={revert}
           disabled={revertState === "pending" || revertState === "done"}
+          className="h-7 rounded-md border border-border bg-surface px-2.5 text-[11px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-50"
         >
           {revertState === "pending"
             ? t("diff.reverting")
@@ -163,7 +173,7 @@ export function DiffCard({ workspaceId, payload }: Props) {
               : t("diff.revert")}
         </button>
         {revertError ? (
-          <span role="alert" className="diff-card-error">
+          <span role="alert" className="text-[11px] text-danger">
             {revertError}
           </span>
         ) : null}
@@ -174,15 +184,19 @@ export function DiffCard({ workspaceId, payload }: Props) {
 
 function InlineDiff({ lines }: { lines: { removed: string[]; added: string[] } }) {
   return (
-    <div className="diff-inline" data-testid="diff-inline">
-      <pre className="diff-inline-block diff-inline-block--del">
+    <div data-testid="diff-inline" className="max-h-80 overflow-auto p-2 text-[12px]">
+      <pre className="m-0 font-mono text-danger">
         {lines.removed.map((line, idx) => (
-          <div key={`del-${String(idx)}`}>- {line}</div>
+          <div key={`del-${String(idx)}`} className="leading-tight">
+            - {line}
+          </div>
         ))}
       </pre>
-      <pre className="diff-inline-block diff-inline-block--add">
+      <pre className="m-0 font-mono text-success">
         {lines.added.map((line, idx) => (
-          <div key={`add-${String(idx)}`}>+ {line}</div>
+          <div key={`add-${String(idx)}`} className="leading-tight">
+            + {line}
+          </div>
         ))}
       </pre>
     </div>

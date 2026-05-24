@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Bell, RefreshCw } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type Notification, listNotifications } from "@/api/notifications";
 import { useI18n } from "@/app/providers/i18n-context";
+import { Button } from "@/ui/Button";
+import { cn } from "@/ui/cn";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -16,12 +19,17 @@ function formatRelative(ts: number, locale: string): string {
   return rtf.format(Math.round(diffSec / 86400), "day");
 }
 
+const SEVERITY_DOT: Record<Notification["severity"], string> = {
+  info: "bg-accent",
+  warn: "bg-warn",
+  error: "bg-danger",
+};
+
 /** Notification bell — header chip + dropdown list.
  *
  * Polls every 30s; refreshes on dropdown open. Pure ephemeral data
- * (the server ring buffer is the source of truth), no read/unread
- * persistence yet — the unread badge counts everything since the last
- * dropdown open. */
+ * (server ring buffer is the source of truth); the unread badge counts
+ * everything since the last dropdown open. */
 export function NotificationBell() {
   const { t, locale } = useI18n();
   const [items, setItems] = useState<Notification[]>([]);
@@ -52,6 +60,19 @@ export function NotificationBell() {
     return () => window.clearInterval(id);
   }, [refresh]);
 
+  // Close on outside click — keeps the dropdown lightweight (no portal).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
   const unread = items.filter((n) => n.ts > lastSeenRef.current).length;
 
   function toggle(): void {
@@ -63,58 +84,93 @@ export function NotificationBell() {
   }
 
   return (
-    <div className="notification-bell">
-      <button
-        type="button"
-        className="notification-bell-button"
+    <div ref={wrapRef} className="relative">
+      <Button
+        variant="ghost"
+        size="icon"
         aria-label={t("notifications.title")}
         aria-expanded={open}
         onClick={toggle}
         data-testid="notification-bell"
+        className="relative"
       >
-        <span aria-hidden>🔔</span>
+        <Bell className="h-4 w-4" />
         {unread > 0 ? (
-          <span className="notification-bell-badge" data-testid="notification-badge">
+          <span
+            data-testid="notification-badge"
+            className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white shadow-sm"
+          >
             {unread > 99 ? "99+" : unread}
           </span>
         ) : null}
-      </button>
+      </Button>
+
       {open ? (
         <div
-          className="notification-dropdown"
           role="dialog"
           aria-label={t("notifications.title")}
           data-testid="notification-dropdown"
+          className="absolute right-0 top-[calc(100%+6px)] z-40 w-[360px] overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-xl"
         >
-          <header>
-            <h2>{t("notifications.title")}</h2>
-            <button type="button" onClick={refresh} aria-label={t("notifications.refresh")}>
-              ↻
-            </button>
+          <header className="flex items-center justify-between border-b border-border px-3 py-2">
+            <h2 className="text-[13px] font-semibold text-fg">{t("notifications.title")}</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refresh}
+              aria-label={t("notifications.refresh")}
+              title={t("notifications.refresh")}
+              className="h-6 w-6"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </Button>
           </header>
+
           {error ? (
-            <p role="alert" className="notification-dropdown-error">
+            <p role="alert" className="px-3 py-2 text-[12px] text-danger">
               {error}
             </p>
           ) : null}
+
           {items.length === 0 && !error ? (
-            <p className="notification-dropdown-empty">{t("notifications.empty")}</p>
+            <p className="px-3 py-6 text-center text-[12px] text-fg-muted">
+              {t("notifications.empty")}
+            </p>
           ) : null}
-          <ul>
+
+          <ul className="max-h-[420px] divide-y divide-border overflow-y-auto">
             {items.map((n) => (
               <li
                 key={n.id}
-                className={`notification-item notification-item--${n.severity}`}
                 data-testid="notification-item"
+                className="px-3 py-2.5 transition-colors hover:bg-surface-hover"
               >
-                <div className="notification-item-header">
-                  <strong>{n.title}</strong>
-                  <time dateTime={new Date(n.ts * 1000).toISOString()}>
-                    {formatRelative(n.ts, locale)}
-                  </time>
+                <div className="flex items-start gap-2">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                      SEVERITY_DOT[n.severity] ?? "bg-fg-subtle",
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <strong className="truncate text-[13px] font-semibold text-fg">
+                        {n.title}
+                      </strong>
+                      <time
+                        dateTime={new Date(n.ts * 1000).toISOString()}
+                        className="shrink-0 text-[11px] text-fg-subtle"
+                      >
+                        {formatRelative(n.ts, locale)}
+                      </time>
+                    </div>
+                    <p className="mt-0.5 line-clamp-2 text-[12px] text-fg-muted">{n.body}</p>
+                    <code className="mt-1 inline-block rounded bg-bg-subtle px-1.5 py-0.5 text-[10px] text-fg-muted">
+                      {n.kind}
+                    </code>
+                  </div>
                 </div>
-                <p>{n.body}</p>
-                <code className="notification-item-kind">{n.kind}</code>
               </li>
             ))}
           </ul>

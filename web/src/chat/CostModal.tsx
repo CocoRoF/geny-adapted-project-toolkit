@@ -1,70 +1,71 @@
 import { useI18n } from "@/app/providers/i18n-context";
 import { type CostSnapshot, formatMs } from "@/chat/cost-snapshot";
+import { Button } from "@/ui/Button";
+import { Modal } from "@/ui/Modal";
 
 interface Props {
   snapshot: CostSnapshot;
   onClose: () => void;
 }
 
-/** Modal that breaks down the live cost snapshot.
- *
- * Plan §3.10 calls for daily charts (recharts) — pulled forward to a
- * later cycle to keep the bundle small. The numbers we surface today
- * (session-cumulative cost + per-tool counts) are the ones the live
- * header doesn't show. */
 export function CostModal({ snapshot, onClose }: Props) {
   const { t } = useI18n();
   const tools = Object.entries(snapshot.by_tool).sort((a, b) => b[1] - a[1]);
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="cost-modal-title" className="modal">
-      <div className="modal-content cost-modal-content">
-        <header className="cost-modal-header">
-          <h2 id="cost-modal-title">{t("cost.title")}</h2>
-          <button type="button" onClick={onClose} aria-label={t("cost.close")}>
-            ×
-          </button>
-        </header>
+    <Modal
+      open
+      onClose={onClose}
+      title={t("cost.title")}
+      size="md"
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          {t("cost.close")}
+        </Button>
+      }
+    >
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-[13px]">
+        <dt className="text-fg-muted">{t("cost.session_total")}</dt>
+        <dd
+          data-testid="cost-modal-total"
+          className="font-mono tabular-nums font-semibold text-accent"
+        >
+          ${snapshot.cost_usd.toFixed(4)}
+        </dd>
 
-        <dl className="cost-modal-grid">
-          <dt>{t("cost.session_total")}</dt>
-          <dd data-testid="cost-modal-total">${snapshot.cost_usd.toFixed(4)}</dd>
+        <dt className="text-fg-muted">{t("cost.tokens.input")}</dt>
+        <dd className="font-mono tabular-nums">{snapshot.input_tokens.toLocaleString()}</dd>
 
-          <dt>{t("cost.tokens.input")}</dt>
-          <dd>{snapshot.input_tokens.toLocaleString()}</dd>
+        <dt className="text-fg-muted">{t("cost.tokens.output")}</dt>
+        <dd className="font-mono tabular-nums">{snapshot.output_tokens.toLocaleString()}</dd>
 
-          <dt>{t("cost.tokens.output")}</dt>
-          <dd>{snapshot.output_tokens.toLocaleString()}</dd>
+        <dt className="text-fg-muted">{t("cost.tool_calls")}</dt>
+        <dd className="font-mono tabular-nums">{snapshot.tool_calls}</dd>
 
-          <dt>{t("cost.tool_calls")}</dt>
-          <dd>{snapshot.tool_calls}</dd>
+        <dt className="text-fg-muted">{t("cost.tool_duration")}</dt>
+        <dd className="font-mono tabular-nums">{formatMs(snapshot.tool_duration_ms)}</dd>
+      </dl>
 
-          <dt>{t("cost.tool_duration")}</dt>
-          <dd>{formatMs(snapshot.tool_duration_ms)}</dd>
-        </dl>
-
-        <section className="cost-modal-tools">
-          <h3>{t("cost.by_tool")}</h3>
-          {tools.length === 0 ? (
-            <p className="cost-modal-no-tools">{t("cost.no_tools")}</p>
-          ) : (
-            <ul data-testid="cost-modal-tools">
-              {tools.map(([name, count]) => (
-                <li key={name}>
-                  <code>{name}</code>
-                  <span>{count}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <footer className="cost-modal-footer">
-          <button type="button" onClick={onClose}>
-            {t("cost.close")}
-          </button>
-        </footer>
-      </div>
-    </div>
+      <section className="mt-5 border-t border-border pt-4">
+        <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-fg-muted">
+          {t("cost.by_tool")}
+        </h3>
+        {tools.length === 0 ? (
+          <p className="text-[12px] text-fg-muted">{t("cost.no_tools")}</p>
+        ) : (
+          <ul
+            data-testid="cost-modal-tools"
+            className="divide-y divide-border rounded-md border border-border"
+          >
+            {tools.map(([name, count]) => (
+              <li key={name} className="flex items-center justify-between px-3 py-1.5 text-[12px]">
+                <code className="text-fg">{name}</code>
+                <span className="font-mono tabular-nums text-fg-muted">{count}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </Modal>
   );
 }

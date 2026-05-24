@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, XCircle } from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import type { ToolPair } from "@/chat/tool-pair";
+import { Badge } from "@/ui/Badge";
 
 interface Props {
   pair: ToolPair;
@@ -12,8 +14,6 @@ function asString(value: unknown, fallback = ""): string {
 }
 
 function summariseArgs(data: Record<string, unknown>): string {
-  // The runtime echoes `args` (Cycle 2.4 tools/call response shape).
-  // Older payloads may put them on the top level — accept both.
   const args = (data["args"] ?? data["tool_input"] ?? data) as Record<string, unknown>;
   const entries = Object.entries(args).filter(
     ([k]) => !["tool", "tool_name", "call_id"].includes(k),
@@ -28,11 +28,6 @@ function summariseArgs(data: Record<string, unknown>): string {
     .join("  ");
 }
 
-/** Compact tool-call card.
- *
- * Header: tool name + status pill (running / ok / error) + one-line
- * argument summary. Body (expandable): full args + full result JSON
- * or `exec_code` + reason on failure. */
 export function ToolCallCard({ pair }: Props) {
   const { t, execMessage } = useI18n();
   const [open, setOpen] = useState(false);
@@ -40,54 +35,90 @@ export function ToolCallCard({ pair }: Props) {
   const tool = asString(pair.call.data["tool"]) || asString(pair.call.data["tool_name"]) || "tool";
   const argsSummary = summariseArgs(pair.call.data);
 
-  let statusKey: "chat.tool.running" | "chat.tool.ok" | "chat.tool.error" = "chat.tool.running";
-  let statusClass = "tool-card-status--running";
-  if (pair.error) {
-    statusKey = "chat.tool.error";
-    statusClass = "tool-card-status--error";
-  } else if (pair.result) {
-    statusKey = "chat.tool.ok";
-    statusClass = "tool-card-status--ok";
-  }
-
   const errorCode = pair.error ? asString(pair.error.data["exec_code"], "error") : null;
   const errorReason = pair.error ? asString(pair.error.data["reason"]) : null;
 
+  const status = pair.error ? "error" : pair.result ? "ok" : "running";
+  const statusBadge =
+    status === "error" ? (
+      <Badge tone="danger">
+        <XCircle className="mr-1 h-2.5 w-2.5" />
+        {t("chat.tool.error")}
+      </Badge>
+    ) : status === "ok" ? (
+      <Badge tone="success">
+        <CheckCircle2 className="mr-1 h-2.5 w-2.5" />
+        {t("chat.tool.ok")}
+      </Badge>
+    ) : (
+      <Badge tone="accent">
+        <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+        {t("chat.tool.running")}
+      </Badge>
+    );
+
   return (
     <div
-      className={`tool-card tool-card--${pair.running ? "running" : pair.error ? "error" : "ok"}`}
       data-testid="tool-card"
       data-tool-name={tool}
+      className={
+        status === "error"
+          ? "rounded-md border border-danger/40 bg-danger/5"
+          : status === "ok"
+            ? "rounded-md border border-border bg-bg-elevated"
+            : "rounded-md border border-accent/40 bg-accent/5"
+      }
     >
-      <header className="tool-card-header">
-        <strong className="tool-card-tool">{tool}</strong>
-        <span className={`tool-card-status ${statusClass}`}>{t(statusKey)}</span>
-        {argsSummary ? <code className="tool-card-args-summary">{argsSummary}</code> : null}
+      <header className="flex items-center gap-2 px-3 py-2">
         <button
           type="button"
-          className="tool-card-toggle"
           aria-expanded={open}
+          aria-label={open ? t("chat.tool.collapse") : t("chat.tool.expand")}
           onClick={() => setOpen((v) => !v)}
+          className="grid h-5 w-5 place-items-center rounded text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
-          {open ? t("chat.tool.collapse") : t("chat.tool.expand")}
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
         </button>
+        <strong className="font-mono text-[12px] text-accent">{tool}</strong>
+        {statusBadge}
+        {argsSummary ? (
+          <code className="ml-auto truncate text-[11px] text-fg-muted">{argsSummary}</code>
+        ) : null}
       </header>
 
       {open ? (
-        <div className="tool-card-body">
-          <h4>{t("chat.tool.args")}</h4>
-          <pre className="tool-card-args">{JSON.stringify(pair.call.data, null, 2)}</pre>
+        <div className="space-y-2 border-t border-border px-3 py-2">
+          <div>
+            <h4 className="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+              {t("chat.tool.args")}
+            </h4>
+            <pre className="max-h-40 overflow-auto rounded bg-bg-subtle p-2 text-[11px] text-fg-muted">
+              {JSON.stringify(pair.call.data, null, 2)}
+            </pre>
+          </div>
           {pair.result ? (
-            <>
-              <h4>{t("chat.tool_result")}</h4>
-              <pre className="tool-card-result">{JSON.stringify(pair.result.data, null, 2)}</pre>
-            </>
+            <div>
+              <h4 className="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+                {t("chat.tool_result")}
+              </h4>
+              <pre className="max-h-40 overflow-auto rounded bg-bg-subtle p-2 text-[11px] text-fg-muted">
+                {JSON.stringify(pair.result.data, null, 2)}
+              </pre>
+            </div>
           ) : null}
           {pair.error && errorCode ? (
-            <div role="alert" className="tool-card-error">
-              <strong>{errorCode}</strong>
-              <p>{execMessage(errorCode)}</p>
-              {errorReason ? <pre>{errorReason}</pre> : null}
+            <div role="alert" className="rounded border border-danger/40 bg-danger/10 p-2">
+              <strong className="font-mono text-[11px] text-danger">{errorCode}</strong>
+              <p className="mt-1 text-[11px] text-danger">{execMessage(errorCode)}</p>
+              {errorReason ? (
+                <pre className="mt-1 max-h-24 overflow-auto text-[10px] text-danger/80">
+                  {errorReason}
+                </pre>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -225,19 +225,27 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   );
 
   return (
-    <div className="chat-panel" data-panel-kind="chat">
-      <header className="chat-panel-header">
-        <span className="chat-panel-title">
+    <div data-panel-kind="chat" className="flex h-full flex-col">
+      <header className="flex shrink-0 items-center gap-3 border-b border-border bg-bg-elevated px-3 py-2">
+        <span className="truncate text-[12px] font-semibold text-fg">
           {session ? session.env_manifest_id : t("chat.empty").split(".")[0]}
         </span>
         {session ? (
           <>
-            <div className="chat-panel-mode" role="group" aria-label="chat mode">
+            <div
+              role="group"
+              aria-label="chat mode"
+              className="inline-flex items-center gap-0.5 rounded-md border border-border bg-bg-subtle p-0.5"
+            >
               <button
                 type="button"
                 aria-pressed={mode === "plan"}
                 onClick={() => setMode("plan")}
-                className={mode === "plan" ? "is-active" : undefined}
+                className={
+                  mode === "plan"
+                    ? "rounded bg-bg px-2 py-0.5 text-[11px] font-medium text-fg shadow-sm"
+                    : "rounded px-2 py-0.5 text-[11px] font-medium text-fg-muted hover:text-fg"
+                }
               >
                 {t("chat.mode.plan")}
               </button>
@@ -245,45 +253,53 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 type="button"
                 aria-pressed={mode === "act"}
                 onClick={() => setMode("act")}
-                className={mode === "act" ? "is-active" : undefined}
+                className={
+                  mode === "act"
+                    ? "rounded bg-bg px-2 py-0.5 text-[11px] font-medium text-fg shadow-sm"
+                    : "rounded px-2 py-0.5 text-[11px] font-medium text-fg-muted hover:text-fg"
+                }
               >
                 {t("chat.mode.act")}
               </button>
             </div>
             <button
               type="button"
-              className="chat-panel-cost chat-panel-cost-button"
               data-testid="chat-cost"
               onClick={() => setShowCostModal(true)}
               aria-haspopup="dialog"
               aria-label={t("cost.open")}
+              className="ml-auto inline-flex items-center gap-2 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] font-mono tabular-nums text-fg-muted hover:bg-surface-hover hover:text-fg"
             >
-              {t("chat.cost.live")} ·{" "}
-              {t("chat.cost.usd").replace("{amount}", cost.cost_usd.toFixed(4))} ·{" "}
-              {t("chat.cost.tokens")
-                .replace("{input}", String(cost.input_tokens))
-                .replace("{output}", String(cost.output_tokens))}
+              <span className="text-accent">${cost.cost_usd.toFixed(4)}</span>
+              <span>·</span>
+              <span>↑{cost.input_tokens}</span>
+              <span>↓{cost.output_tokens}</span>
             </button>
           </>
         ) : null}
       </header>
       {session && mode === "plan" ? (
-        <p className="chat-panel-mode-hint">{t("chat.mode.plan_hint")}</p>
-      ) : null}
-      {session ? (
-        <p className="chat-panel-shortcut" data-testid="chat-shortcut">
-          {t("chat.shortcut.esc")}
+        <p className="border-b border-border bg-accent/5 px-3 py-1.5 text-[11px] text-accent">
+          {t("chat.mode.plan_hint")}
         </p>
       ) : null}
 
       {!session ? (
-        <div className="chat-panel-empty">
-          <p>{t("chat.empty")}</p>
-          <button type="button" onClick={start} disabled={pending}>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+          <p className="text-[13px] text-fg-muted">{t("chat.empty")}</p>
+          <button
+            type="button"
+            onClick={start}
+            disabled={pending}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-[13px] font-medium text-accent-fg hover:bg-accent/90 disabled:opacity-50"
+          >
             {t("chat.start")}
           </button>
           {error ? (
-            <p role="alert" className="chat-panel-error">
+            <p
+              role="alert"
+              className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+            >
               {error}
             </p>
           ) : null}
@@ -291,15 +307,22 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       ) : (
         <>
           {stream.status === "connecting" ? (
-            <p className="chat-panel-status">{t("chat.connecting")}</p>
+            <p className="px-3 py-1 text-[11px] text-fg-muted">{t("chat.connecting")}</p>
           ) : null}
           {stream.status === "error" && stream.errorReason ? (
-            <p role="alert" className="chat-panel-status chat-panel-status--error">
+            <p
+              role="alert"
+              className="mx-3 my-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+            >
               {stream.errorReason}
             </p>
           ) : null}
 
-          <div className="chat-panel-events" ref={scrollRef} data-testid="chat-events">
+          <div
+            ref={scrollRef}
+            data-testid="chat-events"
+            className="flex-1 space-y-2 overflow-y-auto px-3 py-3"
+          >
             {stream.events.map((event) => {
               // The call event renders as a ToolCallCard (with its
               // matched outcome folded in). Result/error events that
@@ -316,11 +339,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 const edit = maybeGaptEditPayload(event.data);
                 if (edit) {
                   return (
-                    <div
-                      key={`diff-${event.seq}`}
-                      className="chat-event chat-event--tool_result"
-                      data-event-kind="tool_result"
-                    >
+                    <div key={`diff-${event.seq}`} data-event-kind="tool_result">
                       <DiffCard workspaceId={workspaceId} payload={edit} />
                     </div>
                   );
@@ -334,13 +353,14 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             })}
           </div>
 
-          <form className="chat-panel-form" onSubmit={onSubmit}>
+          <form onSubmit={onSubmit} className="shrink-0 border-t border-border bg-bg-elevated p-3">
             <textarea
               value={message}
               onChange={(e) => setMessage(e.currentTarget.value)}
               placeholder={t("chat.placeholder")}
               rows={3}
               aria-label={t("chat.placeholder")}
+              className="w-full resize-none rounded-md border border-border bg-surface px-2.5 py-2 text-[13px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -350,21 +370,41 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 }
               }}
             />
-            <div className="chat-panel-actions">
-              <button type="submit" disabled={pending || message.trim().length === 0}>
-                {t("chat.send")}
-              </button>
-              <button type="button" onClick={interrupt}>
-                {t("chat.interrupt")}
-              </button>
-              <button type="button" onClick={archive}>
-                {t("chat.archive")}
-              </button>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <p data-testid="chat-shortcut" className="text-[10px] text-fg-subtle">
+                {t("chat.shortcut.esc")}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={interrupt}
+                  className="h-7 rounded-md border border-border bg-surface px-2.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+                >
+                  {t("chat.interrupt")}
+                </button>
+                <button
+                  type="button"
+                  onClick={archive}
+                  className="h-7 rounded-md border border-border bg-surface px-2.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+                >
+                  {t("chat.archive")}
+                </button>
+                <button
+                  type="submit"
+                  disabled={pending || message.trim().length === 0}
+                  className="h-7 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg hover:bg-accent/90 disabled:opacity-50"
+                >
+                  {t("chat.send")}
+                </button>
+              </div>
             </div>
           </form>
 
           {error ? (
-            <p role="alert" className="chat-panel-error">
+            <p
+              role="alert"
+              className="mx-3 mb-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+            >
               {error}
             </p>
           ) : null}
@@ -426,16 +466,22 @@ function EventRow({ event, workspaceId }: EventRowProps) {
   if (kind === "text") {
     const chunk = asString(event.data["chunk"]);
     return (
-      <div className="chat-event chat-event--text" data-event-kind="text">
-        <pre>{chunk}</pre>
+      <div data-event-kind="text" className="rounded-md bg-bg-elevated px-3 py-2">
+        <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
+          {chunk}
+        </pre>
       </div>
     );
   }
   if (kind === "tool_call") {
     const tool = asString(event.data["tool"]) || asString(event.data["tool_name"]) || "tool";
     return (
-      <div className="chat-event chat-event--tool_call" data-event-kind="tool_call">
-        <strong>{t("chat.tool_call").replace("{tool}", tool)}</strong>
+      <div
+        data-event-kind="tool_call"
+        className="rounded-md border border-border bg-bg-elevated px-3 py-1.5 text-[12px] text-fg-muted"
+      >
+        <strong className="font-mono text-accent">{tool}</strong>
+        <span className="ml-2">{t("chat.tool_call").replace("{tool}", "")}</span>
       </div>
     );
   }
@@ -443,15 +489,20 @@ function EventRow({ event, workspaceId }: EventRowProps) {
     const edit = maybeGaptEditPayload(event.data);
     if (edit) {
       return (
-        <div className="chat-event chat-event--tool_result" data-event-kind="tool_result">
+        <div data-event-kind="tool_result">
           <DiffCard workspaceId={workspaceId} payload={edit} />
         </div>
       );
     }
     return (
-      <div className="chat-event chat-event--tool_result" data-event-kind="tool_result">
-        <strong>{t("chat.tool_result")}</strong>
-        <pre>{JSON.stringify(event.data, null, 2)}</pre>
+      <div
+        data-event-kind="tool_result"
+        className="rounded-md border border-border bg-bg-elevated px-3 py-2"
+      >
+        <strong className="text-[12px] text-fg">{t("chat.tool_result")}</strong>
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-bg-subtle p-2 text-[11px] text-fg-muted">
+          {JSON.stringify(event.data, null, 2)}
+        </pre>
       </div>
     );
   }
@@ -459,19 +510,25 @@ function EventRow({ event, workspaceId }: EventRowProps) {
     const code = asString(event.data["exec_code"], "error");
     const reason = asString(event.data["reason"]);
     return (
-      <div role="alert" className="chat-event chat-event--error" data-event-kind="error">
-        <strong>{code}</strong>
-        {reason ? <span> {reason}</span> : null}
+      <div
+        role="alert"
+        data-event-kind="error"
+        className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+      >
+        <strong className="font-mono">{code}</strong>
+        {reason ? <span className="ml-2">{reason}</span> : null}
       </div>
     );
   }
   if (kind === "done") {
     return (
-      <div className="chat-event chat-event--done" data-event-kind="done">
+      <div
+        data-event-kind="done"
+        className="text-center text-[11px] uppercase tracking-wide text-fg-subtle"
+      >
         {t("chat.done")}
       </div>
     );
   }
-  // cost rows are folded into the header; skip in the list.
   return null;
 }

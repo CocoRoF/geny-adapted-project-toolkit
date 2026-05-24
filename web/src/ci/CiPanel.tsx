@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, CircleDot, Clock, ExternalLink, RefreshCw, XCircle } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type CiRun, type WorkflowRunStatus, listCiRuns } from "@/api/ci";
 import { useI18n } from "@/app/providers/i18n-context";
+import { Badge } from "@/ui/Badge";
+import { Button } from "@/ui/Button";
+import { Input } from "@/ui/Input";
 import type { MessageKey } from "@/i18n";
 
 interface Props {
@@ -21,12 +25,27 @@ const STATUS_KEY: Record<WorkflowRunStatus, MessageKey> = {
   unknown: "ci.status.unknown",
 };
 
-/** Read-only list of recent CI workflow runs.
- *
- * Backed by `GET /api/projects/{pid}/ci/runs`. The endpoint surfaces
- * `ci.no_token` when the operator hasn't configured a GitHub token —
- * we render that as a help message instead of a generic error so
- * the operator knows the fix. */
+const STATUS_TONE: Record<WorkflowRunStatus, "neutral" | "success" | "warn" | "danger" | "accent"> =
+  {
+    queued: "neutral",
+    in_progress: "accent",
+    completed_success: "success",
+    completed_failure: "danger",
+    completed_cancelled: "neutral",
+    completed_neutral: "neutral",
+    unknown: "neutral",
+  };
+
+const STATUS_ICON: Record<WorkflowRunStatus, typeof CheckCircle2> = {
+  queued: Clock,
+  in_progress: CircleDot,
+  completed_success: CheckCircle2,
+  completed_failure: XCircle,
+  completed_cancelled: XCircle,
+  completed_neutral: CircleDot,
+  unknown: CircleDot,
+};
+
 export function CiPanel({ projectId }: Props) {
   const { t } = useI18n();
   const [branch, setBranch] = useState("");
@@ -62,66 +81,94 @@ export function CiPanel({ projectId }: Props) {
   }, [refresh]);
 
   return (
-    <div className="ci-panel" data-panel-kind="ci">
-      <header className="ci-panel-header">
-        <h3>{t("ci.title")}</h3>
-        <div className="ci-panel-filters">
-          <label>
-            <span>{t("ci.branch")}</span>
-            <input
-              type="text"
-              value={branch}
-              onChange={(e) => setBranch(e.currentTarget.value)}
-              placeholder="main"
-            />
-          </label>
-          <button type="button" onClick={refresh} disabled={state === "loading"}>
-            {t("ci.refresh")}
-          </button>
+    <div data-panel-kind="ci" className="flex h-full flex-col">
+      <header className="flex items-end gap-3 border-b border-border bg-bg-elevated px-4 py-3">
+        <div className="mr-auto">
+          <h3 className="text-[14px] font-semibold text-fg">{t("ci.title")}</h3>
+          <p className="text-[11px] text-fg-muted">{runs.length} runs</p>
         </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wide text-fg-muted">
+            {t("ci.branch")}
+          </span>
+          <Input
+            value={branch}
+            onChange={(e) => setBranch(e.currentTarget.value)}
+            placeholder="main"
+            className="h-7 w-[140px] text-[12px]"
+          />
+        </label>
+        <Button variant="outline" onClick={refresh} disabled={state === "loading"}>
+          <RefreshCw className={state === "loading" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+          {t("ci.refresh")}
+        </Button>
       </header>
 
-      {state === "loading" ? <p>{t("ci.loading")}</p> : null}
-      {state === "error" ? (
-        <p role="alert" className="ci-panel-error" data-error-code={errorCode ?? ""}>
-          {error}
-        </p>
-      ) : null}
+      <div className="flex-1 overflow-y-auto">
+        {state === "loading" && runs.length === 0 ? (
+          <p className="px-4 py-6 text-[12px] text-fg-muted">{t("ci.loading")}</p>
+        ) : null}
+        {state === "error" ? (
+          <p
+            role="alert"
+            data-error-code={errorCode ?? ""}
+            className="mx-4 my-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+          >
+            {error}
+          </p>
+        ) : null}
+        {state === "ready" && runs.length === 0 ? (
+          <p className="px-4 py-6 text-center text-[12px] text-fg-muted">{t("ci.empty")}</p>
+        ) : null}
 
-      {state === "ready" && runs.length === 0 ? <p>{t("ci.empty")}</p> : null}
-
-      {state === "ready" && runs.length > 0 ? (
-        <table className="ci-table" data-testid="ci-table">
-          <thead>
-            <tr>
-              <th>{t("ci.col.name")}</th>
-              <th>{t("ci.col.branch")}</th>
-              <th>{t("ci.col.status")}</th>
-              <th>{t("ci.col.sha")}</th>
-              <th>{t("ci.col.link")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id} className={`ci-row ci-row--${run.status}`}>
-                <td>{run.name}</td>
-                <td>
-                  <code>{run.head_branch}</code>
-                </td>
-                <td>{t(STATUS_KEY[run.status])}</td>
-                <td>
-                  <code>{run.head_sha.slice(0, 7)}</code>
-                </td>
-                <td>
-                  <a href={run.html_url} target="_blank" rel="noopener noreferrer">
-                    ↗
-                  </a>
-                </td>
+        {runs.length > 0 ? (
+          <table data-testid="ci-table" className="w-full table-auto text-[12px]">
+            <thead className="sticky top-0 z-10 bg-bg-subtle text-left text-[10px] uppercase tracking-wide text-fg-muted">
+              <tr>
+                <th className="px-4 py-2 font-medium">{t("ci.col.name")}</th>
+                <th className="px-4 py-2 font-medium">{t("ci.col.branch")}</th>
+                <th className="px-4 py-2 font-medium">{t("ci.col.status")}</th>
+                <th className="px-4 py-2 font-medium">{t("ci.col.sha")}</th>
+                <th className="px-4 py-2 font-medium">{t("ci.col.link")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+            </thead>
+            <tbody className="divide-y divide-border">
+              {runs.map((run) => {
+                const Icon = STATUS_ICON[run.status];
+                return (
+                  <tr key={run.id} className="transition-colors hover:bg-surface-hover">
+                    <td className="px-4 py-1.5 max-w-[300px] truncate text-fg">{run.name}</td>
+                    <td className="px-4 py-1.5">
+                      <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[11px]">
+                        {run.head_branch}
+                      </code>
+                    </td>
+                    <td className="px-4 py-1.5">
+                      <Badge tone={STATUS_TONE[run.status]}>
+                        <Icon className="mr-1 h-3 w-3" />
+                        {t(STATUS_KEY[run.status])}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-1.5">
+                      <code className="text-fg-muted">{run.head_sha.slice(0, 7)}</code>
+                    </td>
+                    <td className="px-4 py-1.5">
+                      <a
+                        href={run.html_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-accent hover:underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : null}
+      </div>
     </div>
   );
 }

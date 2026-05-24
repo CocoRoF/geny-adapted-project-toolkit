@@ -192,15 +192,23 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
 
   return (
     <EditorBusContext.Provider value={editorBus}>
-      <div className="ide-shell">
-        <nav className="ide-shell-toolbar" aria-label="layout presets">
+      <div className="flex h-full flex-col">
+        <nav
+          className="flex shrink-0 items-center gap-1 border-b border-border bg-bg-elevated px-3 py-1.5"
+          aria-label="layout presets"
+        >
+          <span className="mr-2 text-[10px] uppercase tracking-wide text-fg-muted">Layout</span>
           {ALL_PRESETS.map((p) => (
             <button
               key={p}
               type="button"
               aria-pressed={preset === p}
               onClick={() => setPreset(p)}
-              className={preset === p ? "is-active" : undefined}
+              className={
+                preset === p
+                  ? "rounded-md bg-bg px-2.5 py-1 text-[12px] font-medium text-fg shadow-sm"
+                  : "rounded-md px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+              }
             >
               {t(`ide.layout.${p}`)}
             </button>
@@ -212,13 +220,17 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
               setPreset("focus");
               loadPreset("focus");
             }}
-            className="ide-shell-reset"
+            className="ml-auto rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
           >
             {t("ide.layout.reset")}
           </button>
         </nav>
-        <div className="ide-shell-body">
-          <DockviewReact components={components} onReady={onReady} />
+        <div className="flex-1 overflow-hidden">
+          <DockviewReact
+            components={components}
+            onReady={onReady}
+            className="dockview-theme-abyss"
+          />
         </div>
       </div>
     </EditorBusContext.Provider>

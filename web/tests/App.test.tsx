@@ -52,7 +52,7 @@ describe("<App /> router", () => {
 
     render(<App />);
 
-    const heading = await screen.findByRole("heading", { level: 2 });
+    const heading = await screen.findByRole("heading", { level: 1 });
     expect(heading).toHaveTextContent(/Sign in|로그인/);
     expect(window.location.pathname).toBe("/login");
   });
@@ -66,10 +66,12 @@ describe("<App /> router", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/Projects|프로젝트/);
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/Projects|프로젝트/);
     });
-    // The header surfaces the signed-in email + sign-out affordance.
-    expect(screen.getByRole("button", { name: /alice@example\.com/ })).toBeInTheDocument();
+    // The header surfaces the signed-in email beside the sign-out
+    // button. Both are present once `/me` resolves.
+    expect(screen.getByText("alice@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sign out|로그아웃/ })).toBeInTheDocument();
   });
 
   it("shows the language switcher with two options", async () => {

@@ -1,11 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
       manifest: {
@@ -68,11 +70,7 @@ export default defineConfig({
     // Allow the tunnel hostname through Vite's HMR host check.
     // `allowedHosts: true` accepts any Host header — fine in dev,
     // but the explicit list is preferred when known.
-    allowedHosts: [
-      "localhost",
-      ".hrletsgo.me",
-      ".trycloudflare.com",
-    ],
+    allowedHosts: ["localhost", ".hrletsgo.me", ".trycloudflare.com"],
   },
   build: {
     target: "es2022",

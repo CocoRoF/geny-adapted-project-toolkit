@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type TreeEntry, listTree } from "@/api/files";
@@ -19,12 +20,6 @@ interface DirCache {
   [absolutePath: string]: DirState;
 }
 
-/** A simple, lazy-expanding workspace tree.
- *
- * Each directory caches its children in `dirs` keyed by the absolute
- * workspace path. Toggling a dir issues a `GET …/tree?path=` exactly
- * once unless the user explicitly refreshes. Files are click-to-open
- * — the parent passes `onOpenFile` to wire the editor (Cycle 3.5). */
 export function FileTree({ workspaceId, onOpenFile }: Props) {
   const { t } = useI18n();
   const [dirs, setDirs] = useState<DirCache>({});
@@ -48,7 +43,6 @@ export function FileTree({ workspaceId, onOpenFile }: Props) {
     [workspaceId],
   );
 
-  // Auto-open the root on mount / workspace change.
   useEffect(() => {
     setDirs({ "/": { kind: "loading" } });
     void expand("/");
@@ -63,14 +57,14 @@ export function FileTree({ workspaceId, onOpenFile }: Props) {
     if (current.kind === "ready" || current.kind === "error") {
       setDirs((prev) => ({ ...prev, [path]: { kind: "collapsed" } }));
     }
-    // ignore clicks while loading
   }
 
   return (
-    <div className="file-tree" data-workspace-id={workspaceId}>
+    <div data-workspace-id={workspaceId} className="px-1 py-1.5">
       <DirNode
         name="/"
         path="/"
+        depth={0}
         dirs={dirs}
         toggle={toggle}
         onOpenFile={onOpenFile}
@@ -83,61 +77,89 @@ export function FileTree({ workspaceId, onOpenFile }: Props) {
 interface DirNodeProps {
   name: string;
   path: string;
+  depth: number;
   dirs: DirCache;
   toggle: (path: string) => void;
   onOpenFile?: ((path: string) => void) | undefined;
   loadingLabel: string;
 }
 
-function DirNode({ name, path, dirs, toggle, onOpenFile, loadingLabel }: DirNodeProps): ReactNode {
+function DirNode({
+  name,
+  path,
+  depth,
+  dirs,
+  toggle,
+  onOpenFile,
+  loadingLabel,
+}: DirNodeProps): ReactNode {
   const state = dirs[path] ?? { kind: "collapsed" };
   const open = state.kind !== "collapsed";
+  const indent = depth * 12;
 
   return (
-    <div className="file-tree-dir">
+    <div>
       <button
         type="button"
-        className="file-tree-row file-tree-row--dir"
         aria-expanded={open}
         onClick={() => toggle(path)}
+        style={{ paddingLeft: indent + 6 }}
+        className="flex w-full items-center gap-1 rounded-md py-0.5 pr-2 text-left text-[12px] text-fg-muted hover:bg-surface-hover hover:text-fg"
       >
-        <span className="file-tree-twisty">{open ? "▾" : "▸"}</span>
-        <span className="file-tree-name">{name}</span>
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-fg-subtle" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
+        )}
+        {open ? (
+          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-accent" />
+        ) : (
+          <Folder className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+        )}
+        <span className="truncate">{name}</span>
       </button>
-      {state.kind === "loading" ? <p className="file-tree-loading">{loadingLabel}</p> : null}
+      {state.kind === "loading" ? (
+        <p style={{ paddingLeft: indent + 24 }} className="py-1 text-[11px] text-fg-subtle">
+          {loadingLabel}
+        </p>
+      ) : null}
       {state.kind === "error" ? (
-        <p role="alert" className="file-tree-error">
+        <p
+          role="alert"
+          style={{ paddingLeft: indent + 24 }}
+          className="py-1 text-[11px] text-danger"
+        >
           {state.reason}
         </p>
       ) : null}
       {state.kind === "ready" ? (
-        <ul className="file-tree-children">
-          {state.entries.map((entry) => (
-            <li key={entry.path} className="file-tree-entry">
-              {entry.kind === "dir" ? (
-                <DirNode
-                  name={entry.name}
-                  path={entry.path}
-                  dirs={dirs}
-                  toggle={toggle}
-                  onOpenFile={onOpenFile}
-                  loadingLabel={loadingLabel}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="file-tree-row file-tree-row--file"
-                  onClick={() => onOpenFile?.(entry.path)}
-                >
-                  <span className="file-tree-twisty" aria-hidden="true">
-                    {" "}
-                  </span>
-                  <span className="file-tree-name">{entry.name}</span>
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <div>
+          {state.entries.map((entry) =>
+            entry.kind === "dir" ? (
+              <DirNode
+                key={entry.path}
+                name={entry.name}
+                path={entry.path}
+                depth={depth + 1}
+                dirs={dirs}
+                toggle={toggle}
+                onOpenFile={onOpenFile}
+                loadingLabel={loadingLabel}
+              />
+            ) : (
+              <button
+                key={entry.path}
+                type="button"
+                onClick={() => onOpenFile?.(entry.path)}
+                style={{ paddingLeft: indent + 24 }}
+                className="flex w-full items-center gap-1.5 rounded-md py-0.5 pr-2 text-left text-[12px] text-fg-muted hover:bg-surface-hover hover:text-fg"
+              >
+                <File className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
+                <span className="truncate">{entry.name}</span>
+              </button>
+            ),
+          )}
+        </div>
       ) : null}
     </div>
   );

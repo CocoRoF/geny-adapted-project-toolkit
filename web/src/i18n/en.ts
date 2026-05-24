@@ -31,6 +31,7 @@ export const en = {
   // --- projects ---
   "projects.title": "Projects",
   "projects.empty": "No projects yet.",
+  "projects.count": "{n} projects",
   "projects.new": "New project",
   "projects.open": "Open",
   "projects.last_active": "Last active",
@@ -79,6 +80,9 @@ export const en = {
   // --- nav / shell ---
   "nav.back_to_projects": "← Projects",
   "nav.back_to_project": "← Project",
+  "nav.projects": "Projects",
+  "nav.cost": "Cost",
+  "nav.settings": "Settings",
 
   // --- IDE shell ---
   "ide.layout.focus": "Focus",

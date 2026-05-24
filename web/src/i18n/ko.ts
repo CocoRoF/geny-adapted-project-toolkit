@@ -30,6 +30,7 @@ export const ko: Record<keyof typeof en, string> = {
   // --- projects ---
   "projects.title": "프로젝트",
   "projects.empty": "프로젝트가 없습니다.",
+  "projects.count": "{n}개 프로젝트",
   "projects.new": "새 프로젝트",
   "projects.open": "열기",
   "projects.last_active": "마지막 활동",
@@ -78,6 +79,9 @@ export const ko: Record<keyof typeof en, string> = {
   // --- nav / shell ---
   "nav.back_to_projects": "← 프로젝트로",
   "nav.back_to_project": "← 프로젝트",
+  "nav.projects": "프로젝트",
+  "nav.cost": "비용",
+  "nav.settings": "설정",
 
   // --- IDE shell ---
   "ide.layout.focus": "포커스",

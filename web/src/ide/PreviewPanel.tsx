@@ -55,9 +55,9 @@ export function PreviewPanel({ workspaceId }: Props) {
   const width = DEVICE_WIDTH[device];
 
   return (
-    <div className="ide-preview" data-panel-kind="preview">
-      <header className="ide-preview-header">
-        <label className="ide-preview-url">
+    <div data-panel-kind="preview" className="flex h-full flex-col">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
+        <label className="flex flex-1 items-center gap-2">
           <span className="sr-only">{t("preview.url_label")}</span>
           <input
             type="url"
@@ -65,23 +65,32 @@ export function PreviewPanel({ workspaceId }: Props) {
             onChange={(e) => setUrl(e.currentTarget.value)}
             placeholder={t("preview.url_placeholder")}
             aria-label={t("preview.url_label")}
+            className="h-7 w-full rounded-md border border-border bg-surface px-2 text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
-        <div className="ide-preview-actions">
-          <button type="button" onClick={refresh} disabled={url.length === 0}>
-            {t("preview.refresh")}
-          </button>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-disabled={url.length === 0}
-            tabIndex={url.length === 0 ? -1 : 0}
-          >
-            {t("preview.open_external")}
-          </a>
-        </div>
-        <div className="ide-preview-devices" role="radiogroup" aria-label="device">
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={url.length === 0}
+          className="h-7 rounded-md border border-border bg-surface px-2.5 text-[12px] font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
+        >
+          {t("preview.refresh")}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-disabled={url.length === 0}
+          tabIndex={url.length === 0 ? -1 : 0}
+          className="inline-flex h-7 items-center rounded-md border border-border bg-surface px-2.5 text-[12px] font-medium text-fg hover:bg-surface-hover aria-disabled:opacity-50"
+        >
+          {t("preview.open_external")}
+        </a>
+        <div
+          role="radiogroup"
+          aria-label="device"
+          className="ml-1 inline-flex items-center gap-0.5 rounded-md border border-border bg-bg-subtle p-0.5"
+        >
           {(["desktop", "tablet", "phone"] as const).map((d) => (
             <button
               key={d}
@@ -89,16 +98,22 @@ export function PreviewPanel({ workspaceId }: Props) {
               role="radio"
               aria-checked={device === d}
               onClick={() => setDevice(d)}
-              className={device === d ? "is-active" : undefined}
+              className={
+                device === d
+                  ? "rounded bg-bg px-2 py-0.5 text-[11px] font-medium text-fg shadow-sm"
+                  : "rounded px-2 py-0.5 text-[11px] font-medium text-fg-muted hover:text-fg"
+              }
             >
               {t(`preview.device.${d}`)}
             </button>
           ))}
         </div>
       </header>
-      <div className="ide-preview-body">
+      <div className="flex-1 overflow-hidden bg-bg-subtle">
         {url.length === 0 ? (
-          <p className="ide-preview-empty">{t("preview.empty")}</p>
+          <p className="grid h-full place-items-center text-[12px] text-fg-muted">
+            {t("preview.empty")}
+          </p>
         ) : (
           <iframe
             key={reloadKey}
@@ -106,11 +121,6 @@ export function PreviewPanel({ workspaceId }: Props) {
             src={url}
             title={t("preview.title")}
             data-testid="preview-iframe"
-            // No sandbox flags so the previewed app keeps its full
-            // capabilities — the iframe is for *the user's own*
-            // sandboxed dev server, not for arbitrary third-party
-            // content. The same-origin trust model is the user's
-            // network reach.
             style={
               width
                 ? {
@@ -119,8 +129,9 @@ export function PreviewPanel({ workspaceId }: Props) {
                     border: 0,
                     margin: "0 auto",
                     display: "block",
+                    background: "white",
                   }
-                : { width: "100%", height: "100%", border: 0 }
+                : { width: "100%", height: "100%", border: 0, background: "white" }
             }
           />
         )}
