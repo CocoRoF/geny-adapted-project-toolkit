@@ -1,7 +1,8 @@
 # M1.5 — Dogfood Readiness
 
-> Status: planned
-> Estimated: 1–2 작업주 / 5–8 PR
+> Status: **done** (assistant-side) — see [`../progress/m1_5_dogfood_readiness.md`](../progress/m1_5_dogfood_readiness.md).
+>   User-driven dogfood (1 PR end-to-end) + geny-executor stage-6 fix still pending before M2.
+> Estimated: 1–2 작업주 / 5–8 PR (actual: 1 session / 5 PRs)
 > Depends on: M1 close (`cdf12b2`) + post-close hardening
 > ([`progress/m1/_post_close_hardening.md`](../progress/m1/_post_close_hardening.md))
 > Blocks: M2-E1 (멀티 프로젝트 동시 운영)

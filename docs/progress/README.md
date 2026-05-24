@@ -12,18 +12,21 @@
 
 ## 현재 진행 중인 cycle
 
-(없음 — M0-P1이 진입 조건 통과하면 `m0/p1_monorepo_ci.md` 생성)
+M1.5 완료. M2 진입 전에 사용자 측 dogfood (1 PR end-to-end) + geny-executor
+stage-6 fix 가 필요 — [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) §6.
 
 ## cycle 상태 인덱스
 
 | ID | 상태 | progress 파일 |
 |---|---|---|
-| M0-P1 | planned | (생성 전) |
-| M0-P2 | planned | (생성 전) |
-| M0-P3 | planned | (생성 전) |
-| M1-E1 | planned | (생성 전) |
-| M1-E2 | planned | (생성 전) |
-| M1-E3 | planned | (생성 전) |
-| M1-E4 | planned | (생성 전) |
+| M0-P1 | done | [`m0/p1_monorepo_ci.md`](m0/p1_monorepo_ci.md) |
+| M0-P2 | done | [`m0/p2_isolation.md`](m0/p2_isolation.md) |
+| M0-P3 | done | [`m0/p3_executor_agent.md`](m0/p3_executor_agent.md) |
+| M1-E1 | done | [`m1/e1_backend_foundation.md`](m1/e1_backend_foundation.md) |
+| M1-E2 | done | [`m1/e2_agent_and_git.md`](m1/e2_agent_and_git.md) |
+| M1-E3 | done | [`m1/e3_web_ide_shell.md`](m1/e3_web_ide_shell.md) |
+| M1-E4 | done | [`m1/e4_integration_dogfood_geny.md`](m1/e4_integration_dogfood_geny.md) |
+| M1 post-close hardening | done | [`m1/_post_close_hardening.md`](m1/_post_close_hardening.md) |
+| **M1.5** | done (assistant-side); user dogfood pending | [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) |
 
 진입 조건은 [`../plan/dependencies.md`](../plan/dependencies.md).
