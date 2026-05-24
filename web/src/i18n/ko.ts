@@ -131,6 +131,12 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.editor.saving": "저장 중…",
   "ide.editor.saved": "저장됨",
 
+  // --- diff panel ---
+  "ide.diff.title": "워킹트리 vs HEAD",
+  "ide.diff.empty": "마지막 커밋 이후 변경 사항 없음.",
+  "ide.diff.refresh": "diff 새로고침",
+  "ide.diff.truncated": "잘림",
+
   // --- chat panel ---
   "chat.empty": "세션이 없습니다. *세션 시작* 을 눌러 에이전트와 대화하세요.",
   "chat.start": "세션 시작",

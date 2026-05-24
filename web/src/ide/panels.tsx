@@ -6,6 +6,7 @@ import { AuditPanel } from "@/audit/AuditPanel";
 import { ChatPanel } from "@/chat/ChatPanel";
 import { CiPanel } from "@/ci/CiPanel";
 import { CostPanel } from "@/cost/CostPanel";
+import { DiffPanel } from "@/ide/DiffPanel";
 import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { FileTree } from "@/ide/FileTree";
@@ -84,6 +85,15 @@ export function ChatPanelDock(
   return (
     <div data-panel-kind="chat" className="h-full bg-bg-elevated">
       <ChatPanel projectId={props.params.projectId} workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
+/** Diff panel — shows the working-tree-vs-HEAD diff for the workspace. */
+export function DiffPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="diff" className="h-full bg-bg-elevated">
+      <DiffPanel workspaceId={props.params.workspaceId} />
     </div>
   );
 }

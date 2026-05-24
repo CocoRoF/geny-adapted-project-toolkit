@@ -132,6 +132,12 @@ export const en = {
   "ide.editor.saving": "Saving…",
   "ide.editor.saved": "Saved",
 
+  // --- diff panel ---
+  "ide.diff.title": "Working tree vs HEAD",
+  "ide.diff.empty": "No changes since the last commit.",
+  "ide.diff.refresh": "Refresh diff",
+  "ide.diff.truncated": "Truncated",
+
   // --- chat panel ---
   "chat.empty": "No session yet. Click *Start session* to talk to the agent.",
   "chat.start": "Start session",

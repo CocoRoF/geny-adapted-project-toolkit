@@ -68,6 +68,15 @@ function auditPanel(id: string = "audit", title: string = "Audit") {
   };
 }
 
+function diffPanel(id: string = "diff", title: string = "Diff") {
+  return {
+    id,
+    contentComponent: "diff",
+    title,
+    params: { workspaceId: "", kind: "diff" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -141,7 +150,7 @@ const REVIEW: SerializedDockview = {
   },
   panels: {
     tree: treePanel(),
-    diff: placeholder("diff", "Diff", "diff"),
+    diff: diffPanel(),
     chat: chatPanel(),
     audit: auditPanel(),
   },

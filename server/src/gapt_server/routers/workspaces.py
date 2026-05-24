@@ -38,6 +38,7 @@ from gapt_server.domains.sandbox import (
     SandboxRef,
 )
 from gapt_server.domains.secrets.vault import SecretVault, SecretVaultError
+from gapt_server.domains.workspaces import diff as diff_svc
 from gapt_server.domains.workspaces import files as fs
 from gapt_server.domains.workspaces.service import (
     WorkspaceError,
@@ -473,3 +474,45 @@ async def delete_workspace_path(
         await fs.delete_path(sandbox, ref, worktree_path=workspace.worktree_path, path=path)
     except fs.WorkspaceFileError as exc:
         raise _http_from_fs_error(exc) from exc
+
+
+# ───────────────────────────────────────────── workspace diff API ──
+
+
+class DiffFileResponse(BaseModel):
+    path: str
+    status: str
+    additions: int
+    deletions: int
+
+
+class DiffResponse(BaseModel):
+    files: list[DiffFileResponse]
+    unified: str
+    truncated: bool
+
+
+@by_id.get("/{workspace_id}/diff", response_model=DiffResponse)
+async def workspace_diff(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+) -> DiffResponse:
+    """Working-tree-vs-HEAD diff for the workspace. Empty payload when
+    the worktree is not a git repo (or HEAD has not been set yet)."""
+    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    try:
+        result = await diff_svc.working_tree_diff(
+            sandbox, ref, worktree_path=workspace.worktree_path
+        )
+    except diff_svc.WorkspaceDiffError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": exc.code, "reason": str(exc)},
+        ) from exc
+    return DiffResponse(
+        files=[DiffFileResponse(**vars(f)) for f in result.files],
+        unified=result.unified,
+        truncated=result.truncated,
+    )
