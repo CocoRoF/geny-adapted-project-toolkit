@@ -3,17 +3,25 @@
 Lifecycle the M1 caller can ask for:
 
   create  → status = creating → sandbox.create → start → wait_for_daemon
+            → host-side git clone (best-effort)
             → status = running ; on failure → status = failed
   stop    → sandbox.stop                       → status = stopped
   start   → sandbox.start + wait_for_daemon    → status = running
   delete  → sandbox.destroy                    → status = archived
 
-SeaweedFS volume mount + clone happen in Cycle 1.11 / M1-E2 — for now
-the workspace just owns the sandbox handle and a `worktree_path` hint.
+Host-side clone runs `git clone --depth=1` against the project's
+git_remote_url so the worktree directory has real files even when the
+sandbox backend is the mock (dev path) or when the sandbox-side daemon
+hasn't shipped yet. With the Sysbox backend the same path is mounted
+into the container so the agent sees the files too.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
+import shutil
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -36,6 +44,42 @@ from gapt_server.domains.sandbox import (
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
+"""Signature: (git_remote_url, branch, dest_dir) → (exit_code, stdout, stderr)."""
+
+
+async def _default_clone_runner(
+    git_remote_url: str, branch: str, dest_dir: str
+) -> tuple[int, str, str]:
+    """Shallow-clone the project's remote into `dest_dir`.
+
+    `dest_dir` is expected to exist and be empty. On a clean dev box we
+    can't authenticate (no token wiring yet) so this only works for
+    public repos. Private-repo + per-project token lookup lands when
+    the secret-vault wire-up grows that path (M2)."""
+    bin_path = shutil.which("git") or "/usr/bin/git"
+    cmd = [
+        bin_path,
+        "clone",
+        "--depth=1",
+        f"--branch={branch}" if branch else "",
+        git_remote_url,
+        dest_dir,
+    ]
+    cmd = [arg for arg in cmd if arg]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    return (
+        proc.returncode if proc.returncode is not None else -1,
+        out.decode("utf-8", errors="replace"),
+        err.decode("utf-8", errors="replace"),
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -80,10 +124,12 @@ class WorkspaceService:
         sandbox_backend: SandboxBackend,
         sandbox_image: str,
         audit_sink: AuditSink | None = None,
+        clone_runner: CloneRunner | None = None,
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
         self._audit: AuditSink = audit_sink or NullAuditSink()
+        self._clone: CloneRunner = clone_runner or _default_clone_runner
 
     # ────────────────────────────────────────────────────── create ──
 
@@ -144,6 +190,28 @@ class WorkspaceService:
         row.last_activity_at = _now()
         await db.flush()
 
+        # Best-effort host-side clone so the worktree has real files.
+        # Failures surface as audit + structlog but do *not* fail the
+        # workspace create — the user can debug + retry by reusing the
+        # workspace row.
+        clone_outcome: str = "skipped"
+        clone_detail: str | None = None
+        try:
+            clone_outcome, clone_detail = await self._prepare_worktree(
+                worktree=worktree,
+                branch=branch,
+                git_remote_url=project.git_remote_url,
+            )
+        except Exception as exc:
+            clone_outcome = "error"
+            clone_detail = f"{type(exc).__name__}: {exc}"[:500]
+            logger.exception(
+                "workspace.clone.crashed",
+                workspace_id=workspace_id,
+                project_id=project_id,
+                worktree=worktree,
+            )
+
         await self._audit.log(
             AuditEvent(
                 action=AuditAction.WORKSPACE_CREATE,
@@ -152,10 +220,51 @@ class WorkspaceService:
                 outcome=enums.AuditOutcome.OK,
                 scope={"project_id": project_id, "workspace_id": workspace_id},
                 subject={"branch": branch, "worktree_path": worktree},
-                payload={"sandbox_id": sandbox_ref.id, "image": self._image},
+                payload={
+                    "sandbox_id": sandbox_ref.id,
+                    "image": self._image,
+                    "clone": clone_outcome,
+                    "clone_detail": clone_detail,
+                },
             )
         )
         return _view(row)
+
+    async def _prepare_worktree(
+        self,
+        *,
+        worktree: str,
+        branch: str,
+        git_remote_url: str,
+    ) -> tuple[str, str | None]:
+        """Create the worktree dir + clone the project remote.
+
+        Returns `(outcome, detail)`:
+        - `("cloned", None)` on success.
+        - `("exists", "<reason>")` when the dir was already non-empty
+          (a re-create reusing the workspace_id, or shared mount).
+        - `("error", "<stderr>")` when git failed.
+        - `("skipped", "<reason>")` when we don't even try (missing
+          git binary, no remote URL).
+        """
+        if not git_remote_url:
+            return ("skipped", "git_remote_url empty")
+        # Idempotent: existing non-empty dir is left alone so re-creates
+        # don't lose user state.
+        try:
+            os.makedirs(worktree, exist_ok=True)
+        except OSError as exc:
+            return ("error", f"mkdir failed: {exc}")
+        try:
+            existing = os.listdir(worktree)
+        except OSError as exc:
+            return ("error", f"listdir failed: {exc}")
+        if existing:
+            return ("exists", f"{len(existing)} entries already present")
+        exit_code, _stdout, stderr = await self._clone(git_remote_url, branch, worktree)
+        if exit_code != 0:
+            return ("error", stderr.strip()[-400:] or f"git clone exit={exit_code}")
+        return ("cloned", None)
 
     async def _boot_sandbox(self, *, project_id: str, workspace_id: str) -> SandboxRef:
         spec = SandboxCreateSpec(
