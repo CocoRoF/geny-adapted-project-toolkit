@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ChevronLeft, GitBranch, Loader2 } from "lucide-react";
+import { Archive, ChevronLeft, GitBranch, Loader2 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -116,6 +116,9 @@ export function WorkspaceIde() {
           onRetry={fetchOnce}
         />
       ) : null}
+      {state === "ready" && workspace?.status === "archived" && pid ? (
+        <ArchivedOverlay projectId={pid} />
+      ) : null}
       {state === "ready" && wid && pid && workspace?.status === "running" ? (
         <div className="flex-1 overflow-hidden">
           <DockviewShell workspaceId={wid} projectId={pid} />
@@ -193,6 +196,29 @@ function CloningOverlay({
             {log ? `${log.split("\n").length} lines` : "—"}
           </span>
         </footer>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedOverlay({ projectId }: { projectId: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-bg-subtle/40 px-6 py-12">
+      <div className="w-full max-w-[480px] rounded-lg border border-border bg-bg-elevated p-6 text-center shadow-sm">
+        <Archive className="mx-auto mb-3 h-6 w-6 text-fg-muted" />
+        <h2 className="text-[15px] font-semibold text-fg">
+          {t("workspace.archived.title")}
+        </h2>
+        <p className="mt-1 text-[12px] text-fg-muted">
+          {t("workspace.archived.body")}
+        </p>
+        <Link
+          to={`/projects/${projectId}`}
+          className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
+        >
+          {t("workspace.archived.back")}
+        </Link>
       </div>
     </div>
   );

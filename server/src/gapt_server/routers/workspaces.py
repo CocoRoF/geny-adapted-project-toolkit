@@ -154,12 +154,18 @@ async def create_workspace(
 @by_project.get("/{project_id}/workspaces", response_model=list[WorkspaceResponse])
 async def list_workspaces(
     project_id: str,
+    include_archived: bool = False,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
 ) -> list[WorkspaceResponse]:
     try:
-        views = await svc.list_for_project(db, actor=user, project_id=project_id)
+        views = await svc.list_for_project(
+            db,
+            actor=user,
+            project_id=project_id,
+            include_archived=include_archived,
+        )
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return [WorkspaceResponse.from_view(v) for v in views]

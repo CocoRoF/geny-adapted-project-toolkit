@@ -544,20 +544,26 @@ class WorkspaceService:
     # ───────────────────────────────────────────────────── read ──
 
     async def list_for_project(
-        self, db: AsyncSession, *, actor: models.User, project_id: str
+        self,
+        db: AsyncSession,
+        *,
+        actor: models.User,
+        project_id: str,
+        include_archived: bool = False,
     ) -> list[WorkspaceView]:
         await fetch_project_for(db, actor=actor, project_id=project_id)
-        rows = (
-            (
-                await db.execute(
-                    select(models.Workspace)
-                    .where(models.Workspace.project_id == project_id)
-                    .order_by(models.Workspace.created_at.desc())
-                )
-            )
-            .scalars()
-            .all()
+        stmt = (
+            select(models.Workspace)
+            .where(models.Workspace.project_id == project_id)
+            .order_by(models.Workspace.created_at.desc())
         )
+        if not include_archived:
+            # Archived workspaces are soft-deleted: hide from the
+            # default list. The audit log still has them. Callers can
+            # opt in with ?include_archived=true if they ever need to
+            # restore-or-purge a row.
+            stmt = stmt.where(models.Workspace.status != enums.WorkspaceStatus.ARCHIVED)
+        rows = (await db.execute(stmt)).scalars().all()
         return [_view(r) for r in rows]
 
     async def get(
