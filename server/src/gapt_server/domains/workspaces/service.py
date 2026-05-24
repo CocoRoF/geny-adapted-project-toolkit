@@ -55,12 +55,21 @@ _CLONE_RETRIES = 3
 # 10 min per attempt — large-asset repos over a thin link routinely need
 # 3-5 min for the receive step; 180s clipped legitimate slow clones.
 _CLONE_TIMEOUT_S = 600.0
+# Log file name + max size kept inside the worktree so the GET
+# /api/workspaces/:wid/clone-log endpoint has a fixed path to read.
+CLONE_LOG_FILENAME = ".gapt-clone.log"
+_CLONE_LOG_MAX_BYTES = 256 * 1024  # 256 KB tail
 
 
 def _wipe_dir(path: str) -> None:
     if not os.path.isdir(path):
         return
     for entry in os.listdir(path):
+        # Don't nuke the clone log between retries — the user wants to
+        # see *all* attempts. Everything else (incl. partial .git) is
+        # fair game.
+        if entry == CLONE_LOG_FILENAME:
+            continue
         target = os.path.join(path, entry)
         if os.path.isdir(target):
             shutil.rmtree(target, ignore_errors=True)
@@ -69,32 +78,104 @@ def _wipe_dir(path: str) -> None:
                 os.remove(target)
 
 
+def _append_clone_log(worktree: str, line: str) -> None:
+    """Append one line to the worktree's clone log. Silently rotates
+    when the file gets large so a misbehaving git progress doesn't fill
+    the disk."""
+    path = os.path.join(worktree, CLONE_LOG_FILENAME)
+    try:
+        os.makedirs(worktree, exist_ok=True)
+        # Rotate at threshold — keep only the latest half.
+        if os.path.isfile(path) and os.path.getsize(path) > _CLONE_LOG_MAX_BYTES:
+            with open(path, "rb") as fh:
+                tail = fh.read()[-_CLONE_LOG_MAX_BYTES // 2 :]
+            with open(path, "wb") as fh:
+                fh.write(tail)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+            if not line.endswith("\n"):
+                fh.write("\n")
+    except OSError:
+        # Logging failure is non-fatal — the clone still runs.
+        pass
+
+
+async def _stream_subprocess(
+    cmd: list[str], worktree: str, attempt: int
+) -> tuple[int, str]:
+    """Run git clone with `--progress` and tee stdout+stderr lines to
+    the clone log file. Returns `(exit_code, last_err_line)`. The line
+    streaming is what makes the UI feel live — git's `--progress`
+    emits one carriage-return-terminated update per kilobyte transferred
+    so the user sees real movement."""
+    _append_clone_log(
+        worktree,
+        f"\n──── attempt {attempt} @ {datetime.now(tz=UTC).isoformat(timespec='seconds')} ────",
+    )
+    _append_clone_log(worktree, "$ " + " ".join(cmd))
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    last_line = ""
+
+    async def reader() -> None:
+        nonlocal last_line
+        assert proc.stdout is not None
+        # git emits progress with \r terminators; readuntil on either \n
+        # or \r captures every update. Use raw byte read + splitlines.
+        buf = b""
+        while True:
+            chunk = await proc.stdout.read(256)
+            if not chunk:
+                if buf:
+                    text = buf.decode("utf-8", errors="replace")
+                    _append_clone_log(worktree, text)
+                    last_line = text.strip().splitlines()[-1] if text.strip() else last_line
+                return
+            buf += chunk
+            # Replace \r → \n so each git progress update becomes its
+            # own line in the log file.
+            text = buf.replace(b"\r", b"\n").decode("utf-8", errors="replace")
+            *lines, partial = text.split("\n")
+            for ln in lines:
+                if ln.strip():
+                    _append_clone_log(worktree, ln)
+                    last_line = ln
+            buf = partial.encode("utf-8")
+
+    await reader()
+    await proc.wait()
+    rc = proc.returncode if proc.returncode is not None else -1
+    _append_clone_log(worktree, f"── exit {rc} ──")
+    return rc, last_line
+
+
 async def _default_clone_runner(
     git_remote_url: str, branch: str, dest_dir: str
 ) -> tuple[int, str, str]:
     """Shallow-clone the project's remote into `dest_dir` with retries.
 
-    Retries cover transient network failures (HTTP/2 stream cancels,
-    early EOF, etc.) — common when cloning large repos over flaky
-    links. Each attempt forces HTTP/1.1 because libgit2/curl's HTTP/2
-    interaction with GitHub is the usual culprit. `dest_dir` is
-    expected to exist; we wipe it between attempts so git starts
-    clean. Public repos only for now — token wiring lands in M2."""
+    Streams git's `--progress` output to `{dest_dir}/.gapt-clone.log`
+    so the UI can show live progress. Each attempt runs with an overall
+    timeout; the asyncio wait_for kills git if it stalls. HTTP/1.1 is
+    forced because GitHub's HTTP/2 stream cancels are the most common
+    cause of mid-clone hangs on thin links."""
     bin_path = shutil.which("git") or "/usr/bin/git"
-    last_out = ""
     last_err = ""
     last_code = -1
     for attempt in range(1, _CLONE_RETRIES + 1):
-        # Wipe + recreate so retried git always starts from an empty dir.
-        # os.path/listdir calls below are sync; ruff ASYNC240 wants
-        # anyio.Path but the syscalls are nanoseconds and bringing
-        # anyio just for the wipe is overkill — disable the lint.
         await asyncio.to_thread(_wipe_dir, dest_dir)
         cmd = [
             bin_path,
             "-c", "http.version=HTTP/1.1",
             "-c", "http.postBuffer=524288000",
+            "-c", "http.lowSpeedLimit=1024",
+            "-c", "http.lowSpeedTime=30",
             "clone",
+            "--progress",
             "--depth=1",
             "--no-tags",
             f"--branch={branch}" if branch else "",
@@ -103,30 +184,24 @@ async def _default_clone_runner(
         ]
         cmd = [arg for arg in cmd if arg]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            last_code, last_err = await asyncio.wait_for(
+                _stream_subprocess(cmd, dest_dir, attempt),
+                timeout=_CLONE_TIMEOUT_S,
             )
-            try:
-                out, err = await asyncio.wait_for(proc.communicate(), timeout=_CLONE_TIMEOUT_S)
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-                last_err = f"git clone timed out after {_CLONE_TIMEOUT_S}s (attempt {attempt})"
-                last_code = -2
-                continue
+        except TimeoutError:
+            _append_clone_log(
+                dest_dir,
+                f"!! attempt {attempt} timed out after {_CLONE_TIMEOUT_S}s — killing git",
+            )
+            last_err = f"git clone timed out after {_CLONE_TIMEOUT_S}s (attempt {attempt})"
+            last_code = -2
+            continue
         except OSError as exc:
             last_err = f"git subprocess failed: {exc}"
             last_code = -3
             break
-        last_code = proc.returncode if proc.returncode is not None else -1
-        last_out = out.decode("utf-8", errors="replace")
-        last_err = err.decode("utf-8", errors="replace")
         if last_code == 0:
-            return (0, last_out, last_err)
-        # Retry on partial-network errors; bail on definitive ones
-        # (repo not found / auth required).
+            return (0, "", last_err)
         if any(
             marker in last_err
             for marker in (
@@ -138,7 +213,7 @@ async def _default_clone_runner(
             )
         ):
             break
-    return (last_code, last_out, last_err)
+    return (last_code, "", last_err)
 
 logger = structlog.get_logger(__name__)
 

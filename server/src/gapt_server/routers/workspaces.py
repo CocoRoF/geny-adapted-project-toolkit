@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime  # noqa: TC003  — pydantic runtime introspection
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from gapt_server.container import (
@@ -177,6 +179,63 @@ async def get_workspace(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return WorkspaceResponse.from_view(view)
+
+
+@by_id.get("/{workspace_id}/clone-log")
+async def get_workspace_clone_log(
+    workspace_id: str,
+    tail_bytes: int = 16384,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+) -> PlainTextResponse:
+    """Return the live `git clone` log for a workspace.
+
+    The clone runner streams stdout+stderr (with `--progress`
+    enabled) to `{worktree}/.gapt-clone.log`. This endpoint reads the
+    file's tail (default last 16KB) so the UI can poll for updates
+    cheaply. Membership-gated; returns 404 when the worktree dir or
+    log file doesn't exist (no leak about other projects)."""
+    row = (
+        await db.execute(select(models.Workspace).where(models.Workspace.id == workspace_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "workspace.not_found", "reason": workspace_id},
+        )
+    try:
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    text = await asyncio.to_thread(
+        _read_clone_log_tail, row.worktree_path, max(tail_bytes, 1024)
+    )
+    return PlainTextResponse(text, status_code=200)
+
+
+def _read_clone_log_tail(worktree_path: str, tail_bytes: int) -> str:
+    """Sync helper — async handler delegates to a thread so the
+    blocking file IO doesn't sit on the event loop."""
+    import os  # noqa: PLC0415
+
+    from gapt_server.domains.workspaces.service import CLONE_LOG_FILENAME  # noqa: PLC0415
+
+    log_path = os.path.join(worktree_path, CLONE_LOG_FILENAME)
+    if not os.path.isfile(log_path):
+        return ""
+    try:
+        size = os.path.getsize(log_path)
+        offset = max(0, size - tail_bytes)
+        with open(log_path, "rb") as fh:
+            fh.seek(offset)
+            data = fh.read()
+        text = data.decode("utf-8", errors="replace")
+        if offset > 0 and "\n" in text:
+            text = text.split("\n", 1)[1]
+        return text
+    except OSError as exc:
+        return f"<failed to read clone log: {exc}>"
 
 
 @by_id.post("/{workspace_id}/stop", response_model=WorkspaceResponse)

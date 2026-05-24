@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from gapt_server import __version__
 from gapt_server.container import AppContainer, attach_container, build_container
+from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import PostgresAuditSink
 from gapt_server.logging import configure_logging
 from gapt_server.middleware.trace_id import TraceIdMiddleware
@@ -48,6 +49,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs (otherwise queued events sit until shutdown).
     if isinstance(container.audit_sink, PostgresAuditSink):
         container.audit_sink.start()
+    # Workspaces stuck in `creating` from a previous server life are
+    # orphans now — the background clone task that owned them died
+    # with that process. Flip them to `failed` so the UI shows the
+    # right state + the user can retry. Idempotent: no-op if there's
+    # no DB.
+    if container.session_factory is not None:
+        from sqlalchemy import update  # noqa: PLC0415 — startup-only
+
+        async with container.session_factory() as db:
+            await db.execute(
+                update(models.Workspace)
+                .where(models.Workspace.status == enums.WorkspaceStatus.CREATING)
+                .values(status=enums.WorkspaceStatus.FAILED)
+            )
+            await db.commit()
     try:
         yield
     finally:

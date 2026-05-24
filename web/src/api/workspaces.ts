@@ -38,3 +38,18 @@ export const startWorkspace = (workspaceId: string): Promise<WorkspaceResponse> 
 
 export const deleteWorkspace = (workspaceId: string): Promise<void> =>
   apiDelete<void>(`/api/workspaces/${workspaceId}`);
+
+/** Fetch the live git-clone log tail (plain text). The runner streams
+ * `git clone --progress` stdout/stderr to a file in the worktree so
+ * the UI can poll it while status="creating". */
+export async function getWorkspaceCloneLog(
+  workspaceId: string,
+  tailBytes = 16384,
+): Promise<string> {
+  const resp = await fetch(
+    `/api/workspaces/${workspaceId}/clone-log?tail_bytes=${tailBytes}`,
+    { credentials: "include" },
+  );
+  if (!resp.ok) return "";
+  return resp.text();
+}
