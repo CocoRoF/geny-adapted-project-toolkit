@@ -54,7 +54,10 @@ def get_vault(
     return _VAULT
 
 
-def set_vault(vault: SecretVault) -> None:
+def set_vault(vault: SecretVault | None) -> None:
+    """Install or clear the module-level vault singleton. Tests pass
+    `None` to reset state between cases so they don't carry a sibling
+    test's vault + audit sink into a fresh fixture."""
     global _VAULT  # noqa: PLW0603
     _VAULT = vault
 
