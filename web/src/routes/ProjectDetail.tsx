@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ExternalLink,
   GitBranch,
   Loader2,
@@ -17,6 +19,7 @@ import {
   type WorkspaceResponse,
   type WorkspaceStatus,
   deleteWorkspace,
+  getWorkspaceCloneLog,
   listWorkspaces,
   startWorkspace,
   stopWorkspace,
@@ -200,92 +203,96 @@ export function ProjectDetail() {
           <ul className="overflow-hidden rounded-lg border border-border bg-bg-elevated divide-y divide-border">
             {workspaces.map((w) => {
               const isCreating = w.status === "creating";
+              const isFailed = w.status === "failed";
+              const showInlineLog = isCreating || isFailed;
               return (
-                <li
-                  key={w.id}
-                  className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
-                    {isCreating ? (
-                      <span className="truncate text-[13px] font-medium text-fg-muted">
-                        {w.branch}
-                      </span>
-                    ) : (
-                      <Link
-                        to={`/projects/${projectId}/w/${w.id}`}
-                        className="truncate text-[13px] font-medium text-fg hover:text-accent"
-                      >
-                        {w.branch}
-                      </Link>
-                    )}
-                    <Badge tone={STATUS_TONE[w.status]}>
+                <li key={w.id} className="transition-colors hover:bg-surface-hover">
+                  <div className="flex items-center justify-between gap-3 px-4 py-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
                       {isCreating ? (
-                        <span className="inline-flex items-center gap-1">
-                          <span className="relative inline-flex h-1.5 w-1.5">
-                            <span className="absolute inset-0 animate-ping rounded-full bg-accent opacity-60" />
-                            <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                          </span>
-                          {t(STATUS_KEY[w.status] as Parameters<typeof t>[0])}
+                        <span className="truncate text-[13px] font-medium text-fg-muted">
+                          {w.branch}
                         </span>
                       ) : (
-                        t(STATUS_KEY[w.status] as Parameters<typeof t>[0])
+                        <Link
+                          to={`/projects/${projectId}/w/${w.id}`}
+                          className="truncate text-[13px] font-medium text-fg hover:text-accent"
+                        >
+                          {w.branch}
+                        </Link>
                       )}
-                    </Badge>
-                    {isCreating ? (
-                      <span className="text-[11px] text-fg-subtle">
-                        {t("workspaces.cloning_hint")}
-                      </span>
-                    ) : null}
-                    {w.status === "failed" ? (
-                      <span className="text-[11px] text-danger">
-                        {t("workspaces.failed_hint")}
-                      </span>
-                    ) : null}
+                      <Badge tone={STATUS_TONE[w.status]}>
+                        {isCreating ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span className="relative inline-flex h-1.5 w-1.5">
+                              <span className="absolute inset-0 animate-ping rounded-full bg-accent opacity-60" />
+                              <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                            </span>
+                            {t(STATUS_KEY[w.status] as Parameters<typeof t>[0])}
+                          </span>
+                        ) : (
+                          t(STATUS_KEY[w.status] as Parameters<typeof t>[0])
+                        )}
+                      </Badge>
+                      {isCreating ? (
+                        <span className="text-[11px] text-fg-subtle">
+                          {t("workspaces.cloning_hint")}
+                        </span>
+                      ) : null}
+                      {isFailed ? (
+                        <span className="text-[11px] text-danger">
+                          {t("workspaces.failed_hint")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {w.status === "running" ? (
+                        <Button variant="ghost" size="sm" onClick={() => onStop(w.id)}>
+                          <Pause className="h-3 w-3" />
+                          {t("workspaces.actions.stop")}
+                        </Button>
+                      ) : null}
+                      {w.status === "stopped" || w.status === "paused" ? (
+                        <Button variant="ghost" size="sm" onClick={() => onStart(w.id)}>
+                          <Play className="h-3 w-3" />
+                          {t("workspaces.actions.start")}
+                        </Button>
+                      ) : null}
+                      {w.status !== "archived" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmDelete(w)}
+                          title={t("workspaces.actions.delete")}
+                          aria-label={t("workspaces.actions.delete")}
+                          className="text-fg-subtle hover:bg-danger/10 hover:text-danger"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      ) : null}
+                      {isCreating ? (
+                        <span
+                          aria-label={t("workspaces.cloning_hint")}
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-bg-subtle px-2.5 text-[12px] font-medium text-fg-muted"
+                        >
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {t("workspaces.open")}
+                        </span>
+                      ) : (
+                        <Link
+                          to={`/projects/${projectId}/w/${w.id}`}
+                          className="inline-flex h-7 items-center gap-1 rounded-md bg-accent px-2.5 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
+                        >
+                          {t("workspaces.open")}
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {w.status === "running" ? (
-                      <Button variant="ghost" size="sm" onClick={() => onStop(w.id)}>
-                        <Pause className="h-3 w-3" />
-                        {t("workspaces.actions.stop")}
-                      </Button>
-                    ) : null}
-                    {w.status === "stopped" || w.status === "paused" ? (
-                      <Button variant="ghost" size="sm" onClick={() => onStart(w.id)}>
-                        <Play className="h-3 w-3" />
-                        {t("workspaces.actions.start")}
-                      </Button>
-                    ) : null}
-                    {w.status !== "archived" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setConfirmDelete(w)}
-                        title={t("workspaces.actions.delete")}
-                        aria-label={t("workspaces.actions.delete")}
-                        className="text-fg-subtle hover:bg-danger/10 hover:text-danger"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    ) : null}
-                    {isCreating ? (
-                      <span
-                        aria-label={t("workspaces.cloning_hint")}
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-bg-subtle px-2.5 text-[12px] font-medium text-fg-muted"
-                      >
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        {t("workspaces.open")}
-                      </span>
-                    ) : (
-                      <Link
-                        to={`/projects/${projectId}/w/${w.id}`}
-                        className="inline-flex h-7 items-center gap-1 rounded-md bg-accent px-2.5 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
-                      >
-                        {t("workspaces.open")}
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    )}
-                  </div>
+                  {showInlineLog ? (
+                    <InlineCloneLog workspaceId={w.id} live={isCreating} />
+                  ) : null}
                 </li>
               );
             })}
@@ -317,6 +324,82 @@ export function ProjectDetail() {
         onConfirm={onDeleteConfirmed}
         onCancel={() => setConfirmDelete(null)}
       />
+    </div>
+  );
+}
+
+interface InlineCloneLogProps {
+  workspaceId: string;
+  /** `true` while status="creating" so we keep polling. */
+  live: boolean;
+}
+
+/** Inline live `git clone` log shown directly under a workspace row
+ * on the project detail page. The user shouldn't have to click "Open"
+ * to find out what's happening — the log lives where the row lives.
+ *
+ * Polls every 2s while live; one-shot fetch when the workspace has
+ * already settled (e.g. failed) so the user still sees what went
+ * wrong. */
+function InlineCloneLog({ workspaceId, live }: InlineCloneLogProps) {
+  const { t } = useI18n();
+  const [log, setLog] = useState<string>("");
+  const [collapsed, setCollapsed] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () => {
+      void getWorkspaceCloneLog(workspaceId, 8192).then((text) => {
+        if (cancelled) return;
+        setLog(text);
+        const el = preRef.current;
+        if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 60) {
+          requestAnimationFrame(() => {
+            el.scrollTop = el.scrollHeight;
+          });
+        }
+      });
+    };
+    pull();
+    if (!live) return undefined;
+    const id = window.setInterval(pull, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [workspaceId, live]);
+
+  const lines = log ? log.split("\n").filter(Boolean) : [];
+  const lastLine = lines.length > 0 ? lines[lines.length - 1] : "";
+
+  return (
+    <div className="border-t border-border bg-bg-subtle/40">
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] font-mono text-fg-muted hover:bg-surface-hover"
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        )}
+        <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
+          clone.log
+        </span>
+        <span className="truncate flex-1 text-fg-muted">{lastLine || "—"}</span>
+        <span className="shrink-0 text-fg-subtle">{lines.length} lines</span>
+      </button>
+      {!collapsed ? (
+        <pre
+          ref={preRef}
+          data-testid="inline-clone-log"
+          className="max-h-[260px] overflow-auto whitespace-pre-wrap break-all bg-bg px-4 py-2 font-mono text-[11px] leading-relaxed text-fg-muted"
+        >
+          {log || t("workspace.cloning.log_waiting")}
+        </pre>
+      ) : null}
     </div>
   );
 }
