@@ -219,9 +219,9 @@ def _read_clone_log_tail(worktree_path: str, tail_bytes: int) -> str:
     blocking file IO doesn't sit on the event loop."""
     import os  # noqa: PLC0415
 
-    from gapt_server.domains.workspaces.service import CLONE_LOG_FILENAME  # noqa: PLC0415
+    from gapt_server.domains.workspaces.service import clone_log_path  # noqa: PLC0415
 
-    log_path = os.path.join(worktree_path, CLONE_LOG_FILENAME)
+    log_path = clone_log_path(worktree_path)
     if not os.path.isfile(log_path):
         return ""
     try:

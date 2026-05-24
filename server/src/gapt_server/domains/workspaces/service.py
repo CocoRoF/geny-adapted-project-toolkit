@@ -19,7 +19,6 @@ into the container so the agent sees the files too.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import shutil
 from collections.abc import Awaitable, Callable
@@ -55,36 +54,54 @@ _CLONE_RETRIES = 3
 # 10 min per attempt — large-asset repos over a thin link routinely need
 # 3-5 min for the receive step; 180s clipped legitimate slow clones.
 _CLONE_TIMEOUT_S = 600.0
-# Log file name + max size kept inside the worktree so the GET
-# /api/workspaces/:wid/clone-log endpoint has a fixed path to read.
-CLONE_LOG_FILENAME = ".gapt-clone.log"
+# Clone log lives as a SIBLING of the worktree dir, not inside it —
+# git clone refuses any non-empty destination, so we can't drop the
+# log file in there or git fails before downloading the first byte.
+# Layout:
+#   /workspace/<slug>/<wid>           ← worktree (git clones here)
+#   /workspace/<slug>/.<wid>.clone.log ← progress log (this file)
+_CLONE_LOG_SUFFIX = ".clone.log"
 _CLONE_LOG_MAX_BYTES = 256 * 1024  # 256 KB tail
 
 
-def _wipe_dir(path: str) -> None:
-    if not os.path.isdir(path):
-        return
-    for entry in os.listdir(path):
-        # Don't nuke the clone log between retries — the user wants to
-        # see *all* attempts. Everything else (incl. partial .git) is
-        # fair game.
-        if entry == CLONE_LOG_FILENAME:
-            continue
-        target = os.path.join(path, entry)
-        if os.path.isdir(target):
-            shutil.rmtree(target, ignore_errors=True)
-        else:
-            with contextlib.suppress(OSError):
-                os.remove(target)
+def clone_log_path(worktree: str) -> str:
+    """Return the absolute path to the clone log for a worktree.
+
+    Sibling of the worktree dir so git can clone into an empty
+    destination while the log is still preserved across retries."""
+    normalised = worktree.rstrip("/")
+    parent = os.path.dirname(normalised) or "/"
+    name = os.path.basename(normalised)
+    return os.path.join(parent, f".{name}{_CLONE_LOG_SUFFIX}")
+
+
+def _check_worktree(worktree: str) -> tuple[str, str | None]:
+    """Sync helper: ensure parent dir exists and decide whether the
+    worktree needs a fresh clone, a resume (skip), or is unreachable.
+    Returns `(verdict, detail)` where `verdict` is `proceed | exists |
+    error`."""
+    parent = os.path.dirname(worktree.rstrip("/"))
+    try:
+        os.makedirs(parent or "/", exist_ok=True)
+    except OSError as exc:
+        return ("error", f"mkdir parent failed: {exc}")
+    if os.path.isdir(worktree):
+        try:
+            existing = [name for name in os.listdir(worktree) if not name.startswith(".gapt-")]
+        except OSError as exc:
+            return ("error", f"listdir failed: {exc}")
+        if existing:
+            return ("exists", f"{len(existing)} entries already present")
+    return ("proceed", None)
 
 
 def _append_clone_log(worktree: str, line: str) -> None:
-    """Append one line to the worktree's clone log. Silently rotates
-    when the file gets large so a misbehaving git progress doesn't fill
-    the disk."""
-    path = os.path.join(worktree, CLONE_LOG_FILENAME)
+    """Append one line to the worktree's clone log file. Silently
+    rotates when the file gets large so a misbehaving git progress
+    doesn't fill the disk."""
+    path = clone_log_path(worktree)
     try:
-        os.makedirs(worktree, exist_ok=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         # Rotate at threshold — keep only the latest half.
         if os.path.isfile(path) and os.path.getsize(path) > _CLONE_LOG_MAX_BYTES:
             with open(path, "rb") as fh:
@@ -96,7 +113,6 @@ def _append_clone_log(worktree: str, line: str) -> None:
             if not line.endswith("\n"):
                 fh.write("\n")
     except OSError:
-        # Logging failure is non-fatal — the clone still runs.
         pass
 
 
@@ -167,7 +183,10 @@ async def _default_clone_runner(
     last_err = ""
     last_code = -1
     for attempt in range(1, _CLONE_RETRIES + 1):
-        await asyncio.to_thread(_wipe_dir, dest_dir)
+        # Drop the destination entirely between retries. Git wants an
+        # empty dest, so we remove any partial state from prior
+        # attempts (incl. .git that failed mid-fetch).
+        await asyncio.to_thread(shutil.rmtree, dest_dir, True)
         cmd = [
             bin_path,
             "-c", "http.version=HTTP/1.1",
@@ -484,30 +503,28 @@ class WorkspaceService:
         branch: str,
         git_remote_url: str,
     ) -> tuple[str, str | None]:
-        """Create the worktree dir + clone the project remote.
+        """Clone the project remote into `worktree`.
+
+        Only ensures the *parent* directory exists — git refuses any
+        non-empty destination, so the worktree itself must be empty
+        (or missing). If the worktree already exists and is non-empty,
+        we treat it as a resume case and skip clone.
 
         Returns `(outcome, detail)`:
         - `("cloned", None)` on success.
-        - `("exists", "<reason>")` when the dir was already non-empty
-          (a re-create reusing the workspace_id, or shared mount).
+        - `("exists", "<reason>")` when the dir was already non-empty.
         - `("error", "<stderr>")` when git failed.
-        - `("skipped", "<reason>")` when we don't even try (missing
-          git binary, no remote URL).
+        - `("skipped", "<reason>")` when we don't even try.
         """
         if not git_remote_url:
             return ("skipped", "git_remote_url empty")
-        # Idempotent: existing non-empty dir is left alone so re-creates
-        # don't lose user state.
-        try:
-            os.makedirs(worktree, exist_ok=True)
-        except OSError as exc:
-            return ("error", f"mkdir failed: {exc}")
-        try:
-            existing = os.listdir(worktree)
-        except OSError as exc:
-            return ("error", f"listdir failed: {exc}")
-        if existing:
-            return ("exists", f"{len(existing)} entries already present")
+
+        outcome, detail = await asyncio.to_thread(
+            _check_worktree, worktree
+        )
+        if outcome != "proceed":
+            return (outcome, detail)
+
         exit_code, _stdout, stderr = await self._clone(git_remote_url, branch, worktree)
         if exit_code != 0:
             return ("error", stderr.strip()[-400:] or f"git clone exit={exit_code}")
