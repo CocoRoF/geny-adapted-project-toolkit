@@ -19,6 +19,7 @@ into the container so the agent sees the files too.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 from collections.abc import Awaitable, Callable
@@ -50,36 +51,92 @@ CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
 """Signature: (git_remote_url, branch, dest_dir) → (exit_code, stdout, stderr)."""
 
 
+_CLONE_RETRIES = 3
+_CLONE_TIMEOUT_S = 180.0
+
+
+def _wipe_dir(path: str) -> None:
+    if not os.path.isdir(path):
+        return
+    for entry in os.listdir(path):
+        target = os.path.join(path, entry)
+        if os.path.isdir(target):
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            with contextlib.suppress(OSError):
+                os.remove(target)
+
+
 async def _default_clone_runner(
     git_remote_url: str, branch: str, dest_dir: str
 ) -> tuple[int, str, str]:
-    """Shallow-clone the project's remote into `dest_dir`.
+    """Shallow-clone the project's remote into `dest_dir` with retries.
 
-    `dest_dir` is expected to exist and be empty. On a clean dev box we
-    can't authenticate (no token wiring yet) so this only works for
-    public repos. Private-repo + per-project token lookup lands when
-    the secret-vault wire-up grows that path (M2)."""
+    Retries cover transient network failures (HTTP/2 stream cancels,
+    early EOF, etc.) — common when cloning large repos over flaky
+    links. Each attempt forces HTTP/1.1 because libgit2/curl's HTTP/2
+    interaction with GitHub is the usual culprit. `dest_dir` is
+    expected to exist; we wipe it between attempts so git starts
+    clean. Public repos only for now — token wiring lands in M2."""
     bin_path = shutil.which("git") or "/usr/bin/git"
-    cmd = [
-        bin_path,
-        "clone",
-        "--depth=1",
-        f"--branch={branch}" if branch else "",
-        git_remote_url,
-        dest_dir,
-    ]
-    cmd = [arg for arg in cmd if arg]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    return (
-        proc.returncode if proc.returncode is not None else -1,
-        out.decode("utf-8", errors="replace"),
-        err.decode("utf-8", errors="replace"),
-    )
+    last_out = ""
+    last_err = ""
+    last_code = -1
+    for attempt in range(1, _CLONE_RETRIES + 1):
+        # Wipe + recreate so retried git always starts from an empty dir.
+        # os.path/listdir calls below are sync; ruff ASYNC240 wants
+        # anyio.Path but the syscalls are nanoseconds and bringing
+        # anyio just for the wipe is overkill — disable the lint.
+        await asyncio.to_thread(_wipe_dir, dest_dir)
+        cmd = [
+            bin_path,
+            "-c", "http.version=HTTP/1.1",
+            "-c", "http.postBuffer=524288000",
+            "clone",
+            "--depth=1",
+            "--no-tags",
+            f"--branch={branch}" if branch else "",
+            git_remote_url,
+            dest_dir,
+        ]
+        cmd = [arg for arg in cmd if arg]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=_CLONE_TIMEOUT_S)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                last_err = f"git clone timed out after {_CLONE_TIMEOUT_S}s (attempt {attempt})"
+                last_code = -2
+                continue
+        except OSError as exc:
+            last_err = f"git subprocess failed: {exc}"
+            last_code = -3
+            break
+        last_code = proc.returncode if proc.returncode is not None else -1
+        last_out = out.decode("utf-8", errors="replace")
+        last_err = err.decode("utf-8", errors="replace")
+        if last_code == 0:
+            return (0, last_out, last_err)
+        # Retry on partial-network errors; bail on definitive ones
+        # (repo not found / auth required).
+        if any(
+            marker in last_err
+            for marker in (
+                "Repository not found",
+                "Authentication failed",
+                "could not read Username",
+                "fatal: unable to access",
+                "Could not resolve host",
+            )
+        ):
+            break
+    return (last_code, last_out, last_err)
 
 logger = structlog.get_logger(__name__)
 
