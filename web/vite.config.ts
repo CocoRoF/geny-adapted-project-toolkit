@@ -46,6 +46,33 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // When fronted by a Cloudflare tunnel (or any reverse proxy) we
+    // expose a single port and forward API + auth callbacks to the
+    // FastAPI server. Vite's HMR uses websockets on the same port,
+    // which Cloudflare tunnels handle transparently.
+    proxy: {
+      "/api": {
+        target: "http://localhost:8001",
+        changeOrigin: false,
+        ws: true,
+      },
+      "/health": {
+        target: "http://localhost:8001",
+        changeOrigin: false,
+      },
+      "/metrics": {
+        target: "http://localhost:8001",
+        changeOrigin: false,
+      },
+    },
+    // Allow the tunnel hostname through Vite's HMR host check.
+    // `allowedHosts: true` accepts any Host header — fine in dev,
+    // but the explicit list is preferred when known.
+    allowedHosts: [
+      "localhost",
+      ".hrletsgo.me",
+      ".trycloudflare.com",
+    ],
   },
   build: {
     target: "es2022",
