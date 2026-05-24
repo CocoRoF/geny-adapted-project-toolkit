@@ -191,3 +191,77 @@ async def test_bundle_includes_sdk_creds_when_mapped(
         "agent_session.anthropic",
         "agent_session.openai",
     }
+
+
+@pytest.mark.asyncio
+async def test_user_scoped_anthropic_key_flows_into_claude_cli(
+    creds_fx: _CredsFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the project doesn't supply secret_refs, a user-scoped
+    `anthropic_api_key` should fall through to both the SDK provider
+    *and* the spawned claude_code_cli (overriding any host env)."""
+    monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-process-env")
+    factory = create_session_factory(creds_fx.engine)
+
+    async with factory() as db:
+        await creds_fx.vault.store(
+            db,
+            scope=enums.SecretOwnerScope.USER,
+            owner_id="01KS90000000000000000USER",
+            key_name="anthropic_api_key",
+            value="sk-from-user-vault",
+        )
+        await creds_fx.vault.store(
+            db,
+            scope=enums.SecretOwnerScope.USER,
+            owner_id="01KS90000000000000000USER",
+            key_name="openai_api_key",
+            value="sk-openai-from-vault",
+        )
+        await db.commit()
+
+    async with factory() as db:
+        bundle = await build_for_session(
+            db=db,
+            vault=creds_fx.vault,
+            actor_id="01KS90000000000000000USER",
+        )
+
+    # claude_code_cli prefers the vault key over the host env.
+    assert bundle.by_provider["claude_code_cli"].api_key == "sk-from-user-vault"
+    # SDK anthropic + openai providers are auto-included from the
+    # user-scoped vault keys.
+    assert bundle.by_provider["anthropic"].api_key == "sk-from-user-vault"
+    assert bundle.by_provider["openai"].api_key == "sk-openai-from-vault"
+
+
+@pytest.mark.asyncio
+async def test_other_user_secrets_do_not_leak(
+    creds_fx: _CredsFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User A's anthropic key must not appear in user B's bundle."""
+    monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    factory = create_session_factory(creds_fx.engine)
+
+    async with factory() as db:
+        await creds_fx.vault.store(
+            db,
+            scope=enums.SecretOwnerScope.USER,
+            owner_id="01KS90000000000000000AAAA",
+            key_name="anthropic_api_key",
+            value="sk-user-A-only",
+        )
+        await db.commit()
+
+    async with factory() as db:
+        bundle = await build_for_session(
+            db=db,
+            vault=creds_fx.vault,
+            actor_id="01KS90000000000000000BBBB",
+        )
+
+    # User B has no secret stored. claude_code_cli falls back to "".
+    assert bundle.by_provider["claude_code_cli"].api_key == ""
+    assert "anthropic" not in bundle.by_provider

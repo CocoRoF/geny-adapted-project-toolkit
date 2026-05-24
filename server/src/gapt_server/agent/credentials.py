@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 import structlog
 from geny_executor import CredentialBundle, ProviderCredentials
 
+from gapt_server.db import enums
+
 if TYPE_CHECKING:
     from typing import Any
 
@@ -33,6 +35,46 @@ if TYPE_CHECKING:
     from gapt_server.domains.secrets.vault import SecretVault
 
 logger = structlog.get_logger(__name__)
+
+
+# User-scoped secret keys (matches the Settings UI). Resolved from
+# `SecretVault` scoped to the acting user when the project doesn't
+# carry an explicit `secret_ref`. Each entry: {vault_key_name: env_alias}.
+_USER_SECRET_KEYS: dict[str, str] = {
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "openai_api_key": "OPENAI_API_KEY",
+    "google_api_key": "GOOGLE_API_KEY",
+}
+
+
+async def _resolve_user_secret(
+    *,
+    db: AsyncSession,
+    vault: SecretVault,
+    actor_id: str,
+    key_name: str,
+    purpose: str,
+) -> str | None:
+    """Look up a user-scoped secret by key_name. Returns plaintext or
+    None when the secret isn't stored. Errors are swallowed because a
+    missing secret is the normal case — the caller falls back to the
+    process env (host-OAuth path)."""
+    try:
+        metadata = await vault.list(
+            db, scope=enums.SecretOwnerScope.USER, owner_id=actor_id
+        )
+    except Exception:  # noqa: BLE001 — best-effort fallback
+        return None
+    for md in metadata:
+        if md.key_name != key_name:
+            continue
+        try:
+            return await vault.read(
+                db, secret_id=md.id, purpose=purpose, actor_id=actor_id
+            )
+        except Exception:  # noqa: BLE001
+            return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -134,12 +176,30 @@ async def build_for_session(
     """
     bundle_map: dict[str, ProviderCredentials] = {}
 
+    # User-scoped Settings keys (Anthropic/OpenAI/Google) act as a
+    # fallback when the project has no explicit secret_ref. Order of
+    # precedence per provider: explicit project secret_ref >
+    # user-scoped vault secret > process env.
+    user_keys: dict[str, str] = {}
+    for key_name in _USER_SECRET_KEYS:
+        value = await _resolve_user_secret(
+            db=db,
+            vault=vault,
+            actor_id=actor_id,
+            key_name=key_name,
+            purpose=f"agent_session.{key_name}",
+        )
+        if value:
+            user_keys[key_name] = value
+
     # Primary: claude_code_cli always present. It still works without
     # any explicit API key because the spawned `claude` CLI can use
-    # the host's OAuth subscription.
+    # the host's OAuth subscription. We prefer the user's vault-stored
+    # ANTHROPIC_API_KEY when present, then the process env.
+    claude_key = user_keys.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
     bundle_map["claude_code_cli"] = build_claude_code_cli_creds(
         binary_path=binary_path or claude_binary(),
-        api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+        api_key=claude_key,
         workspace_root=workspace_root,
         mcp_config=mcp_config,
         settings_path=settings_path,
@@ -147,26 +207,33 @@ async def build_for_session(
         max_budget_usd=max_budget_usd,
     )
 
-    # SDK providers — only included when the project has a mapped
-    # secret_ref. Read plaintext, stuff into bundle, drop reference.
-    for provider, secret_id in (
-        ("anthropic", secret_refs.anthropic),
-        ("openai", secret_refs.openai),
-        ("google", secret_refs.google),
-        ("vllm", secret_refs.vllm),
+    # SDK providers — project secret_ref takes precedence; otherwise
+    # fall back to the matching user-scoped Settings key.
+    for provider, secret_id, user_key_name in (
+        ("anthropic", secret_refs.anthropic, "anthropic_api_key"),
+        ("openai", secret_refs.openai, "openai_api_key"),
+        ("google", secret_refs.google, "google_api_key"),
+        ("vllm", secret_refs.vllm, None),
     ):
-        if secret_id is None:
+        plaintext: str | None = None
+        if secret_id is not None:
+            plaintext = await vault.read(
+                db,
+                secret_id=secret_id,
+                purpose=f"agent_session.{provider}",
+                actor_id=actor_id,
+            )
+        elif user_key_name is not None and user_key_name in user_keys:
+            plaintext = user_keys[user_key_name]
+        if plaintext is None:
             continue
-        plaintext = await vault.read(
-            db,
-            secret_id=secret_id,
-            purpose=f"agent_session.{provider}",
-            actor_id=actor_id,
-        )
         bundle_map[provider] = ProviderCredentials(api_key=plaintext)
         # Drop the plaintext reference. Python can't truly zeroize a
         # str, but rebinding the name shrinks the exposure window.
         del plaintext
+
+    # Clear the user-scoped plaintext map.
+    user_keys.clear()
 
     logger.info(
         "agent.credentials.built",

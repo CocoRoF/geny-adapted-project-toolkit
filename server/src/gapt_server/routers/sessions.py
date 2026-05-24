@@ -58,6 +58,7 @@ from gapt_server.container import (
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001 — Depends inspects at runtime
 from gapt_server.domains.projects.service import ProjectError
+from gapt_server.domains.secrets.vault import SecretVault  # noqa: TC001
 from gapt_server.observability.instruments import (
     cost_counter,
     input_tokens_counter,
@@ -66,6 +67,7 @@ from gapt_server.observability.instruments import (
 from gapt_server.policy.engine import PolicyEngine  # noqa: TC001
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
+from gapt_server.routers.secrets import get_vault
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -189,6 +191,7 @@ async def create_session(
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
     try:
@@ -197,6 +200,7 @@ async def create_session(
             user=user,
             workspace_id=payload.workspace_id,
             env_id=payload.env_id,
+            vault=vault,
         )
         await db.commit()
     except ProjectError as exc:
