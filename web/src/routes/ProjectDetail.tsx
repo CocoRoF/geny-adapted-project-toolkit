@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ChevronLeft, ExternalLink, GitBranch, Loader2, Pause, Play, Plus, Square } from "lucide-react";
+import {
+  ChevronLeft,
+  ExternalLink,
+  GitBranch,
+  Loader2,
+  Pause,
+  Play,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type ProjectResponse, getProject } from "@/api/projects";
 import {
   type WorkspaceResponse,
   type WorkspaceStatus,
+  deleteWorkspace,
   listWorkspaces,
   startWorkspace,
   stopWorkspace,
@@ -15,6 +25,7 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { NewWorkspaceModal } from "@/routes/NewWorkspaceModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
+import { ConfirmDialog } from "@/ui/ConfirmDialog";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -45,6 +56,8 @@ export function ProjectDetail() {
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<WorkspaceResponse | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const projectId = pid ?? "";
 
@@ -104,6 +117,19 @@ export function ProjectDetail() {
 
   function onStart(workspaceId: string): void {
     void startWorkspace(workspaceId).then(patchWorkspace).catch(reportError);
+  }
+
+  function onDeleteConfirmed(): void {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    setDeleting(true);
+    void deleteWorkspace(target.id)
+      .then(() => {
+        setWorkspaces((prev) => prev.filter((w) => w.id !== target.id));
+        setConfirmDelete(null);
+      })
+      .catch(reportError)
+      .finally(() => setDeleting(false));
   }
 
   return (
@@ -230,9 +256,16 @@ export function ProjectDetail() {
                         {t("workspaces.actions.start")}
                       </Button>
                     ) : null}
-                    {w.status === "archived" || w.status === "failed" ? (
-                      <Button variant="ghost" size="sm" disabled>
-                        <Square className="h-3 w-3" />
+                    {w.status !== "archived" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setConfirmDelete(w)}
+                        title={t("workspaces.actions.delete")}
+                        aria-label={t("workspaces.actions.delete")}
+                        className="text-fg-subtle hover:bg-danger/10 hover:text-danger"
+                      >
+                        <Trash2 className="h-3 w-3" />
                       </Button>
                     ) : null}
                     {isCreating ? (
@@ -268,6 +301,21 @@ export function ProjectDetail() {
           setWorkspaces((prev) => [ws, ...prev]);
           setShowCreate(false);
         }}
+      />
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        tone="danger"
+        title={t("workspaces.delete_confirm.title")}
+        description={t("workspaces.delete_confirm.body").replace(
+          "{branch}",
+          confirmDelete?.branch ?? "",
+        )}
+        confirmLabel={t("workspaces.delete_confirm.confirm")}
+        cancelLabel={t("workspaces.delete_confirm.cancel")}
+        busy={deleting}
+        onConfirm={onDeleteConfirmed}
+        onCancel={() => setConfirmDelete(null)}
       />
     </div>
   );

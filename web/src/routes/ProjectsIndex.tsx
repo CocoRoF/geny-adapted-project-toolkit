@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Archive, FolderGit2, GitBranch, Plus, RefreshCw } from "lucide-react";
+import { Archive, FolderGit2, GitBranch, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
-import { type ProjectResponse, listProjects } from "@/api/projects";
+import { type ProjectResponse, archiveProject, listProjects } from "@/api/projects";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { NewProjectModal } from "@/routes/NewProjectModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
+import { ConfirmDialog } from "@/ui/ConfirmDialog";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 
@@ -20,6 +21,8 @@ export function ProjectsIndex() {
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState<ProjectResponse | null>(null);
+  const [archiving, setArchiving] = useState(false);
 
   const refresh = useCallback(() => {
     setState("loading");
@@ -42,6 +45,30 @@ export function ProjectsIndex() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  function onArchive(): void {
+    if (!confirmArchive) return;
+    const target = confirmArchive;
+    setArchiving(true);
+    void archiveProject(target.id)
+      .then(() => {
+        // Server returns the archived project (with archived_at set).
+        // We drop it from the list — re-running listProjects() also
+        // works but a quick local prune feels snappier.
+        setProjects((prev) => prev.filter((p) => p.id !== target.id));
+        setConfirmArchive(null);
+      })
+      .catch((err: unknown) => {
+        setError(
+          err instanceof ApiError
+            ? `${err.code}: ${err.reason}`
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        );
+      })
+      .finally(() => setArchiving(false));
+  }
 
   const orgs = me?.orgs ?? [];
 
@@ -109,13 +136,13 @@ export function ProjectsIndex() {
       {projects.length > 0 ? (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((p) => (
-            <li key={p.id}>
+            <li key={p.id} className="group relative">
               <Link
                 to={`/projects/${p.id}`}
-                className="group block h-full rounded-lg border border-border bg-bg-elevated p-4 transition-colors hover:border-accent/60 hover:bg-surface-hover"
+                className="block h-full rounded-lg border border-border bg-bg-elevated p-4 transition-colors hover:border-accent/60 hover:bg-surface-hover"
               >
                 <div className="mb-2 flex items-start justify-between gap-2">
-                  <h3 className="truncate text-[14px] font-semibold text-fg group-hover:text-accent">
+                  <h3 className="truncate pr-8 text-[14px] font-semibold text-fg group-hover:text-accent">
                     {p.display_name}
                   </h3>
                   {p.archived_at ? (
@@ -131,6 +158,21 @@ export function ProjectsIndex() {
                   <span className="truncate">{p.git_remote_url}</span>
                 </div>
               </Link>
+              {!p.archived_at ? (
+                <button
+                  type="button"
+                  aria-label={t("projects.archive")}
+                  title={t("projects.archive")}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setConfirmArchive(p);
+                  }}
+                  className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-md text-fg-subtle opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -144,6 +186,21 @@ export function ProjectsIndex() {
           setProjects((prev) => [project, ...prev]);
           setShowCreate(false);
         }}
+      />
+
+      <ConfirmDialog
+        open={confirmArchive !== null}
+        tone="danger"
+        title={t("projects.archive_confirm.title")}
+        description={t("projects.archive_confirm.body").replace(
+          "{name}",
+          confirmArchive?.display_name ?? "",
+        )}
+        confirmLabel={t("projects.archive_confirm.confirm")}
+        cancelLabel={t("projects.archive_confirm.cancel")}
+        busy={archiving}
+        onConfirm={onArchive}
+        onCancel={() => setConfirmArchive(null)}
       />
     </div>
   );

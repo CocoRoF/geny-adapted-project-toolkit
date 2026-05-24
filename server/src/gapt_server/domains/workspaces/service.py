@@ -482,7 +482,11 @@ class WorkspaceService:
         row = await self._fetch(
             db, actor=actor, workspace_id=workspace_id, min_role=enums.Role.EDITOR
         )
-        await self._sandbox_for(row, action="stop")
+        # Swallow "unknown sandbox" — the workspace row outlives the
+        # in-memory mock sandbox across server restarts. Stopping a
+        # workspace whose sandbox has been swept away is still a
+        # legitimate "now stopped" transition from the user's view.
+        await self._sandbox_for(row, action="stop", swallow_missing=True)
         row.status = enums.WorkspaceStatus.STOPPED
         row.last_activity_at = _now()
         await db.flush()
@@ -503,7 +507,11 @@ class WorkspaceService:
         row = await self._fetch(
             db, actor=actor, workspace_id=workspace_id, min_role=enums.Role.EDITOR
         )
-        await self._sandbox_for(row, action="start")
+        # Same idempotency as stop — if the sandbox was swept, the
+        # start request becomes a no-op + status flip. The next time
+        # the user does real work the workspace boot path will
+        # recreate the sandbox.
+        await self._sandbox_for(row, action="start", swallow_missing=True)
         row.status = enums.WorkspaceStatus.RUNNING
         row.last_activity_at = _now()
         await db.flush()

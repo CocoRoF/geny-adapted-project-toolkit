@@ -43,6 +43,11 @@ export const ko: Record<keyof typeof en, string> = {
   "projects.refresh": "새로고침",
   "projects.org": "조직",
   "projects.archived": "보관됨",
+  "projects.archive": "프로젝트 보관",
+  "projects.archive_confirm.title": "프로젝트를 보관할까요?",
+  "projects.archive_confirm.body": "\"{name}\" 을(를) 보관합니다. 워크스페이스는 감사 로그에 남고, 목록에서는 사라집니다.",
+  "projects.archive_confirm.confirm": "보관하기",
+  "projects.archive_confirm.cancel": "취소",
   "projects.create.title": "프로젝트 만들기",
   "projects.create.cancel": "취소",
   "projects.create.submit": "만들기",
@@ -84,6 +89,11 @@ export const ko: Record<keyof typeof en, string> = {
   "workspaces.create.creating": "만드는 중…",
   "workspaces.actions.stop": "정지",
   "workspaces.actions.start": "시작",
+  "workspaces.actions.delete": "워크스페이스 삭제",
+  "workspaces.delete_confirm.title": "워크스페이스를 삭제할까요?",
+  "workspaces.delete_confirm.body": "\"{branch}\" 워크스페이스를 삭제합니다. 샌드박스를 정리하고 보관 처리합니다. 디스크의 작업트리 파일은 남아 있습니다.",
+  "workspaces.delete_confirm.confirm": "삭제",
+  "workspaces.delete_confirm.cancel": "취소",
   "workspaces.last_activity": "마지막 활동",
 
   // --- nav / shell ---

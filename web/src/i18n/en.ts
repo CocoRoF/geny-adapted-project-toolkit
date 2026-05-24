@@ -44,6 +44,11 @@ export const en = {
   "projects.refresh": "Refresh",
   "projects.org": "Organisation",
   "projects.archived": "Archived",
+  "projects.archive": "Archive project",
+  "projects.archive_confirm.title": "Archive project?",
+  "projects.archive_confirm.body": "Archive \"{name}\"? Its workspaces stay in the audit log but the project hides from the list.",
+  "projects.archive_confirm.confirm": "Archive",
+  "projects.archive_confirm.cancel": "Cancel",
   "projects.create.title": "Create project",
   "projects.create.cancel": "Cancel",
   "projects.create.submit": "Create",
@@ -85,6 +90,11 @@ export const en = {
   "workspaces.create.creating": "Creating…",
   "workspaces.actions.stop": "Stop",
   "workspaces.actions.start": "Start",
+  "workspaces.actions.delete": "Delete workspace",
+  "workspaces.delete_confirm.title": "Delete workspace?",
+  "workspaces.delete_confirm.body": "Delete workspace \"{branch}\"? This tears down the sandbox and archives the row. The worktree files stay on disk.",
+  "workspaces.delete_confirm.confirm": "Delete",
+  "workspaces.delete_confirm.cancel": "Cancel",
   "workspaces.last_activity": "Last activity",
 
   // --- nav / shell ---
