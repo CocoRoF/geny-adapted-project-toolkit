@@ -20,6 +20,7 @@ when workspaces ask for a volume.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from dataclasses import dataclass
@@ -83,13 +84,22 @@ class _E2EFixture:
 
 
 @pytest_asyncio.fixture
-async def e2e_fx() -> AsyncIterator[_E2EFixture]:
+async def e2e_fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_E2EFixture]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
     settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+
+    # Stub host-side git clone — tests use example.com remote URLs.
+    async def _noop_clone(_url: str, _branch: str, _dest: str) -> tuple[int, str, str]:
+        return (0, "stub clone\n", "")
+
+    from gapt_server.domains.workspaces import service as ws_service
+
+    monkeypatch.setattr(ws_service, "_default_clone_runner", _noop_clone)
+
     app = create_app(settings=settings, container=container)
     idp = build_memory_idp()
     set_auth_idp(idp)
@@ -173,17 +183,27 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
         listing = await client.get("/api/secrets")
         assert "sk-LIVE-DO-NOT-LEAK-e1-smoke" not in listing.text
 
-        # Step 5 — workspace create. Boots a MockSandbox.
+        # Step 5 — workspace create. Boots a MockSandbox + kicks off
+        # the host-side clone in a background task. Status flips from
+        # `creating` to `running` once the clone settles.
         ws = await client.post(
             f"/api/projects/{project_id}/workspaces",
             json={"branch": "main"},
         )
         assert ws.status_code == 201, ws.text
         workspace_id = ws.json()["id"]
-        assert ws.json()["status"] == "running"
+        assert ws.json()["status"] in ("creating", "running")
 
         # MockSandbox saw a `create` + `start` call.
         assert e2e_fx.sandbox.exec_log  # method exists
+
+        # Wait for the background clone to finish so stop/start sees a
+        # settled state.
+        for _ in range(60):  # ~6s ceiling
+            poll = await client.get(f"/api/workspaces/{workspace_id}")
+            if poll.json()["status"] == "running":
+                break
+            await asyncio.sleep(0.1)
 
         # Step 6 — workspace stop + start.
         stopped = await client.post(f"/api/workspaces/{workspace_id}/stop")

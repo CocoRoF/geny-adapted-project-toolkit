@@ -21,8 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from gapt_server.container import (
+    AppContainer,
     get_app_settings,
     get_audit_sink,
+    get_container,
     get_db_session,
     get_sandbox_backend,
 )
@@ -54,11 +56,13 @@ def get_workspace_service(
     settings: Settings = Depends(get_app_settings),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> WorkspaceService:
     return WorkspaceService(
         sandbox_backend=sandbox,
         sandbox_image=settings.sandbox_image_tag,
         audit_sink=audit_sink,
+        session_factory=container.session_factory,
     )
 
 

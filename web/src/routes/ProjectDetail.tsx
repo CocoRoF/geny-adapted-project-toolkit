@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ChevronLeft, ExternalLink, GitBranch, Pause, Play, Plus, Square } from "lucide-react";
+import { ChevronLeft, ExternalLink, GitBranch, Loader2, Pause, Play, Plus, Square } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type ProjectResponse, getProject } from "@/api/projects";
@@ -71,6 +71,23 @@ export function ProjectDetail() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Poll the workspace list while any row is in a transient state
+  // (creating, paused). The server flips `creating → running` once
+  // the background git clone settles, so the badge updates without
+  // the user hitting refresh.
+  const hasPending = workspaces.some((w) => w.status === "creating" || w.status === "paused");
+  useEffect(() => {
+    if (!hasPending || !projectId) return;
+    const id = window.setInterval(() => {
+      void listWorkspaces(projectId)
+        .then(setWorkspaces)
+        .catch(() => {
+          /* swallow — keep last known state */
+        });
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [hasPending, projectId]);
 
   function patchWorkspace(updated: WorkspaceResponse): void {
     setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
@@ -155,51 +172,90 @@ export function ProjectDetail() {
 
         {workspaces.length > 0 ? (
           <ul className="overflow-hidden rounded-lg border border-border bg-bg-elevated divide-y divide-border">
-            {workspaces.map((w) => (
-              <li
-                key={w.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
-                  <Link
-                    to={`/projects/${projectId}/w/${w.id}`}
-                    className="truncate text-[13px] font-medium text-fg hover:text-accent"
-                  >
-                    {w.branch}
-                  </Link>
-                  <Badge tone={STATUS_TONE[w.status]}>
-                    {t(STATUS_KEY[w.status] as Parameters<typeof t>[0])}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {w.status === "running" ? (
-                    <Button variant="ghost" size="sm" onClick={() => onStop(w.id)}>
-                      <Pause className="h-3 w-3" />
-                      {t("workspaces.actions.stop")}
-                    </Button>
-                  ) : null}
-                  {w.status === "stopped" || w.status === "paused" ? (
-                    <Button variant="ghost" size="sm" onClick={() => onStart(w.id)}>
-                      <Play className="h-3 w-3" />
-                      {t("workspaces.actions.start")}
-                    </Button>
-                  ) : null}
-                  {w.status === "archived" || w.status === "failed" ? (
-                    <Button variant="ghost" size="sm" disabled>
-                      <Square className="h-3 w-3" />
-                    </Button>
-                  ) : null}
-                  <Link
-                    to={`/projects/${projectId}/w/${w.id}`}
-                    className="inline-flex h-7 items-center gap-1 rounded-md bg-accent px-2.5 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
-                  >
-                    {t("workspaces.open")}
-                    <ExternalLink className="h-3 w-3" />
-                  </Link>
-                </div>
-              </li>
-            ))}
+            {workspaces.map((w) => {
+              const isCreating = w.status === "creating";
+              return (
+                <li
+                  key={w.id}
+                  className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                    {isCreating ? (
+                      <span className="truncate text-[13px] font-medium text-fg-muted">
+                        {w.branch}
+                      </span>
+                    ) : (
+                      <Link
+                        to={`/projects/${projectId}/w/${w.id}`}
+                        className="truncate text-[13px] font-medium text-fg hover:text-accent"
+                      >
+                        {w.branch}
+                      </Link>
+                    )}
+                    <Badge tone={STATUS_TONE[w.status]}>
+                      {isCreating ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="relative inline-flex h-1.5 w-1.5">
+                            <span className="absolute inset-0 animate-ping rounded-full bg-accent opacity-60" />
+                            <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                          </span>
+                          {t(STATUS_KEY[w.status] as Parameters<typeof t>[0])}
+                        </span>
+                      ) : (
+                        t(STATUS_KEY[w.status] as Parameters<typeof t>[0])
+                      )}
+                    </Badge>
+                    {isCreating ? (
+                      <span className="text-[11px] text-fg-subtle">
+                        {t("workspaces.cloning_hint")}
+                      </span>
+                    ) : null}
+                    {w.status === "failed" ? (
+                      <span className="text-[11px] text-danger">
+                        {t("workspaces.failed_hint")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {w.status === "running" ? (
+                      <Button variant="ghost" size="sm" onClick={() => onStop(w.id)}>
+                        <Pause className="h-3 w-3" />
+                        {t("workspaces.actions.stop")}
+                      </Button>
+                    ) : null}
+                    {w.status === "stopped" || w.status === "paused" ? (
+                      <Button variant="ghost" size="sm" onClick={() => onStart(w.id)}>
+                        <Play className="h-3 w-3" />
+                        {t("workspaces.actions.start")}
+                      </Button>
+                    ) : null}
+                    {w.status === "archived" || w.status === "failed" ? (
+                      <Button variant="ghost" size="sm" disabled>
+                        <Square className="h-3 w-3" />
+                      </Button>
+                    ) : null}
+                    {isCreating ? (
+                      <span
+                        aria-label={t("workspaces.cloning_hint")}
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-bg-subtle px-2.5 text-[12px] font-medium text-fg-muted"
+                      >
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {t("workspaces.open")}
+                      </span>
+                    ) : (
+                      <Link
+                        to={`/projects/${projectId}/w/${w.id}`}
+                        className="inline-flex h-7 items-center gap-1 rounded-md bg-accent px-2.5 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
+                      >
+                        {t("workspaces.open")}
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </section>

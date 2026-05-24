@@ -44,7 +44,7 @@ from gapt_server.domains.sandbox import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
@@ -184,11 +184,18 @@ class WorkspaceService:
         sandbox_image: str,
         audit_sink: AuditSink | None = None,
         clone_runner: CloneRunner | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
         self._audit: AuditSink = audit_sink or NullAuditSink()
         self._clone: CloneRunner = clone_runner or _default_clone_runner
+        # When set, workspace.create spawns the clone as a background
+        # task using a fresh session from this factory. Tests omit it
+        # and get the synchronous in-request clone path.
+        self._session_factory = session_factory
+        # Track in-flight clone tasks so tests + shutdown can join them.
+        self._clone_tasks: set[asyncio.Task[None]] = set()
 
     # ────────────────────────────────────────────────────── create ──
 
@@ -245,31 +252,13 @@ class WorkspaceService:
         )
         db.add(sandbox_row)
         row.sandbox_id = sandbox_ref.id
-        row.status = enums.WorkspaceStatus.RUNNING
+        # Keep status=CREATING while the host-side clone runs. The
+        # background task flips it to RUNNING on success or FAILED
+        # otherwise. If we don't have a session_factory (test path)
+        # the clone runs in-request and we flip status synchronously.
+        row.status = enums.WorkspaceStatus.CREATING
         row.last_activity_at = _now()
         await db.flush()
-
-        # Best-effort host-side clone so the worktree has real files.
-        # Failures surface as audit + structlog but do *not* fail the
-        # workspace create — the user can debug + retry by reusing the
-        # workspace row.
-        clone_outcome: str = "skipped"
-        clone_detail: str | None = None
-        try:
-            clone_outcome, clone_detail = await self._prepare_worktree(
-                worktree=worktree,
-                branch=branch,
-                git_remote_url=project.git_remote_url,
-            )
-        except Exception as exc:
-            clone_outcome = "error"
-            clone_detail = f"{type(exc).__name__}: {exc}"[:500]
-            logger.exception(
-                "workspace.clone.crashed",
-                workspace_id=workspace_id,
-                project_id=project_id,
-                worktree=worktree,
-            )
 
         await self._audit.log(
             AuditEvent(
@@ -282,12 +271,136 @@ class WorkspaceService:
                 payload={
                     "sandbox_id": sandbox_ref.id,
                     "image": self._image,
-                    "clone": clone_outcome,
-                    "clone_detail": clone_detail,
+                    "clone": "pending",
                 },
             )
         )
+
+        if self._session_factory is not None:
+            # Spawn the clone *after* this transaction commits so the
+            # workspace row is visible to the background session.
+            task = asyncio.create_task(
+                self._background_clone(
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    actor_id=actor.id,
+                    worktree=worktree,
+                    branch=branch,
+                    git_remote_url=project.git_remote_url,
+                ),
+                name=f"workspace-clone-{workspace_id}",
+            )
+            self._clone_tasks.add(task)
+            task.add_done_callback(self._clone_tasks.discard)
+        else:
+            # Synchronous path used by tests + scripts without an
+            # async session factory wired. Flips the status here.
+            clone_outcome, clone_detail = await self._safe_prepare_worktree(
+                worktree=worktree,
+                branch=branch,
+                git_remote_url=project.git_remote_url,
+            )
+            row.status = (
+                enums.WorkspaceStatus.RUNNING
+                if clone_outcome in ("cloned", "exists", "skipped")
+                else enums.WorkspaceStatus.FAILED
+            )
+            row.last_activity_at = _now()
+            await db.flush()
+            await self._audit.log(
+                AuditEvent(
+                    action=AuditAction.WORKSPACE_CREATE,
+                    actor_type=enums.AuditActorType.SYSTEM,
+                    actor_id=None,
+                    outcome=(
+                        enums.AuditOutcome.OK
+                        if row.status is enums.WorkspaceStatus.RUNNING
+                        else enums.AuditOutcome.ERROR
+                    ),
+                    scope={"project_id": project_id, "workspace_id": workspace_id},
+                    payload={"clone": clone_outcome, "clone_detail": clone_detail},
+                )
+            )
         return _view(row)
+
+    async def _safe_prepare_worktree(
+        self,
+        *,
+        worktree: str,
+        branch: str,
+        git_remote_url: str,
+    ) -> tuple[str, str | None]:
+        try:
+            return await self._prepare_worktree(
+                worktree=worktree, branch=branch, git_remote_url=git_remote_url
+            )
+        except Exception as exc:
+            logger.exception("workspace.clone.crashed", worktree=worktree)
+            return ("error", f"{type(exc).__name__}: {exc}"[:500])
+
+    async def _background_clone(
+        self,
+        *,
+        workspace_id: str,
+        project_id: str,
+        actor_id: str,
+        worktree: str,
+        branch: str,
+        git_remote_url: str,
+    ) -> None:
+        """Run the clone in the background + flip workspace.status when
+        done. Opens a fresh DB session because the request session has
+        already closed by the time we get here."""
+        logger.info(
+            "workspace.clone.start",
+            workspace_id=workspace_id,
+            worktree=worktree,
+            remote=git_remote_url,
+        )
+        outcome, detail = await self._safe_prepare_worktree(
+            worktree=worktree, branch=branch, git_remote_url=git_remote_url
+        )
+        new_status = (
+            enums.WorkspaceStatus.RUNNING
+            if outcome in ("cloned", "exists", "skipped")
+            else enums.WorkspaceStatus.FAILED
+        )
+        if self._session_factory is None:
+            return
+        async with self._session_factory() as bg_db:
+            row = await bg_db.get(models.Workspace, workspace_id)
+            if row is not None:
+                row.status = new_status
+                row.last_activity_at = _now()
+                await bg_db.commit()
+        await self._audit.log(
+            AuditEvent(
+                action=AuditAction.WORKSPACE_CREATE,
+                actor_type=enums.AuditActorType.SYSTEM,
+                actor_id=actor_id,
+                outcome=(
+                    enums.AuditOutcome.OK
+                    if new_status is enums.WorkspaceStatus.RUNNING
+                    else enums.AuditOutcome.ERROR
+                ),
+                scope={"project_id": project_id, "workspace_id": workspace_id},
+                payload={"clone": outcome, "clone_detail": detail},
+            )
+        )
+        logger.info(
+            "workspace.clone.done",
+            workspace_id=workspace_id,
+            outcome=outcome,
+            status=new_status.value,
+        )
+
+    async def aclose(self) -> None:
+        """Wait for in-flight clone tasks to finish — used by the
+        container shutdown so we don't leak running git subprocesses
+        across server restarts."""
+        if not self._clone_tasks:
+            return
+        await asyncio.gather(*self._clone_tasks, return_exceptions=True)
 
     async def _prepare_worktree(
         self,

@@ -5,6 +5,7 @@ Uses MockSandboxBackend so no docker/sysbox is required.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from dataclasses import dataclass
@@ -67,13 +68,26 @@ class _Fx:
 
 
 @pytest_asyncio.fixture
-async def fx() -> AsyncIterator[_Fx]:
+async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
     settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+
+    # Stub the host-side git clone so tests don't hit the real network
+    # (the workspace tests use `https://example.com/demo.git` which is
+    # not a valid repo and would block on retries).
+    async def _noop_clone(
+        _git_remote_url: str, _branch: str, _dest_dir: str
+    ) -> tuple[int, str, str]:
+        return (0, "stub clone\n", "")
+
+    from gapt_server.domains.workspaces import service as ws_service
+
+    monkeypatch.setattr(ws_service, "_default_clone_runner", _noop_clone)
+
     app = create_app(settings=settings, container=container)
     idp = build_memory_idp()
     set_auth_idp(idp)
@@ -124,9 +138,21 @@ async def test_workspace_full_lifecycle(fx: _Fx) -> None:
         assert created.status_code == 201, created.text
         wks = created.json()
         assert wks["branch"] == "main"
-        assert wks["status"] == "running"
+        # Background clone leaves the row in `creating` until it
+        # finishes (RUNNING) or errors out (FAILED). Poll briefly.
+        assert wks["status"] in ("creating", "running")
         assert wks["sandbox_id"] is not None
         workspace_id = wks["id"]
+
+        # Wait for the background clone to finish so subsequent
+        # transitions (stop/start/delete) operate on a settled state.
+        for _ in range(40):  # ~2s max
+            single = await client.get(f"/api/workspaces/{workspace_id}")
+            if single.json()["status"] == "running":
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError("workspace never flipped to running")
 
         listed = await client.get(f"/api/projects/{project_id}/workspaces")
         assert listed.status_code == 200
