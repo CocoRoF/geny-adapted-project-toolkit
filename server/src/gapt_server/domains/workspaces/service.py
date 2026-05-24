@@ -52,7 +52,9 @@ CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
 
 
 _CLONE_RETRIES = 3
-_CLONE_TIMEOUT_S = 180.0
+# 10 min per attempt — large-asset repos over a thin link routinely need
+# 3-5 min for the receive step; 180s clipped legitimate slow clones.
+_CLONE_TIMEOUT_S = 600.0
 
 
 def _wipe_dir(path: str) -> None:
