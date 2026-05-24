@@ -11,6 +11,9 @@
 
 ### 진입 조건
 - M1-E4 완료 (Dogfood + Geny 어댑트 통과)
+- **M1.5 ([`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md)) 완료** —
+  1 cycle inner loop (파일 열기 → 편집 → 채팅 → 도구 → diff → apply → PR)
+  외부 IDE 없이 통과
 - M1 retrospective (analysis/2026XXXX_m1_retrospective.md) 사용자 검토
 - *최소 1주일* 일상 사용 (사용자 본인 P1 페르소나)
 

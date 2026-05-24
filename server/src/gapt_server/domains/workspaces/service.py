@@ -14,11 +14,18 @@ git_remote_url so the worktree directory has real files even when the
 sandbox backend is the mock (dev path) or when the sandbox-side daemon
 hasn't shipped yet. With the Sysbox backend the same path is mounted
 into the container so the agent sees the files too.
+
+User-scoped credentials (e.g. `github_token`) are resolved through the
+optional `credentials_resolver` *before* the sandbox boots, so they
+flow into the sandbox env (for in-sandbox git push / executor tools)
+and into the host-side clone via `http.extraHeader=Authorization:
+Basic <b64>` (token never lands in argv / `ps`).
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import shutil
 from collections.abc import Awaitable, Callable
@@ -47,7 +54,19 @@ if TYPE_CHECKING:
 
 
 CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
-"""Signature: (git_remote_url, branch, dest_dir) → (exit_code, stdout, stderr)."""
+"""Signature: (git_remote_url, branch, dest_dir) → (exit_code, stdout, stderr).
+
+A credentials-aware variant (`_default_clone_runner_with_creds`) lives
+alongside; the service prefers it when a `github_token` is resolved and
+the configured runner is the default (lets tests inject a 3-arg stub
+without needing to mirror the credential signature)."""
+
+CredentialResolver = Callable[[str, str], Awaitable[dict[str, str]]]
+"""(actor_id, project_id) → {"github_token": "...", "openai_api_key": "...", ...}.
+
+The map is *also* mirrored into the sandbox env as UPPERCASE keys so
+the executor + in-sandbox git see the same credentials as the host
+clone path."""
 
 
 _CLONE_RETRIES = 3
@@ -169,16 +188,27 @@ async def _stream_subprocess(
     return rc, last_line
 
 
-async def _default_clone_runner(
-    git_remote_url: str, branch: str, dest_dir: str
-) -> tuple[int, str, str]:
-    """Shallow-clone the project's remote into `dest_dir` with retries.
+def _github_basic_header(github_token: str) -> str:
+    """Build the `Authorization: Basic` header value for git clone.
 
-    Streams git's `--progress` output to `{dest_dir}/.gapt-clone.log`
-    so the UI can show live progress. Each attempt runs with an overall
-    timeout; the asyncio wait_for kills git if it stalls. HTTP/1.1 is
-    forced because GitHub's HTTP/2 stream cancels are the most common
-    cause of mid-clone hangs on thin links."""
+    GitHub accepts `x-access-token:<PAT>` over Basic auth for both
+    classic and fine-grained PATs. Using an HTTP header (via
+    `git -c http.extraHeader=...`) keeps the token out of argv / the
+    URL and out of `ps`."""
+    payload = base64.b64encode(f"x-access-token:{github_token}".encode()).decode("ascii")
+    return f"Authorization: Basic {payload}"
+
+
+async def _run_clone_attempts(
+    git_remote_url: str,
+    branch: str,
+    dest_dir: str,
+    *,
+    extra_config: list[str] | None = None,
+) -> tuple[int, str, str]:
+    """Shared retry loop. `extra_config` is a flat list of `-c key=val`
+    pairs prepended before `clone`; used by the credential-aware
+    runner to inject `http.extraHeader=Authorization: Basic ...`."""
     bin_path = shutil.which("git") or "/usr/bin/git"
     last_err = ""
     last_code = -1
@@ -193,6 +223,7 @@ async def _default_clone_runner(
             "-c", "http.postBuffer=524288000",
             "-c", "http.lowSpeedLimit=1024",
             "-c", "http.lowSpeedTime=30",
+            *(extra_config or []),
             "clone",
             "--progress",
             "--depth=1",
@@ -233,6 +264,31 @@ async def _default_clone_runner(
         ):
             break
     return (last_code, "", last_err)
+
+
+async def _default_clone_runner(
+    git_remote_url: str, branch: str, dest_dir: str
+) -> tuple[int, str, str]:
+    """Anonymous clone — no credentials injected. Backwards-compatible
+    3-arg entrypoint that tests monkey-patch."""
+    return await _run_clone_attempts(git_remote_url, branch, dest_dir, extra_config=None)
+
+
+async def _default_clone_runner_with_creds(
+    git_remote_url: str,
+    branch: str,
+    dest_dir: str,
+    *,
+    github_token: str | None,
+) -> tuple[int, str, str]:
+    """Authenticated clone variant. Injects `http.extraHeader` so the
+    token never appears in argv. Falls back to the anonymous path when
+    no token was resolved."""
+    extra: list[str] | None = None
+    if github_token:
+        extra = ["-c", f"http.extraHeader={_github_basic_header(github_token)}"]
+    return await _run_clone_attempts(git_remote_url, branch, dest_dir, extra_config=extra)
+
 
 logger = structlog.get_logger(__name__)
 
@@ -279,15 +335,22 @@ class WorkspaceService:
         audit_sink: AuditSink | None = None,
         clone_runner: CloneRunner | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        credentials_resolver: CredentialResolver | None = None,
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
         self._audit: AuditSink = audit_sink or NullAuditSink()
         self._clone: CloneRunner = clone_runner or _default_clone_runner
+        # `_clone_is_default` lets us safely route to the credential-
+        # aware variant only when no custom clone_runner was injected.
+        # Tests inject a 3-arg stub and don't supply credentials, so
+        # this stays False for them and the stub is used as-is.
+        self._clone_is_default = clone_runner is None
         # When set, workspace.create spawns the clone as a background
         # task using a fresh session from this factory. Tests omit it
         # and get the synchronous in-request clone path.
         self._session_factory = session_factory
+        self._credentials_resolver = credentials_resolver
         # Track in-flight clone tasks so tests + shutdown can join them.
         self._clone_tasks: set[asyncio.Task[None]] = set()
 
@@ -315,10 +378,19 @@ class WorkspaceService:
         db.add(row)
         await db.flush()
 
+        # Resolve user-scoped credentials *before* booting the sandbox
+        # so they can flow into the container env. Failure to resolve
+        # is non-fatal: anonymous clone still works for public repos.
+        credentials = await self._resolve_credentials(actor_id=actor.id, project_id=project_id)
+
         # Sandbox boot is best-effort; failure flips the row to FAILED
         # but keeps it around so the user can diagnose / retry.
         try:
-            sandbox_ref = await self._boot_sandbox(project_id=project_id, workspace_id=workspace_id)
+            sandbox_ref = await self._boot_sandbox(
+                project_id=project_id,
+                workspace_id=workspace_id,
+                credentials=credentials,
+            )
         except (SandboxBackendError, SecurityInvariantError) as exc:
             row.status = enums.WorkspaceStatus.FAILED
             await db.flush()
@@ -381,6 +453,7 @@ class WorkspaceService:
                     worktree=worktree,
                     branch=branch,
                     git_remote_url=project.git_remote_url,
+                    credentials=credentials,
                 ),
                 name=f"workspace-clone-{workspace_id}",
             )
@@ -393,6 +466,7 @@ class WorkspaceService:
                 worktree=worktree,
                 branch=branch,
                 git_remote_url=project.git_remote_url,
+                credentials=credentials,
             )
             row.status = (
                 enums.WorkspaceStatus.RUNNING
@@ -423,10 +497,14 @@ class WorkspaceService:
         worktree: str,
         branch: str,
         git_remote_url: str,
+        credentials: dict[str, str] | None = None,
     ) -> tuple[str, str | None]:
         try:
             return await self._prepare_worktree(
-                worktree=worktree, branch=branch, git_remote_url=git_remote_url
+                worktree=worktree,
+                branch=branch,
+                git_remote_url=git_remote_url,
+                credentials=credentials or {},
             )
         except Exception as exc:
             logger.exception("workspace.clone.crashed", worktree=worktree)
@@ -441,6 +519,7 @@ class WorkspaceService:
         worktree: str,
         branch: str,
         git_remote_url: str,
+        credentials: dict[str, str] | None = None,
     ) -> None:
         """Run the clone in the background + flip workspace.status when
         done. Opens a fresh DB session because the request session has
@@ -450,9 +529,13 @@ class WorkspaceService:
             workspace_id=workspace_id,
             worktree=worktree,
             remote=git_remote_url,
+            auth=("github_token" if credentials and "github_token" in credentials else "anon"),
         )
         outcome, detail = await self._safe_prepare_worktree(
-            worktree=worktree, branch=branch, git_remote_url=git_remote_url
+            worktree=worktree,
+            branch=branch,
+            git_remote_url=git_remote_url,
+            credentials=credentials or {},
         )
         new_status = (
             enums.WorkspaceStatus.RUNNING
@@ -502,6 +585,7 @@ class WorkspaceService:
         worktree: str,
         branch: str,
         git_remote_url: str,
+        credentials: dict[str, str],
     ) -> tuple[str, str | None]:
         """Clone the project remote into `worktree`.
 
@@ -525,17 +609,62 @@ class WorkspaceService:
         if outcome != "proceed":
             return (outcome, detail)
 
-        exit_code, _stdout, stderr = await self._clone(git_remote_url, branch, worktree)
+        exit_code, _stdout, stderr = await self._do_clone(
+            git_remote_url, branch, worktree, credentials=credentials
+        )
         if exit_code != 0:
             return ("error", stderr.strip()[-400:] or f"git clone exit={exit_code}")
         return ("cloned", None)
 
-    async def _boot_sandbox(self, *, project_id: str, workspace_id: str) -> SandboxRef:
+    async def _do_clone(
+        self,
+        git_remote_url: str,
+        branch: str,
+        dest_dir: str,
+        *,
+        credentials: dict[str, str],
+    ) -> tuple[int, str, str]:
+        """Route to the credential-aware default runner when we both
+        have a token *and* haven't been overridden with a custom
+        runner. Tests that inject `clone_runner=...` keep their
+        existing 3-arg contract untouched."""
+        github_token = credentials.get("github_token")
+        if self._clone_is_default and github_token:
+            return await _default_clone_runner_with_creds(
+                git_remote_url, branch, dest_dir, github_token=github_token
+            )
+        return await self._clone(git_remote_url, branch, dest_dir)
+
+    async def _resolve_credentials(
+        self, *, actor_id: str, project_id: str
+    ) -> dict[str, str]:
+        if self._credentials_resolver is None:
+            return {}
+        try:
+            return await self._credentials_resolver(actor_id, project_id)
+        except Exception as exc:  # never block create on a resolver bug
+            logger.warning(
+                "workspace.credentials.resolve_failed",
+                actor_id=actor_id,
+                project_id=project_id,
+                error=str(exc),
+            )
+            return {}
+
+    async def _boot_sandbox(
+        self,
+        *,
+        project_id: str,
+        workspace_id: str,
+        credentials: dict[str, str] | None = None,
+    ) -> SandboxRef:
+        env = _credentials_to_env(credentials or {})
         spec = SandboxCreateSpec(
             project_id=project_id,
             workspace_id=workspace_id,
             image=self._image,
             resources=SandboxResources(),
+            env=env,
         )
         ref = await self._sandbox.create(spec)
         await self._sandbox.start(ref)
@@ -696,3 +825,26 @@ class WorkspaceService:
 
 def _now() -> datetime:
     return datetime.now(tz=UTC)
+
+
+# Map secret `key_name` → sandbox env var(s). Includes aliases so common
+# CLIs (gh, openai, anthropic) and SDKs find the value without callers
+# having to remember exact env names.
+_ENV_ALIASES: dict[str, tuple[str, ...]] = {
+    "github_token": ("GITHUB_TOKEN", "GH_TOKEN"),
+    "openai_api_key": ("OPENAI_API_KEY",),
+    "anthropic_api_key": ("ANTHROPIC_API_KEY",),
+}
+
+
+def _credentials_to_env(credentials: dict[str, str]) -> dict[str, str]:
+    """Materialise resolved credentials as sandbox environment vars.
+
+    Unknown key_names fall back to `KEY_NAME.upper()` so future tokens
+    show up in the sandbox without code changes (still scoped to the
+    user-secrets the Settings UI surfaces)."""
+    env: dict[str, str] = {}
+    for key, value in credentials.items():
+        for alias in _ENV_ALIASES.get(key, (key.upper(),)):
+            env[alias] = value
+    return env

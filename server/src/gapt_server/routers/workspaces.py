@@ -37,6 +37,7 @@ from gapt_server.domains.sandbox import (
     SandboxBackend,
     SandboxRef,
 )
+from gapt_server.domains.secrets.vault import SecretVault, SecretVaultError
 from gapt_server.domains.workspaces import files as fs
 from gapt_server.domains.workspaces.service import (
     WorkspaceError,
@@ -45,6 +46,7 @@ from gapt_server.domains.workspaces.service import (
 )
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
+from gapt_server.routers.secrets import get_vault
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,12 +61,42 @@ def get_workspace_service(
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> WorkspaceService:
+    session_factory = container.session_factory
+
+    async def resolve_credentials(actor_id: str, _project_id: str) -> dict[str, str]:
+        """Read all user-scoped secrets and surface them to the service
+        as a flat `{key_name: plaintext}` map. The service then mirrors
+        the map into sandbox env + the host-side clone runner."""
+        if session_factory is None:
+            return {}
+        async with session_factory() as db:
+            try:
+                metadata = await vault.list(
+                    db, scope=enums.SecretOwnerScope.USER, owner_id=actor_id
+                )
+            except SecretVaultError:
+                return {}
+            resolved: dict[str, str] = {}
+            for md in metadata:
+                try:
+                    resolved[md.key_name] = await vault.read(
+                        db,
+                        secret_id=md.id,
+                        purpose="workspace.boot",
+                        actor_id=actor_id,
+                    )
+                except SecretVaultError:
+                    continue
+        return resolved
+
     return WorkspaceService(
         sandbox_backend=sandbox,
         sandbox_image=settings.sandbox_image_tag,
         audit_sink=audit_sink,
-        session_factory=container.session_factory,
+        session_factory=session_factory,
+        credentials_resolver=resolve_credentials,
     )
 
 

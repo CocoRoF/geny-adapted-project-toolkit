@@ -4,11 +4,22 @@ exercised without booting containers.
 
 States: `creating` → `running` (after start) → `stopped` (after stop)
 → `destroyed` (after destroy). `exec_in` only succeeds in `running`.
+
+Dev-mode host execution
+-----------------------
+For dev convenience (and so the IDE's Files panel actually sees real
+files), `exec_in` runs argv against the host filesystem via
+`asyncio.create_subprocess_exec` when no canned response is registered.
+This is intentional: the git clone for a workspace already lands on the
+host filesystem (we don't have a real sandbox in dev), so file listing /
+reading must follow the same path. The mock backend is *never* used in
+prod — the real `SysboxBackend` runs inside the container.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -82,15 +93,53 @@ class MockSandboxBackend:
 
     async def exec_in(self, ref: SandboxRef, argv: list[str]) -> ExecResult:
         async with self._lock:
-            state = self._require(ref)
-            if state.status != "running":
-                raise SandboxBackendError(f"sandbox {ref.id} is {state.status!r}; cannot exec")
-            state.exec_log.append(argv)
+            state = self._sandboxes.get(ref.id)
+            if state is None:
+                # The workspace row outlives the in-memory mock across
+                # server restarts. Rather than 500 the files API,
+                # exec on the host without bookkeeping — same security
+                # posture as the rest of the mock backend.
+                env = dict(os.environ)
+            else:
+                if state.status != "running":
+                    raise SandboxBackendError(
+                        f"sandbox {ref.id} is {state.status!r}; cannot exec"
+                    )
+                state.exec_log.append(argv)
+                env = {**os.environ, **state.spec.env}
         head = argv[0] if argv else ""
         canned = self._exec_responses.get(head)
         if canned is not None:
             return canned
-        return ExecResult(exit_code=0, stdout=b"", stderr=b"", duration_ms=0)
+        if not argv:
+            return ExecResult(exit_code=0, stdout=b"", stderr=b"", duration_ms=0)
+        # Host-side execution (dev only — see module docstring).
+        start = time.monotonic()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            return ExecResult(
+                exit_code=127,
+                stdout=b"",
+                stderr=f"mock-exec: {exc}".encode(),
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        try:
+            stdout, stderr = await proc.communicate()
+        except asyncio.CancelledError:
+            proc.kill()
+            raise
+        return ExecResult(
+            exit_code=proc.returncode if proc.returncode is not None else -1,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
 
     def exec_log(self, ref: SandboxRef) -> list[list[str]]:
         state = self._sandboxes.get(ref.id)
