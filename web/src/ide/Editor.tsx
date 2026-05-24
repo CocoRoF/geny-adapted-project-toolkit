@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import { readFile, writeFile } from "@/api/files";
 import { useI18n } from "@/app/providers/i18n-context";
+import { useTheme } from "@/app/providers/theme-context";
 
 interface Props {
   workspaceId: string;
@@ -69,6 +70,7 @@ const AUTOSAVE_DEBOUNCE_MS = 300;
  * terminal. */
 export function FileEditor({ workspaceId, openPath }: Props) {
   const { t } = useI18n();
+  const { resolved: themeResolved } = useTheme();
   const [doc, setDoc] = useState<DocState | null>(null);
   const [loading, setLoading] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,32 +176,58 @@ export function FileEditor({ workspaceId, openPath }: Props) {
 
   const language = useMemo(() => (doc ? languageFor(doc.path) : "plaintext"), [doc]);
 
-  // No-op for now — Cycle 3.14 wires the dark theme through here.
   const onMount: OnMount = () => undefined;
+  const monacoTheme = themeResolved === "dark" ? "vs-dark" : "light";
 
   if (!openPath) {
-    return <p className="ide-editor-empty">{t("ide.editor.empty")}</p>;
+    return (
+      <div className="grid h-full place-items-center text-[12px] text-fg-muted">
+        {t("ide.editor.empty")}
+      </div>
+    );
   }
   if (loading || !doc) {
-    return <p className="ide-editor-loading">{t("ide.editor.loading")}</p>;
+    return (
+      <div className="grid h-full place-items-center text-[12px] text-fg-muted">
+        {t("ide.editor.loading")}
+      </div>
+    );
   }
   if (doc.encoding === "base64") {
     return (
-      <div className="ide-editor-binary" data-testid="editor-binary">
+      <div
+        className="flex h-full flex-col items-center justify-center gap-2 px-6 text-[13px] text-fg-muted"
+        data-testid="editor-binary"
+      >
         <p>{t("ide.editor.binary")}</p>
-        <code>{doc.path}</code>
+        <code className="rounded bg-bg-subtle px-2 py-1 font-mono text-[11px] text-fg-subtle">
+          {doc.path}
+        </code>
       </div>
     );
   }
 
+  const statusTone =
+    doc.status === "error"
+      ? "text-danger"
+      : doc.status === "dirty"
+        ? "text-warn"
+        : doc.status === "saving"
+          ? "text-fg-muted"
+          : doc.status === "saved"
+            ? "text-success"
+            : "text-fg-subtle";
+
   return (
-    <div className="ide-editor">
-      <header className="ide-editor-header" data-testid="editor-header">
-        <span className="ide-editor-path">{doc.path}</span>
-        <span
-          className={`ide-editor-status ide-editor-status--${doc.status}`}
-          data-testid="editor-status"
-        >
+    <div className="flex h-full flex-col bg-bg">
+      <header
+        className="flex h-8 shrink-0 items-center justify-between gap-3 border-b border-border bg-bg-elevated px-3 text-[12px]"
+        data-testid="editor-header"
+      >
+        <span className="truncate font-mono text-fg" title={doc.path}>
+          {doc.path}
+        </span>
+        <span className={`shrink-0 font-medium ${statusTone}`} data-testid="editor-status">
           {doc.status === "dirty"
             ? t("ide.editor.dirty")
             : doc.status === "saving"
@@ -211,13 +239,14 @@ export function FileEditor({ workspaceId, openPath }: Props) {
                   : ""}
         </span>
       </header>
-      <div className="ide-editor-body">
+      <div className="flex-1 overflow-hidden">
         <Editor
           height="100%"
           language={language}
           value={doc.text}
           onChange={onChange}
           onMount={onMount}
+          theme={monacoTheme}
           options={{
             minimap: { enabled: true },
             scrollBeyondLastLine: false,

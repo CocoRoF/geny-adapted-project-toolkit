@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
 import { I18nProvider } from "@/app/providers/I18nProvider";
+import { ThemeProvider } from "@/app/providers/ThemeProvider";
 
 // Mock @monaco-editor/react before importing the editor component.
 // happy-dom can't render the real Monaco editor and we don't need
@@ -58,9 +59,11 @@ function mockRoutes(routes: Route[]): void {
 
 function renderEditor(openPath: string | null) {
   return render(
-    <I18nProvider>
-      <FileEditor workspaceId="ws1" openPath={openPath} />
-    </I18nProvider>,
+    <ThemeProvider>
+      <I18nProvider>
+        <FileEditor workspaceId="ws1" openPath={openPath} />
+      </I18nProvider>
+    </ThemeProvider>,
   );
 }
 
