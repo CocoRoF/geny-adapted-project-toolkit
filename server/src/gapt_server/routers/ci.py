@@ -167,3 +167,124 @@ async def list_ci_runs(
         )
         for r in runs
     ]
+
+
+class CiLogResponse(BaseModel):
+    run_id: int
+    log: str
+    # Soft cap so a 10 MB CI log doesn't tank the SPA. The full log is
+    # always available via the GitHub Actions UI (html_url on the run).
+    truncated: bool = False
+
+
+_LOG_CAP_BYTES = 256 * 1024
+
+
+async def _provider_for_project(
+    project_id: str,
+    *,
+    db: AsyncSession,
+    user: models.User,
+    settings: Settings,
+    vault: SecretVault,
+):  # type: ignore[no-untyped-def]
+    """Shared lookup helper: resolve project + token + repo +
+    GithubProvider. Raises the same HTTP errors as `list_ci_runs` for
+    consistency."""
+    try:
+        project = await fetch_project_for(db, actor=user, project_id=project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    token = await _resolve_github_token(
+        db=db, vault=vault, actor_id=user.id, fallback=settings.ci_github_token
+    )
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "ci.no_token",
+                "reason": "save a GitHub PAT in Settings → Credentials, or set GAPT_CI_GITHUB_TOKEN",
+            },
+        )
+    repo = parse_github_repo(project.git_remote_url)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "ci.repo_unparseable",
+                "reason": f"could not extract owner/repo from {project.git_remote_url!r}",
+            },
+        )
+    return _build_provider(token, repo)
+
+
+@router.get(
+    "/{project_id}/ci/runs/{run_id}/logs",
+    response_model=CiLogResponse,
+)
+async def get_ci_run_logs(
+    project_id: str,
+    run_id: int,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+) -> CiLogResponse:
+    """Fetch the (possibly large) CI run log via `gh run view --log`.
+    Capped at 256 KB; full log lives on the GitHub Actions UI."""
+    provider = await _provider_for_project(
+        project_id, db=db, user=user, settings=settings, vault=vault
+    )
+    try:
+        full = await provider.get_workflow_run_logs(run_id=run_id)
+    except GitOperationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": exc.code, "reason": str(exc)},
+        ) from exc
+    if len(full.encode("utf-8")) > _LOG_CAP_BYTES:
+        encoded = full.encode("utf-8")[:_LOG_CAP_BYTES]
+        last_nl = encoded.rfind(b"\n")
+        if last_nl > 0:
+            encoded = encoded[:last_nl]
+        return CiLogResponse(
+            run_id=run_id,
+            log=encoded.decode("utf-8", errors="replace")
+            + "\n\n[…truncated — open the run on GitHub for the full log…]\n",
+            truncated=True,
+        )
+    return CiLogResponse(run_id=run_id, log=full, truncated=False)
+
+
+class RerunResponse(BaseModel):
+    run_id: int
+    failed_only: bool
+
+
+@router.post(
+    "/{project_id}/ci/runs/{run_id}/rerun",
+    response_model=RerunResponse,
+)
+async def rerun_ci_run(
+    project_id: str,
+    run_id: int,
+    failed_only: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+) -> RerunResponse:
+    """Re-run an entire workflow run, or just its failed jobs.
+    Requires the user's PAT to carry the `workflow` scope."""
+    provider = await _provider_for_project(
+        project_id, db=db, user=user, settings=settings, vault=vault
+    )
+    try:
+        await provider.rerun_workflow_run(run_id=run_id, failed_only=failed_only)
+    except GitOperationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": exc.code, "reason": str(exc)},
+        ) from exc
+    return RerunResponse(run_id=run_id, failed_only=failed_only)

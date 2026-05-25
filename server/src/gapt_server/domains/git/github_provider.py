@@ -281,6 +281,17 @@ class GithubProvider:
         stdout, _ = await self._run(["run", "view", str(run_id), "--repo", self.repo, "--log"])
         return stdout
 
+    async def rerun_workflow_run(self, *, run_id: int, failed_only: bool = False) -> None:
+        """Trigger a re-run of `run_id`. `failed_only=True` reruns
+        just the failed jobs (`gh run rerun --failed`); otherwise the
+        whole workflow. The PAT needs the `workflow` scope — without
+        it gh returns an error which we surface unchanged as
+        `git.gh_failed`."""
+        argv = ["run", "rerun", str(run_id), "--repo", self.repo]
+        if failed_only:
+            argv.append("--failed")
+        await self._run(argv)
+
     @staticmethod
     def _row_to_workflow_run(row: dict[str, Any]) -> WorkflowRun:
         status_str = str(row.get("status", "")).lower()

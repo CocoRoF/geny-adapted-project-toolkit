@@ -1,4 +1,4 @@
-import { apiGet } from "@/api/client";
+import { apiGet, apiPost } from "@/api/client";
 
 export type WorkflowRunStatus =
   | "queued"
@@ -27,4 +27,28 @@ export function listCiRuns(
   if (options.limit) params.set("limit", String(options.limit));
   const qs = params.toString();
   return apiGet<CiRun[]>(`/api/projects/${projectId}/ci/runs${qs ? `?${qs}` : ""}`);
+}
+
+export interface CiLogResponse {
+  run_id: number;
+  log: string;
+  truncated: boolean;
+}
+
+export function fetchCiRunLogs(projectId: string, runId: number): Promise<CiLogResponse> {
+  return apiGet<CiLogResponse>(`/api/projects/${projectId}/ci/runs/${runId}/logs`);
+}
+
+export interface RerunResponse {
+  run_id: number;
+  failed_only: boolean;
+}
+
+export function rerunCiRun(
+  projectId: string,
+  runId: number,
+  options: { failed_only?: boolean } = {},
+): Promise<RerunResponse> {
+  const qs = options.failed_only ? "?failed_only=true" : "";
+  return apiPost<RerunResponse>(`/api/projects/${projectId}/ci/runs/${runId}/rerun${qs}`);
 }
