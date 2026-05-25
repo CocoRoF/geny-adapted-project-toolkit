@@ -191,6 +191,85 @@ class ProjectAwareSessionManager:
             status=enums.AgentSessionStatus.ACTIVE,
         )
 
+    # ───────────────────────────────────────────── rehydrate ──
+
+    async def rehydrate_session(
+        self,
+        db: AsyncSession,
+        *,
+        user: models.User,
+        session_id: str,
+        vault: SecretVault | None = None,
+        mcp_config: dict[str, Any] | None = None,
+        settings_path: str | None = None,
+    ) -> AgentSessionHandle:
+        """Rebuild an in-memory `AgentSessionHandle` from the DB row.
+
+        The `SessionRegistry` is in-process, so every server restart
+        empties it. The DB row outlives the process; without this
+        method an active session looks gone to the router and the
+        chat panel surfaces `session.not_found` after every restart.
+
+        Rehydrate uses the *current* user's vault + the workspace
+        that the session was originally bound to, and rebuilds the
+        Pipeline from the same manifest. Status is unchanged."""
+        row = await self._fetch_session(db, session_id)
+        await self._ensure_project_membership(db, user_id=user.id, project_id=row.project_id)
+        if row.status == enums.AgentSessionStatus.ARCHIVED:
+            raise SessionManagerError(
+                "session.archived",
+                f"session_id={session_id} is archived; cannot rehydrate",
+            )
+        ws = await self._fetch_workspace(db, row.workspace_id)
+
+        if vault is None:
+            bundle = CredentialBundle(
+                by_provider={
+                    "claude_code_cli": build_claude_code_cli_creds(
+                        binary_path=claude_binary(),
+                        workspace_root=ws.worktree_path,
+                        mcp_config=mcp_config,
+                        settings_path=settings_path,
+                    )
+                }
+            )
+        else:
+            bundle = await build_for_session(
+                db=db,
+                vault=vault,
+                actor_id=user.id,
+                workspace_root=ws.worktree_path,
+                mcp_config=mcp_config,
+                settings_path=settings_path,
+            )
+
+        try:
+            pipeline = await self.env_service.instantiate_pipeline(
+                row.env_manifest_id, credentials=bundle
+            )
+        except Exception as exc:
+            raise SessionManagerError(
+                "session.pipeline_boot_failed",
+                f"pipeline rehydrate for env {row.env_manifest_id!r} failed: {exc!s}",
+            ) from exc
+
+        logger.info(
+            "session.rehydrate",
+            session_id=session_id,
+            project_id=row.project_id,
+            workspace_id=row.workspace_id,
+            env_manifest_id=row.env_manifest_id,
+        )
+        return AgentSessionHandle(
+            session_id=session_id,
+            project_id=row.project_id,
+            workspace_id=row.workspace_id,
+            user_id=row.user_id,
+            env_manifest_id=row.env_manifest_id,
+            pipeline=pipeline,
+            status=row.status,
+        )
+
     # ───────────────────────────────────────────── archive ──
 
     async def archive(

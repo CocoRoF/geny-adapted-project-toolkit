@@ -164,6 +164,123 @@ def _http_from_session_error(exc: SessionManagerError) -> HTTPException:
     )
 
 
+def _build_runtime_from_handle(
+    handle: Any,  # noqa: ANN401 — AgentSessionHandle, kept loose to avoid import cycle in TC003
+    *,
+    user: models.User,
+    container: AppContainer,
+    policy_engine: PolicyEngine,
+    audit_sink: AuditSink,
+) -> SessionRuntime:
+    """Build + wire a `SessionRuntime` from a freshly created or
+    rehydrated `AgentSessionHandle`. Mirrors the original inline
+    setup so rehydrated sessions behave identically (same hook
+    runner / cost callback / accumulator). The caller is responsible
+    for registering the runtime in the `SessionRegistry`."""
+    placeholder_accumulator = CostAccumulator(session_id=handle.session_id)
+    runtime = SessionRuntime(
+        session_id=handle.session_id,
+        project_id=handle.project_id,
+        workspace_id=handle.workspace_id,
+        user_id=handle.user_id,
+        pipeline=handle.pipeline,
+        accumulator=placeholder_accumulator,
+    )
+
+    _last = {"input": 0, "output": 0, "cost": 0.0}
+    _reg = container.registry
+    _project_label = {"project_id": handle.project_id}
+
+    async def _on_cost_update(acc: CostAccumulator) -> None:
+        await runtime.bus.publish(SessionEventKind.COST, acc.snapshot())
+        d_in = acc.input_tokens - _last["input"]
+        d_out = acc.output_tokens - _last["output"]
+        d_cost = acc.cost_usd - _last["cost"]
+        if d_in:
+            input_tokens_counter(_reg).inc(d_in, _project_label)
+            _last["input"] = acc.input_tokens
+        if d_out:
+            output_tokens_counter(_reg).inc(d_out, _project_label)
+            _last["output"] = acc.output_tokens
+        if d_cost:
+            cost_counter(_reg).inc(d_cost, _project_label)
+            _last["cost"] = acc.cost_usd
+        if container.session_factory is not None and (d_in or d_out or d_cost):
+            async with container.session_factory() as bg_db:
+                row = await bg_db.get(models.AgentSession, handle.session_id)
+                if row is not None:
+                    row.cost_usd = acc.cost_usd
+                    row.input_tokens = acc.input_tokens
+                    row.output_tokens = acc.output_tokens
+                    await bg_db.commit()
+
+    hook_runner, accumulator = build_hook_runner(
+        engine=policy_engine,
+        audit_sink=audit_sink,
+        actor_id=user.id,
+        project_id=handle.project_id,
+        workspace_id=handle.workspace_id,
+        session_id=handle.session_id,
+        on_cost_update=_on_cost_update,
+    )
+    runtime.accumulator = accumulator
+    handle.pipeline.attach_runtime(hook_runner=hook_runner)
+    return runtime
+
+
+async def _runtime_or_rehydrate(
+    *,
+    registry: SessionRegistry,
+    session_id: str,
+    db: AsyncSession,
+    manager: ProjectAwareSessionManager,
+    user: models.User,
+    container: AppContainer,
+    policy_engine: PolicyEngine,
+    audit_sink: AuditSink,
+    vault: SecretVault,
+) -> SessionRuntime:
+    """Fetch the runtime from the registry; if missing, rehydrate
+    from the DB row + re-register. The runtime cache is in-process —
+    a server restart empties it, but the user's chat panel still
+    holds an `active` session id (so the panel correctly auto-resumes
+    instead of forcing the user to start a new session every time the
+    backend restarts)."""
+    try:
+        return await registry.get(session_id)
+    except SessionNotFound:
+        pass
+
+    try:
+        handle = await manager.rehydrate_session(
+            db, user=user, session_id=session_id, vault=vault
+        )
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    except SessionManagerError as exc:
+        if exc.code == "session.not_found":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": exc.code, "reason": str(exc)},
+            ) from exc
+        raise _http_from_session_error(exc) from exc
+
+    runtime = _build_runtime_from_handle(
+        handle,
+        user=user,
+        container=container,
+        policy_engine=policy_engine,
+        audit_sink=audit_sink,
+    )
+    await registry.register(runtime)
+    logger.info(
+        "session.rehydrate.registered",
+        session_id=session_id,
+        project_id=handle.project_id,
+    )
+    return runtime
+
+
 async def _runtime_or_404(registry: SessionRegistry, session_id: str) -> SessionRuntime:
     try:
         return await registry.get(session_id)
@@ -223,63 +340,13 @@ async def create_session(
             },
         )
 
-    # Attach the HookRunner to the pipeline. The cost callback writes
-    # straight to the runtime's bus so SSE listeners see cost updates
-    # the moment a tool completes (POST_TOOL_USE — natural debounce).
-    placeholder_accumulator = CostAccumulator(session_id=handle.session_id)
-    runtime = SessionRuntime(
-        session_id=handle.session_id,
-        project_id=handle.project_id,
-        workspace_id=handle.workspace_id,
-        user_id=handle.user_id,
-        pipeline=handle.pipeline,
-        accumulator=placeholder_accumulator,
-    )
-
-    # Track deltas so Prometheus counters get the increment, not the
-    # running total. Closure-captured mutables avoid the nonlocal dance.
-    _last = {"input": 0, "output": 0, "cost": 0.0}
-    _reg = container.registry
-    _project_label = {"project_id": handle.project_id}
-
-    async def _on_cost_update(acc: CostAccumulator) -> None:
-        await runtime.bus.publish(SessionEventKind.COST, acc.snapshot())
-        d_in = acc.input_tokens - _last["input"]
-        d_out = acc.output_tokens - _last["output"]
-        d_cost = acc.cost_usd - _last["cost"]
-        if d_in:
-            input_tokens_counter(_reg).inc(d_in, _project_label)
-            _last["input"] = acc.input_tokens
-        if d_out:
-            output_tokens_counter(_reg).inc(d_out, _project_label)
-            _last["output"] = acc.output_tokens
-        if d_cost:
-            cost_counter(_reg).inc(d_cost, _project_label)
-            _last["cost"] = acc.cost_usd
-        # Persist totals back to the agent_sessions row so the cost
-        # dashboard reflects in-flight usage. A fresh session is used
-        # so we don't deadlock against the outer request's session
-        # (which has already committed and may be closing).
-        if container.session_factory is not None and (d_in or d_out or d_cost):
-            async with container.session_factory() as bg_db:
-                row = await bg_db.get(models.AgentSession, handle.session_id)
-                if row is not None:
-                    row.cost_usd = acc.cost_usd
-                    row.input_tokens = acc.input_tokens
-                    row.output_tokens = acc.output_tokens
-                    await bg_db.commit()
-
-    hook_runner, accumulator = build_hook_runner(
-        engine=policy_engine,
+    runtime = _build_runtime_from_handle(
+        handle,
+        user=user,
+        container=container,
+        policy_engine=policy_engine,
         audit_sink=audit_sink,
-        actor_id=user.id,
-        project_id=handle.project_id,
-        workspace_id=handle.workspace_id,
-        session_id=handle.session_id,
-        on_cost_update=_on_cost_update,
     )
-    runtime.accumulator = accumulator
-    handle.pipeline.attach_runtime(hook_runner=hook_runner)
     await registry.register(runtime)
 
     # Re-read the row so the response carries DB-default fields.
@@ -353,9 +420,17 @@ async def invoke_session(
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
 ) -> InvokeResponse:
-    runtime = await _runtime_or_404(registry, session_id)
+    runtime = await _runtime_or_rehydrate(
+        registry=registry, session_id=session_id, db=db, manager=manager,
+        user=user, container=container, policy_engine=policy_engine,
+        audit_sink=audit_sink, vault=vault,
+    )
     # Re-check membership using the runtime's project_id (in-memory).
     try:
         await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
@@ -377,10 +452,18 @@ async def stream_session(
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
     since: int | None = Query(default=None, ge=0, description="replay events with seq > since"),
 ) -> StreamingResponse:
-    runtime = await _runtime_or_404(registry, session_id)
+    runtime = await _runtime_or_rehydrate(
+        registry=registry, session_id=session_id, db=db, manager=manager,
+        user=user, container=container, policy_engine=policy_engine,
+        audit_sink=audit_sink, vault=vault,
+    )
     try:
         await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
     except ProjectError as exc:
@@ -401,9 +484,17 @@ async def interrupt_session(
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
 ) -> InterruptResponse:
-    runtime = await _runtime_or_404(registry, session_id)
+    runtime = await _runtime_or_rehydrate(
+        registry=registry, session_id=session_id, db=db, manager=manager,
+        user=user, container=container, policy_engine=policy_engine,
+        audit_sink=audit_sink, vault=vault,
+    )
     try:
         await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
     except ProjectError as exc:
@@ -418,10 +509,18 @@ async def replay_messages(
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
     since: int = Query(default=0, ge=0, description="replay events with seq > since"),
 ) -> list[MessageReplayEntry]:
-    runtime = await _runtime_or_404(registry, session_id)
+    runtime = await _runtime_or_rehydrate(
+        registry=registry, session_id=session_id, db=db, manager=manager,
+        user=user, container=container, policy_engine=policy_engine,
+        audit_sink=audit_sink, vault=vault,
+    )
     try:
         await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
     except ProjectError as exc:
