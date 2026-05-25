@@ -41,6 +41,109 @@ logger = structlog.get_logger(__name__)
 SERVER_MANIFESTS_DIR = Path(__file__).resolve().parent.parent / "manifests"
 
 
+@dataclass(frozen=True)
+class ManifestOverrides:
+    """User-supplied manifest patches. Every field is optional —
+    missing fields fall through to the manifest's bundled defaults.
+
+    Sourced from `user_agent_prefs` row when the session is created
+    or rehydrated. Stored as Python primitives so the patch logic
+    stays JSON-friendly."""
+
+    model: str | None = None
+    max_tokens: int | None = None
+    max_iterations: int | None = None
+    cost_budget_usd: float | None = None
+    timeout_s: int | None = None
+
+    def has_any(self) -> bool:
+        return any(
+            v is not None
+            for v in (
+                self.model,
+                self.max_tokens,
+                self.max_iterations,
+                self.cost_budget_usd,
+                self.timeout_s,
+            )
+        )
+
+
+def _manifest_to_dict(manifest: EnvironmentManifest) -> dict[str, object]:
+    """Round-trip the manifest through dict form using geny-executor's
+    public `to_dict()` so we get a `from_dict()`-compatible payload
+    we can mutate without reaching into executor internals."""
+    return manifest.to_dict()
+
+
+def apply_overrides(
+    manifest_dict: dict[str, object], overrides: ManifestOverrides
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Patch the manifest dict in-place style and return ``(patched,
+    applied)``. ``applied`` lists what actually changed so audit logs
+    can show only the diff, not the full override struct.
+
+    Schema notes (geny-executor 2.1.0+):
+      - `max_iterations` + `cost_budget_usd` live under `pipeline.*`
+        (not at the top level — top-level keys are accepted by
+        `from_dict` for backwards compat but silently dropped).
+      - `model` + `max_tokens` + `timeout_s` live in the api stage's
+        `config` dict (stage[name == "api"].config).
+    """
+    applied: dict[str, object] = {}
+
+    if overrides.max_iterations is not None or overrides.cost_budget_usd is not None:
+        pipeline = manifest_dict.get("pipeline")
+        if not isinstance(pipeline, dict):
+            pipeline = {}
+            manifest_dict["pipeline"] = pipeline
+        if overrides.max_iterations is not None:
+            pipeline["max_iterations"] = overrides.max_iterations
+            applied["max_iterations"] = overrides.max_iterations
+        if overrides.cost_budget_usd is not None:
+            pipeline["cost_budget_usd"] = overrides.cost_budget_usd
+            applied["cost_budget_usd"] = overrides.cost_budget_usd
+
+    # `model` + `max_tokens` ride on the manifest's *top-level* `model`
+    # dict — that's what `s06_api.resolve_model_config` reads at run
+    # time (via state.model, populated by `PipelineConfig.apply_to_state`).
+    # Writing into the api stage's `config` looks plausible but is
+    # ignored by the executor's modern stage class. We patch both
+    # locations to be safe with older artifacts that still read
+    # stage.config.
+    if any(v is not None for v in (overrides.model, overrides.max_tokens, overrides.timeout_s)):
+        model_dict = manifest_dict.get("model")
+        if not isinstance(model_dict, dict):
+            model_dict = {}
+            manifest_dict["model"] = model_dict
+
+        if overrides.model is not None:
+            model_dict["model"] = overrides.model
+            applied["model"] = overrides.model
+        if overrides.max_tokens is not None:
+            model_dict["max_tokens"] = overrides.max_tokens
+            applied["max_tokens"] = overrides.max_tokens
+
+        stages = manifest_dict.get("stages")
+        if isinstance(stages, list):
+            for stage in stages:
+                if not isinstance(stage, dict) or stage.get("name") != "api":
+                    continue
+                cfg = stage.setdefault("config", {})
+                if not isinstance(cfg, dict):
+                    continue
+                if overrides.model is not None:
+                    cfg["model"] = overrides.model
+                if overrides.max_tokens is not None:
+                    cfg["max_tokens"] = overrides.max_tokens
+                if overrides.timeout_s is not None:
+                    cfg["timeout_s"] = overrides.timeout_s
+                    applied["timeout_s"] = overrides.timeout_s
+                break
+
+    return manifest_dict, applied
+
+
 class ManifestNotFoundError(RuntimeError):
     """Stable error code ``exec.pipeline.manifest_not_found`` from
     geny-executor's side — we wrap it locally so the router layer can
@@ -143,16 +246,27 @@ class GaptEnvironmentService:
         credentials: CredentialBundle | None = None,
         workspace_dir: Path | None = None,
         project_override_path: Path | None = None,
+        overrides: ManifestOverrides | None = None,
     ) -> Pipeline:
         """Resolve + boot pipeline. ``strict=True`` so a malformed
-        manifest fails loudly here, not at first ``pipeline.run``."""
+        manifest fails loudly here, not at first ``pipeline.run``.
+
+        ``overrides``, when given, patches the resolved manifest
+        *dict* with user-global preferences before
+        ``EnvironmentManifest.from_dict`` — keeps the on-disk file
+        untouched. See `apply_overrides()` below."""
         resolution = self.resolve(
             env_id,
             workspace_dir=workspace_dir,
             project_override_path=project_override_path,
         )
+        manifest = resolution.manifest
+        applied: dict[str, object] = {}
+        if overrides is not None and overrides.has_any():
+            patched_dict, applied = apply_overrides(_manifest_to_dict(manifest), overrides)
+            manifest = EnvironmentManifest.from_dict(patched_dict)
         pipeline = await Pipeline.from_manifest_async(
-            resolution.manifest,
+            manifest,
             credentials=credentials,
             strict=True,
         )
@@ -161,6 +275,7 @@ class GaptEnvironmentService:
             env_id=env_id,
             source=resolution.source,
             path=str(resolution.path) if resolution.path else None,
+            overrides_applied=applied or None,
         )
         return pipeline
 

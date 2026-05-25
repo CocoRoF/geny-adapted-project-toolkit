@@ -88,6 +88,48 @@ class User(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class UserAgentPrefs(Base):
+    """User-global Agent / manifest overrides.
+
+    Single row per user. Every field is optional — when null we fall
+    back to the manifest's bundled value. Wired into
+    `GaptEnvironmentService.instantiate_pipeline` via the optional
+    `overrides` parameter, which patches stage[6].api.config + the
+    top-level manifest fields before instantiating the Pipeline.
+
+    Scope is deliberately tiny — model / max_tokens / max_iterations /
+    cost_budget_usd / timeout_s. The full geny preset editor (21-stage
+    enable/disable graph) is out of scope for M1.5; this covers the
+    questions every new user asks ("which model? what's my budget?")
+    without dragging in the full pipeline composition UI.
+    """
+
+    __tablename__ = "user_agent_prefs"
+
+    id: Mapped[str] = _pk()
+    user_id: Mapped[str] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    # `model` accepts vendor-prefixed (claude-sonnet-4-6) and bare
+    # (sonnet / opus / haiku) forms — geny-executor's `_route_model`
+    # normalises both.
+    model: Mapped[str | None] = mapped_column(String(80))
+    max_tokens: Mapped[int | None] = mapped_column(Integer)
+    max_iterations: Mapped[int | None] = mapped_column(Integer)
+    cost_budget_usd: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    timeout_s: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 # ───────────────────────────────────────────────────────────────── orgs ──
 
 

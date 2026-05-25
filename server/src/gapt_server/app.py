@@ -13,6 +13,7 @@ from gapt_server.logging import configure_logging
 from gapt_server.middleware.trace_id import TraceIdMiddleware
 from gapt_server.observability.instruments import register_default_metrics
 from gapt_server.routers import (
+    agent_prefs,
     audit,
     auth,
     ci,
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(metrics.router)
     app.include_router(notifications.router)
     app.include_router(oneshot.router)
+    app.include_router(agent_prefs.router)
     return app
 
 

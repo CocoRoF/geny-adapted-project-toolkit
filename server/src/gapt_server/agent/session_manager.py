@@ -38,6 +38,7 @@ from gapt_server.agent.credentials import (
 )
 from gapt_server.agent.environment_service import (  # noqa: TC001  — dataclass field type
     GaptEnvironmentService,
+    ManifestOverrides,
 )
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
@@ -138,9 +139,10 @@ class ProjectAwareSessionManager:
 
         # 3) Instantiate the pipeline against the chosen manifest.
         env_manifest_id = env_id or self.default_manifest_id
+        overrides = await _load_overrides(db, user_id=user.id)
         try:
             pipeline = await self.env_service.instantiate_pipeline(
-                env_manifest_id, credentials=bundle
+                env_manifest_id, credentials=bundle, overrides=overrides
             )
         except Exception as exc:
             raise SessionManagerError(
@@ -243,9 +245,10 @@ class ProjectAwareSessionManager:
                 settings_path=settings_path,
             )
 
+        overrides = await _load_overrides(db, user_id=user.id)
         try:
             pipeline = await self.env_service.instantiate_pipeline(
-                row.env_manifest_id, credentials=bundle
+                row.env_manifest_id, credentials=bundle, overrides=overrides
             )
         except Exception as exc:
             raise SessionManagerError(
@@ -328,17 +331,46 @@ class ProjectAwareSessionManager:
     @staticmethod
     async def _ensure_project_membership(
         db: AsyncSession, *, user_id: str, project_id: str
-    ) -> None:
-        row = (
-            await db.execute(
-                select(models.ProjectMembership).where(
-                    (models.ProjectMembership.project_id == project_id)
-                    & (models.ProjectMembership.user_id == user_id)
-                )
+    ) -> None:  # noqa: PLR0913
+        return await _ensure_project_membership_impl(db, user_id=user_id, project_id=project_id)
+
+
+async def _load_overrides(
+    db: AsyncSession, *, user_id: str
+) -> ManifestOverrides | None:
+    """Read the user's `user_agent_prefs` row and produce a
+    `ManifestOverrides` for the env_service to patch the manifest
+    with. Returns None when nothing is configured — env_service will
+    skip the patch step and use the bundled manifest verbatim."""
+    row = (
+        await db.execute(
+            select(models.UserAgentPrefs).where(models.UserAgentPrefs.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return ManifestOverrides(
+        model=row.model,
+        max_tokens=row.max_tokens,
+        max_iterations=row.max_iterations,
+        cost_budget_usd=float(row.cost_budget_usd) if row.cost_budget_usd is not None else None,
+        timeout_s=row.timeout_s,
+    )
+
+
+async def _ensure_project_membership_impl(
+    db: AsyncSession, *, user_id: str, project_id: str
+) -> None:
+    row = (
+        await db.execute(
+            select(models.ProjectMembership).where(
+                (models.ProjectMembership.project_id == project_id)
+                & (models.ProjectMembership.user_id == user_id)
             )
-        ).scalar_one_or_none()
-        if row is None:
-            raise ProjectError(
-                "project.forbidden",
-                f"user {user_id} has no membership on project {project_id}",
-            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise ProjectError(
+            "project.forbidden",
+            f"user {user_id} has no membership on project {project_id}",
+        )

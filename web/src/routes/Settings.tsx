@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { CheckCircle2, ChevronLeft, Eye, EyeOff, KeyRound, Settings as SettingsIcon, Trash2, X } from "lucide-react";
+import { Bot, CheckCircle2, ChevronLeft, Eye, EyeOff, KeyRound, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 
+import { type AgentPrefs, getAgentPrefs, putAgentPrefs } from "@/api/agent_prefs";
 import { ApiError } from "@/api/client";
 import {
   deleteSecret,
@@ -16,7 +17,7 @@ import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/ui/Card";
 import { ConfirmDialog } from "@/ui/ConfirmDialog";
-import { Field, Input } from "@/ui/Input";
+import { Field, Input, Select } from "@/ui/Input";
 
 /** Single user-scope secret keys we expose in the UI. The same `key_name`
  * is read back by the workspace service when it clones / runs git inside
@@ -129,6 +130,14 @@ export function Settings() {
           </div>
         </CardContent>
       </Card>
+
+      <section className="mb-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Bot className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-[15px] font-semibold text-fg">Agent defaults</h2>
+        </div>
+        <AgentPrefsCard />
+      </section>
 
       <section className="space-y-4">
         <div className="flex items-center gap-2">
@@ -318,4 +327,198 @@ function formatRelative(iso: string): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// Model choices: the values geny-executor's `_route_model` accepts.
+// "사용자 기본값 유지" sentinel = empty string = clear the override.
+const MODEL_CHOICES: { value: string; label: string }[] = [
+  { value: "", label: "Use manifest default (gapt_default = sonnet)" },
+  { value: "sonnet", label: "Claude Sonnet 4.6 (fast, cheap, recommended)" },
+  { value: "opus", label: "Claude Opus 4.7 (smarter, slower, ~10× cost)" },
+  { value: "haiku", label: "Claude Haiku 4.5 (fastest, cheapest)" },
+];
+
+interface AgentPrefsFormState {
+  model: string;
+  max_tokens: string;
+  max_iterations: string;
+  cost_budget_usd: string;
+  timeout_s: string;
+}
+
+function emptyForm(): AgentPrefsFormState {
+  return { model: "", max_tokens: "", max_iterations: "", cost_budget_usd: "", timeout_s: "" };
+}
+
+function prefsToForm(prefs: AgentPrefs): AgentPrefsFormState {
+  return {
+    model: prefs.model ?? "",
+    max_tokens: prefs.max_tokens != null ? String(prefs.max_tokens) : "",
+    max_iterations: prefs.max_iterations != null ? String(prefs.max_iterations) : "",
+    cost_budget_usd: prefs.cost_budget_usd != null ? String(prefs.cost_budget_usd) : "",
+    timeout_s: prefs.timeout_s != null ? String(prefs.timeout_s) : "",
+  };
+}
+
+function formToPayload(form: AgentPrefsFormState): AgentPrefs {
+  const numOrNull = (s: string): number | null => {
+    const t = s.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    model: form.model.trim() === "" ? null : form.model.trim(),
+    max_tokens: numOrNull(form.max_tokens),
+    max_iterations: numOrNull(form.max_iterations),
+    cost_budget_usd: numOrNull(form.cost_budget_usd),
+    timeout_s: numOrNull(form.timeout_s),
+  };
+}
+
+function AgentPrefsCard() {
+  const [form, setForm] = useState<AgentPrefsFormState>(emptyForm);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const prefs = await getAgentPrefs();
+      setForm(prefsToForm(prefs));
+      setSavedAt(prefs.updated_at ?? null);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const next = await putAgentPrefs(formToPayload(form));
+      setForm(prefsToForm(next));
+      setSavedAt(next.updated_at ?? new Date().toISOString());
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onField =
+    (key: keyof AgentPrefsFormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      setForm((prev) => ({ ...prev, [key]: e.currentTarget.value }));
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-4 text-[12px] text-fg-subtle">Loading…</CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Pipeline overrides</CardTitle>
+        <CardDescription>
+          Override the bundled <code>gapt_default</code> manifest for every chat session you
+          start. Leave a field blank to use the manifest's default. Per-project overrides
+          ship later; this is the global baseline.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field
+            label="Model"
+            hint="Maps to stage 6 (api). Sonnet is the default; Opus costs ~10× more per token."
+          >
+            <Select value={form.model} onChange={onField("model")} disabled={busy}>
+              {MODEL_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Max output tokens"
+            hint="Per API call. Bundled default = 8192. 1–200000."
+          >
+            <Input
+              type="number"
+              min={1}
+              max={200000}
+              placeholder="8192"
+              value={form.max_tokens}
+              onChange={onField("max_tokens")}
+              disabled={busy}
+            />
+          </Field>
+          <Field
+            label="Max iterations"
+            hint="Hard cap on agent loop iterations. Bundled default = 10."
+          >
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              placeholder="10"
+              value={form.max_iterations}
+              onChange={onField("max_iterations")}
+              disabled={busy}
+            />
+          </Field>
+          <Field
+            label="Cost budget (USD)"
+            hint="Per session. Bundled default = $1.00. Pipeline stops when this is hit."
+          >
+            <Input
+              type="number"
+              min={0}
+              step={0.01}
+              placeholder="1.00"
+              value={form.cost_budget_usd}
+              onChange={onField("cost_budget_usd")}
+              disabled={busy}
+            />
+          </Field>
+          <Field
+            label="API timeout (s)"
+            hint="Per CLI subprocess invocation. Bundled default = 180s. 1–600."
+          >
+            <Input
+              type="number"
+              min={1}
+              max={600}
+              placeholder="180"
+              value={form.timeout_s}
+              onChange={onField("timeout_s")}
+              disabled={busy}
+            />
+          </Field>
+        </div>
+        {err ? <p className="text-[12px] text-danger">{err}</p> : null}
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-fg-subtle">
+            {savedAt ? `Saved ${formatRelative(savedAt)}` : "Not yet saved"}
+          </p>
+          <Button onClick={save} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
