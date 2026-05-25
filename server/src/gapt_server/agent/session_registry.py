@@ -143,37 +143,108 @@ async def _run_with_lifecycle(
 
 async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
     """Drives `Pipeline.run_stream(message)` and maps each
-    `PipelineEvent` onto a SessionEvent. Stage 10 (`tool`) emits
-    fine-grained events the hook runner has already counted into
-    accumulator — we still publish a `tool_call` / `tool_result` pair
-    so the UI sees the agent's tool use without scraping logs."""
+    `PipelineEvent` onto a SessionEvent.
+
+    The executor's actual event taxonomy (as of geny-executor 2.1.0,
+    empirically captured against the M0-P3 PoC):
+
+      pipeline.start            — input snapshot
+      stage.{enter,exit,bypass} — per-stage frames (suppressed)
+      input.normalized          — text length only
+      context.built             — message_count / tokens
+      guard.check               — pass/fail
+      api.request               — model, provider, etc. (no text)
+      text.delta                — `{"text": "<chunk>"}` *** chat text ***
+      api.response              — usage + lengths (no text)
+      token.tracked             — tokens + cost_usd (real $) *** cost ***
+      parse.complete            — text_length + tool_calls count
+      tool.{call,invoke,result,…} — tool stage fine-grained events
+      evaluate.* / loop.*       — iteration control
+      yield.complete            — final text_length
+      pipeline.complete         — `{"result": "<full text>", ...}`
+      pipeline.error            — error envelope
+
+    The previous mapping only matched `text` / `*.chunk` patterns —
+    neither name is in the executor's vocabulary — so every text token
+    was silently dropped. Same for cost: the cost_hook only fires on
+    POST_TOOL_USE, so chat-without-tools sessions reported $0 forever.
+    """
     async for ev in runtime.pipeline.run_stream(message):
-        kind, payload = _map_pipeline_event(ev)
+        event_type = getattr(ev, "type", "")
+        data: dict[str, object] = dict(getattr(ev, "data", {}) or {})
+
+        # Token + cost accounting: token.tracked carries the real numbers.
+        # Feed them into the cost accumulator so the snapshot the lifecycle
+        # wrapper emits in DONE has non-zero totals, and forward a COST
+        # frame so the chat header updates live (not just at done).
+        if event_type == "token.tracked":
+            _update_accumulator(runtime, data)
+            await runtime.bus.publish(
+                SessionEventKind.COST, {"snapshot": runtime.accumulator.snapshot()}
+            )
+            continue
+
+        kind, payload = _map_pipeline_event(event_type, data)
         if kind is None:
             continue
         await runtime.bus.publish(kind, payload)
 
 
+def _update_accumulator(runtime: SessionRuntime, data: dict[str, object]) -> None:
+    """Apply a `token.tracked` payload to the runtime's CostAccumulator.
+
+    Executor payload shape: `{"input_tokens", "output_tokens",
+    "cache_write", "cache_read", "cost_usd", "total_cost_usd"}`. We
+    treat each `token.tracked` as a delta (the executor emits one per
+    API call) so cumulative totals are the sum of deltas."""
+    acc = runtime.accumulator
+    in_t = data.get("input_tokens")
+    if isinstance(in_t, int):
+        acc.input_tokens += in_t
+    out_t = data.get("output_tokens")
+    if isinstance(out_t, int):
+        acc.output_tokens += out_t
+    cost = data.get("cost_usd")
+    if isinstance(cost, int | float):
+        acc.cost_usd += float(cost)
+
+
 def _map_pipeline_event(  # noqa: PLR0911 — 7-way taxonomy reads cleaner as straight returns
-    event: object,
+    event_type: str,
+    data: dict[str, object],
 ) -> tuple[SessionEventKind | None, dict[str, object]]:
-    """Map a `geny_executor.PipelineEvent` → (kind, data). Unknown
-    event types map to None so the stream stays compact."""
-    event_type = getattr(event, "type", "")
-    data: dict[str, object] = dict(getattr(event, "data", {}) or {})
+    """Map a `geny_executor.PipelineEvent` → (kind, payload). Unknown
+    event types map to `None` so the stream stays compact."""
+    # Suppressed envelopes — wrapper handles the lifecycle.
     if event_type in {"pipeline.start", "stage.enter", "stage.exit", "stage.bypass"}:
         return None, {}
     if event_type == "pipeline.complete":
-        # Suppress — `_run_with_lifecycle` already issues the done event.
+        # Final text already streamed via `text.delta`; the wrapper
+        # emits DONE with the accumulator snapshot afterwards.
         return None, {}
     if event_type == "pipeline.error":
         return SessionEventKind.ERROR, data
-    if event_type.endswith(".chunk") or event_type == "text":
-        return SessionEventKind.TEXT, data
-    if "tool" in event_type and "result" in event_type:
+
+    # Chat text — `text.delta` carries `{"text": "<chunk>"}` straight
+    # from the CLI's stream-json. Keep the chunk as-is so the UI can
+    # append without re-parsing. The legacy `*.chunk` / `text`
+    # patterns stay matched so test stubs and other providers that
+    # use the older event names still surface.
+    if (
+        event_type == "text.delta"
+        or event_type == "text"
+        or event_type.endswith(".chunk")
+    ):
+        return SessionEventKind.TEXT, {"text": data.get("text", "")}
+
+    # Tool stage — the executor uses `tool.call` / `tool.invoke` /
+    # `tool.result` / `tool.error`. Map both halves so ToolCallCard
+    # can render the request-response pair.
+    if "tool" in event_type and ("result" in event_type or "complete" in event_type or "error" in event_type):
         return SessionEventKind.TOOL_RESULT, data
-    if "tool" in event_type and ("call" in event_type or "invoke" in event_type):
+    if "tool" in event_type and ("call" in event_type or "invoke" in event_type or "start" in event_type):
         return SessionEventKind.TOOL_CALL, data
+
     return None, {}
 
 
