@@ -19,13 +19,19 @@ their findings — see `_detector.py` for the order rationale.
 """
 
 from gapt_server.domains.introspection._detector import detect
+from gapt_server.domains.introspection._patcher import (
+    PatchResult,
+    patch_nextjs_basepath,
+)
 from gapt_server.domains.introspection._types import (
     ProjectIntrospection,
     ProjectKind,
 )
 
 __all__ = [
+    "PatchResult",
     "ProjectIntrospection",
     "ProjectKind",
     "detect",
+    "patch_nextjs_basepath",
 ]

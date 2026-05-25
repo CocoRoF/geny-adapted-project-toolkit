@@ -10,8 +10,10 @@ import {
 
 import {
   type ApplyIntrospectionInput,
+  type AutoPatchResponse,
   type IntrospectResponse,
   applyIntrospection,
+  autoPatchNextjsBasePath,
   getIntrospection,
 } from "@/api/introspect";
 import { Badge } from "@/ui/Badge";
@@ -42,6 +44,9 @@ export function IntrospectionWizard({
   const [overrides, setOverrides] = useState<ApplyIntrospectionInput>({});
   const [applying, setApplying] = useState(false);
   const [applyErr, setApplyErr] = useState<string | null>(null);
+  const [patching, setPatching] = useState(false);
+  const [patchResult, setPatchResult] = useState<AutoPatchResponse | null>(null);
+  const [patchErr, setPatchErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -52,6 +57,20 @@ export function IntrospectionWizard({
       .then(setIntro)
       .catch((e) => setLoadErr(e instanceof Error ? e.message : String(e)));
   }, [open, workspaceId]);
+
+  const handlePatch = useCallback(async () => {
+    setPatching(true);
+    setPatchErr(null);
+    setPatchResult(null);
+    try {
+      const res = await autoPatchNextjsBasePath(workspaceId);
+      setPatchResult(res);
+    } catch (e) {
+      setPatchErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPatching(false);
+    }
+  }, [workspaceId]);
 
   const handleApply = useCallback(async () => {
     setApplying(true);
@@ -127,6 +146,16 @@ export function IntrospectionWizard({
 
           {intro.env_files.length > 0 || intro.env_examples.length > 0 ? (
             <EnvFilesNote intro={intro} />
+          ) : null}
+
+          {intro.needs_basepath ? (
+            <BasePathPatchSection
+              configFile={intro.basepath_config_file}
+              patching={patching}
+              patchResult={patchResult}
+              patchErr={patchErr}
+              onPatch={handlePatch}
+            />
           ) : null}
         </div>
       )}
@@ -357,6 +386,82 @@ function EnvFilesNote({ intro }: { intro: IntrospectResponse }) {
     </section>
   );
 }
+
+function BasePathPatchSection({
+  configFile,
+  patching,
+  patchResult,
+  patchErr,
+  onPatch,
+}: {
+  configFile: string | null;
+  patching: boolean;
+  patchResult: AutoPatchResponse | null;
+  patchErr: string | null;
+  onPatch: () => void;
+}) {
+  return (
+    <section className="rounded-md border border-accent/40 bg-accent/5 p-3">
+      <header className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="text-[12px] font-semibold text-accent">
+          🛠️ Next.js basePath 자동 패치
+        </div>
+        <Button
+          variant="secondary"
+          onClick={onPatch}
+          disabled={patching}
+        >
+          {patching ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="mr-1 h-3.5 w-3.5" />
+          )}
+          패치 실행
+        </Button>
+      </header>
+      <p className="text-[11px] text-fg-muted">
+        이 앱은 GAPT path 기반 preview에서 동작하려면 빌드 시
+        <code className="mx-1 rounded bg-bg-elevated px-1">NEXT_PUBLIC_BASE_PATH</code>
+        가 필요합니다. 워크스페이스 클론의
+        <code className="mx-1 rounded bg-bg-elevated px-1">{configFile ?? "next.config.*"}</code>
+        와 Dockerfile만 수정합니다 (GitHub repo는 그대로).
+      </p>
+      {patchErr ? (
+        <div className="mt-2 rounded-md border border-danger/40 bg-danger/10 p-2 text-[11px] text-danger">
+          {patchErr}
+        </div>
+      ) : null}
+      {patchResult ? (
+        <div className="mt-2 space-y-1 text-[11px] text-fg-muted">
+          {patchResult.patched_files.length > 0 ? (
+            <p>
+              <CheckCircle2 className="mr-1 inline h-3 w-3 text-success" />
+              패치 적용:{" "}
+              {patchResult.patched_files.map((f) => (
+                <code key={f} className="mr-1 rounded bg-bg-elevated px-1">{f}</code>
+              ))}
+            </p>
+          ) : null}
+          {patchResult.skipped.length > 0 ? (
+            <ul className="space-y-0.5">
+              {patchResult.skipped.map((s, i) => (
+                <li key={i} className="text-fg-subtle">· {s}</li>
+              ))}
+            </ul>
+          ) : null}
+          {patchResult.next_steps.length > 0 ? (
+            <ul className="mt-1 space-y-0.5 border-t border-border/40 pt-1.5">
+              {patchResult.next_steps.map((s, i) => (
+                <li key={i} className="text-fg-muted">→ {s}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 
 function Row({
   label,

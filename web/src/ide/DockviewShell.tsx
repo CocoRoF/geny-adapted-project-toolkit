@@ -5,7 +5,7 @@ import {
   type IDockviewPanelProps,
   type SerializedDockview,
 } from "dockview";
-import { GitCompare, RotateCcw, TerminalSquare } from "lucide-react";
+import { GitCompare, KeyRound, RotateCcw, TerminalSquare } from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
@@ -14,6 +14,7 @@ import {
   DIFF_ID,
   EDITOR_GROUP_ID,
   EDITOR_ID,
+  ENV_ID,
   IDE_BASELINE,
   TERMINAL_ID,
 } from "@/ide/layouts";
@@ -21,6 +22,7 @@ import {
   ChatPanelDock,
   DiffPanelDock,
   EditorPanel,
+  EnvPanelDock,
   FileTreePanel,
   PanelPlaceholder,
   TerminalPanelDock,
@@ -63,9 +65,10 @@ const components = {
   ),
   diff: (props: IDockviewPanelProps<{ workspaceId: string }>) => <DiffPanelDock {...props} />,
   terminal: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TerminalPanelDock {...props} />,
+  env: (props: IDockviewPanelProps<{ workspaceId: string }>) => <EnvPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "diff", "terminal"]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "diff", "terminal", "env"]);
 
 interface Props {
   workspaceId: string;
@@ -119,9 +122,9 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
 
   /** Add (or focus, if already mounted) one of the toggle-able panels.
    * Terminal lands as a horizontal split below the editor group;
-   * Diff lands as an extra tab on the editor group. */
+   * Diff + Env land as extra tabs on the editor group. */
   const togglePanel = useCallback(
-    (id: typeof TERMINAL_ID | typeof DIFF_ID) => {
+    (id: typeof TERMINAL_ID | typeof DIFF_ID | typeof ENV_ID) => {
       const api = apiRef.current;
       if (!api) return;
       const existing = api.getPanel(id);
@@ -145,6 +148,14 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
           params: { workspaceId, kind: "diff" },
           position: { referenceGroup: EDITOR_GROUP_ID, direction: "within" },
         });
+      } else if (id === ENV_ID) {
+        api.addPanel({
+          id: ENV_ID,
+          component: "env",
+          title: t("ide.panel.env"),
+          params: { workspaceId, kind: "env" },
+          position: { referenceGroup: EDITOR_GROUP_ID, direction: "within" },
+        });
       }
     },
     [t, workspaceId],
@@ -162,6 +173,11 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
       if (e.ctrlKey && e.shiftKey && (e.key === "G" || e.key === "g")) {
         e.preventDefault();
         togglePanel(DIFF_ID);
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
+        e.preventDefault();
+        togglePanel(ENV_ID);
         return;
       }
       if (e.ctrlKey && e.shiftKey && (e.key === "R" || e.key === "r")) {
@@ -186,6 +202,13 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
     section: t("palette.section.layout"),
     shortcut: "⌃⇧G",
     run: () => togglePanel(DIFF_ID),
+  });
+  usePaletteAction({
+    id: "ide.env.toggle",
+    title: t("ide.toolbar.env"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⇧E",
+    run: () => togglePanel(ENV_ID),
   });
   usePaletteAction({
     id: "ide.layout.reset",
@@ -220,6 +243,7 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
         <Toolbar
           onToggleTerminal={() => togglePanel(TERMINAL_ID)}
           onToggleDiff={() => togglePanel(DIFF_ID)}
+          onToggleEnv={() => togglePanel(ENV_ID)}
           onReset={() => {
             window.localStorage.removeItem(storageKey(workspaceId));
             loadBaseline();
@@ -240,10 +264,12 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
 function Toolbar({
   onToggleTerminal,
   onToggleDiff,
+  onToggleEnv,
   onReset,
 }: {
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  onToggleEnv: () => void;
   onReset: () => void;
 }) {
   const { t } = useI18n();
@@ -266,6 +292,13 @@ function Toolbar({
         {t("ide.toolbar.diff")}
         <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
           Ctrl+Shift+G
+        </kbd>
+      </button>
+      <button type="button" className={btnCls} onClick={onToggleEnv} title="Ctrl+Shift+E">
+        <KeyRound className="h-3.5 w-3.5" />
+        {t("ide.toolbar.env")}
+        <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
+          Ctrl+Shift+E
         </kbd>
       </button>
       <button

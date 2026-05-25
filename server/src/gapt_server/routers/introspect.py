@@ -30,7 +30,13 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
-from gapt_server.domains.introspection import ProjectIntrospection, detect
+from pathlib import Path
+
+from gapt_server.domains.introspection import (
+    ProjectIntrospection,
+    detect,
+    patch_nextjs_basepath,
+)
 from gapt_server.domains.services import ServiceRegistry, ServiceAlreadyExists
 from gapt_server.routers.auth import get_current_user
 
@@ -373,4 +379,83 @@ async def apply_introspection(
         created_dev_service=created_dev,
         created_environment=created_env,
         actions=actions,
+    )
+
+
+# ────────────────────────────────────── auto-patch (F1.5) ──
+
+
+class AutoPatchResponse(BaseModel):
+    """Mirror of `PatchResult` — the wizard shows this as a
+    checklist + a "what to do next" hint."""
+
+    patched_files: list[str]
+    skipped: list[str]
+    next_steps: list[str]
+
+
+@router.post(
+    "/{workspace_id}/auto-patch/nextjs-basepath",
+    response_model=AutoPatchResponse,
+)
+async def auto_patch_nextjs_basepath(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+) -> AutoPatchResponse:
+    """Patch the workspace clone's Next.js config + Dockerfile so
+    the app builds with the right `basePath`. Only touches files
+    inside the workspace clone — the user's GitHub repo stays as-is.
+    Idempotent.
+
+    Pre-conditions:
+      * workspace is `running`
+      * introspection says `needs_basepath` is true
+    """
+    ws = (
+        await db.execute(select(models.Workspace).where(models.Workspace.id == workspace_id))
+    ).scalar_one_or_none()
+    if ws is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "workspace.not_found", "reason": workspace_id},
+        )
+    membership = (
+        await db.execute(
+            select(models.ProjectMembership).where(
+                (models.ProjectMembership.project_id == ws.project_id)
+                & (models.ProjectMembership.user_id == user.id)
+            )
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "workspace.forbidden", "reason": workspace_id},
+        )
+    if ws.status != enums.WorkspaceStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "workspace.not_running", "reason": ws.status.value},
+        )
+
+    intro = detect(ws.worktree_path)
+    if not intro.needs_basepath:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "introspect.basepath_not_applicable",
+                "reason": "introspection did not flag this project as basePath-capable",
+            },
+        )
+
+    result = patch_nextjs_basepath(
+        worktree=Path(ws.worktree_path),
+        next_config_path=intro.basepath_config_file,
+        frontend_dockerfile_path=None,
+    )
+    return AutoPatchResponse(
+        patched_files=result.patched_files,
+        skipped=result.skipped,
+        next_steps=result.next_steps,
     )

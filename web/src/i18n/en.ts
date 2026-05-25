@@ -113,6 +113,8 @@ export const en = {
   "ide.layout.reset": "Reset layout",
   "ide.toolbar.terminal": "Terminal",
   "ide.toolbar.diff": "Diff",
+  "ide.toolbar.env": ".env",
+  "ide.panel.env": ".env",
   "workspace.view.aria_label": "Workspace view",
   "workspace.view.ide": "IDE",
   "workspace.view.service": "Service",

@@ -70,3 +70,15 @@ export const applyIntrospection = (
     `/api/workspaces/${workspaceId}/apply-introspection`,
     { method: "POST", json: body },
   );
+
+export interface AutoPatchResponse {
+  patched_files: string[];
+  skipped: string[];
+  next_steps: string[];
+}
+
+export const autoPatchNextjsBasePath = (workspaceId: string) =>
+  apiFetch<AutoPatchResponse>(
+    `/api/workspaces/${workspaceId}/auto-patch/nextjs-basepath`,
+    { method: "POST", json: {} },
+  );

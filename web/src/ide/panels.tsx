@@ -9,6 +9,7 @@ import { CostPanel } from "@/cost/CostPanel";
 import { DiffPanel } from "@/ide/DiffPanel";
 import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
+import { EnvEditor } from "@/ide/EnvEditor";
 import { FileTree } from "@/ide/FileTree";
 import { PreviewPanel } from "@/ide/PreviewPanel";
 import { ServicesPanel } from "@/ide/ServicesPanel";
@@ -119,6 +120,19 @@ export function DiffPanelDock(props: IDockviewPanelProps<{ workspaceId: string }
     </div>
   );
 }
+
+/** .env editor — surfaces every env file the introspector found,
+ * one-click pick + edit + save. Routes through the workspace files
+ * API (same path the agent uses) so writes are visible to both
+ * sides. */
+export function EnvPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="env" className="h-full bg-bg-elevated">
+      <EnvEditor workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
 
 /** Editor panel — subscribes to EditorBus so the tree can hand it
  * the path to open. */

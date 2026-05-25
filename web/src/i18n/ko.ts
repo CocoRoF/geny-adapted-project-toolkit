@@ -112,6 +112,8 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.layout.reset": "레이아웃 초기화",
   "ide.toolbar.terminal": "터미널",
   "ide.toolbar.diff": "Diff",
+  "ide.toolbar.env": ".env",
+  "ide.panel.env": ".env",
   "workspace.view.aria_label": "워크스페이스 뷰",
   "workspace.view.ide": "IDE",
   "workspace.view.service": "서비스",

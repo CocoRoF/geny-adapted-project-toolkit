@@ -14,6 +14,7 @@ export const EDITOR_ID = "editor";
 export const CHAT_ID = "chat";
 export const TERMINAL_ID = "terminal";
 export const DIFF_ID = "diff";
+export const ENV_ID = "env";
 
 export const EDITOR_GROUP_ID = "editor-group";
 export const TREE_GROUP_ID = "tree-group";
