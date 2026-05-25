@@ -86,6 +86,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reconciler_task = _asyncio.create_task(
         reconcile_loop(), name="gapt-net-reconciler"
     )
+
+    # ServiceRegistry recovery — scan running workspaces for live
+    # `GAPT_SVC=` markers and rebuild the in-memory table. Without
+    # this every server restart wipes the Services panel even
+    # though `npm run dev` is still happily running inside each
+    # container.
+    if container.session_factory is not None:
+        from sqlalchemy import select as _select  # noqa: PLC0415
+
+        async with container.session_factory() as bg_db:
+            rows = (
+                await bg_db.execute(
+                    _select(
+                        models.Workspace.id, models.Workspace.worktree_path
+                    ).where(
+                        models.Workspace.status == enums.WorkspaceStatus.RUNNING
+                    )
+                )
+            ).all()
+            workspaces = [(r[0], r[1]) for r in rows]
+        try:
+            restored = await container.services.recover_from_containers(workspaces)
+            if restored:
+                logger.info("services.recovered", count=restored)
+        except Exception:  # noqa: BLE001
+            logger.exception("services.recover_failed")
     try:
         yield
     finally:

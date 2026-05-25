@@ -67,6 +67,40 @@ _PORT_PATTERN = re.compile(
 )
 
 
+def _extract_user_cmd_from_sh_wrapper(line: str) -> str:
+    """Pull the user's command out of the `pgrep -af` line for a
+    running service wrapper.
+
+    The wrapper shape is roughly:
+      `<pid> sh -c 'mkdir -p $(dirname …) && <user-cmd> >> …log 2>&1'`
+
+    `pgrep -f` joins argv with single spaces and drops quoting, so
+    by the time we read it the inner cmd already lost its `&&`
+    boundaries on disk — but the user-cmd substring is intact
+    between `mkdir -p …services) && ` and ` >> /workspace/.gapt/`.
+    Slice between those landmarks; if either marker is missing,
+    fall back to the whole line so the user at least sees *something*
+    rather than an empty cmd."""
+    start_marker = ").gapt/services) && "
+    # The above mirrors what the spawn_background wrapper writes —
+    # `mkdir -p $(dirname …)` resolves to a path under
+    # `/workspace/.gapt/services` so this substring is stable.
+    end_marker = " >> /workspace/.gapt/services/"
+    si = line.find(start_marker)
+    if si == -1:
+        # Try a looser anchor.
+        si = line.find("&& ")
+        if si == -1:
+            return line.strip()
+        si += 3
+    else:
+        si += len(start_marker)
+    ei = line.find(end_marker, si)
+    if ei == -1:
+        return line[si:].strip()
+    return line[si:ei].strip()
+
+
 class ServiceState(StrEnum):
     STARTING = "starting"
     RUNNING = "running"
@@ -145,6 +179,106 @@ class ServiceRegistry:
         # `start()` raises a clear error if it's None and a real
         # spawn is attempted.
         self._sandbox_manager = sandbox_manager
+
+    async def recover_from_containers(self, workspaces: list[tuple[str, str]]) -> int:
+        """Rebuild the in-memory entry table by scanning each
+        workspace's sandbox container for live `GAPT_SVC=…` markers.
+
+        Reason: the registry is in-process state, but the actual
+        processes live inside the per-workspace docker container —
+        they survive a GAPT server restart. Without this step the
+        IDE shows "No services yet" right after a restart even
+        though the user's `npm run dev` is happily compiling away.
+        Recovery is idempotent: re-running it after a recover only
+        repopulates entries that are still alive.
+
+        `workspaces` is a list of `(workspace_id, worktree_path)`
+        tuples. Caller supplies them by querying the workspace table
+        for rows in `running` status. We can't pull from the DB
+        ourselves without a session dependency, and the registry
+        intentionally stays DB-agnostic.
+
+        Returns the number of services restored.
+        """
+        if self._sandbox_manager is None:
+            return 0
+        restored = 0
+        for workspace_id, worktree_path in workspaces:
+            sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
+            try:
+                rc, out, _ = await sandbox.exec(
+                    [
+                        "sh",
+                        "-c",
+                        # `pgrep -af GAPT_SVC=` prints `<pid> <cmdline>`
+                        # — every running sh wrapper carries the marker
+                        # as $0 so this catches them all.
+                        "pgrep -af 'GAPT_SVC=' || true",
+                    ],
+                    timeout_s=5.0,
+                )
+            except WorkspaceSandboxError:
+                # Container missing / not reachable — skip silently;
+                # next time the workspace boots the service can be
+                # restarted via the wizard or by hand.
+                continue
+            if rc != 0 and rc != 1:
+                continue
+            for raw in out.decode("utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                # `<pid> sh -c <inner-cmd> GAPT_SVC=<wid>:<label>`
+                # cmdline pieces are NUL-separated in /proc but
+                # pgrep -f prints them space-joined. Split on the
+                # GAPT_SVC marker — everything before is the inner
+                # cmd, everything after is workspace_id:label.
+                idx = line.find("GAPT_SVC=")
+                if idx == -1:
+                    continue
+                marker_full = line[idx:].strip()
+                # marker_full = "GAPT_SVC=<wid>:<label>"
+                payload = marker_full[len("GAPT_SVC="):]
+                if ":" not in payload:
+                    continue
+                wid_in_marker, label = payload.split(":", 1)
+                if wid_in_marker != workspace_id:
+                    # Marker collision shouldn't happen, but if it
+                    # does we trust the workspace_id we're scanning.
+                    continue
+                # Extract the user's cmd from the sh -c wrapper.
+                # Pattern: `sh -c <inner> GAPT_SVC=...`
+                inner = line[:idx].strip()
+                # Drop the `<pid> ` prefix and the leading `sh -c `.
+                # We only need a best-effort cmd for display + restart.
+                user_cmd = _extract_user_cmd_from_sh_wrapper(inner)
+
+                key = (workspace_id, label)
+                if key in self._entries:
+                    # Already known (e.g. user clicked restart between
+                    # boot and recover) — leave it alone.
+                    continue
+                log_path_host = (
+                    Path(worktree_path) / ".gapt" / "services" / f"{label}.log"
+                )
+                self._entries[key] = Service(
+                    workspace_id=workspace_id,
+                    label=label,
+                    cmd=user_cmd,
+                    worktree_path=worktree_path,
+                    log_path=str(log_path_host),
+                    state=ServiceState.RUNNING,
+                    _pgrep_marker=marker_full,
+                )
+                restored += 1
+                logger.info(
+                    "service.recovered",
+                    workspace_id=workspace_id,
+                    label=label,
+                )
+        if restored:
+            self._ensure_reaper()
+        return restored
 
     def bind_sandbox_manager(self, manager: WorkspaceSandboxManager) -> None:
         """Late-bind (used when the registry is built before the
