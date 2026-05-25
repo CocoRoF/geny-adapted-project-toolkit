@@ -178,6 +178,15 @@ def _build_runtime_from_handle(
     runner / cost callback / accumulator). The caller is responsible
     for registering the runtime in the `SessionRegistry`."""
     placeholder_accumulator = CostAccumulator(session_id=handle.session_id)
+    # Bind the workspace's docker sandbox so the invoke runner can
+    # route the agent CLI through `docker exec`. Empty worktree path
+    # means we lack the host bind-source — skip binding rather than
+    # ensure the wrong container.
+    sandbox = None
+    if handle.worktree_path:
+        sandbox = container.workspace_sandbox.get(
+            handle.workspace_id, handle.worktree_path
+        )
     runtime = SessionRuntime(
         session_id=handle.session_id,
         project_id=handle.project_id,
@@ -185,6 +194,7 @@ def _build_runtime_from_handle(
         user_id=handle.user_id,
         pipeline=handle.pipeline,
         accumulator=placeholder_accumulator,
+        sandbox=sandbox,
     )
 
     _last = {"input": 0, "output": 0, "cost": 0.0}

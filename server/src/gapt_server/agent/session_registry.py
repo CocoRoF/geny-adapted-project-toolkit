@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from geny_executor import Pipeline
 
     from gapt_server.agent.hooks.cost_hook import CostAccumulator
+    from gapt_server.domains.workspace_sandbox import WorkspaceSandbox
 
 
 logger = structlog.get_logger(__name__)
@@ -64,6 +65,10 @@ class SessionRuntime:
     pipeline: Pipeline
     accumulator: CostAccumulator
     bus: SessionEventBus = field(default_factory=SessionEventBus)
+    # The workspace's docker sandbox — bound by the router when the
+    # runtime is built. None for tests / paths that haven't been
+    # migrated yet; the invoke runner falls back to host execution.
+    sandbox: WorkspaceSandbox | None = None
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -141,7 +146,23 @@ async def _run_with_lifecycle(
         )
 
 
-async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
+async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:  # noqa: PLR0912, PLR0915
+    # Bind the workspace sandbox to this task's ContextVar so the
+    # patched `CLIProcessRunner._spawn` (see `executor_patches.py`)
+    # re-routes every claude CLI invocation through `docker exec
+    # <gapt-ws-…>`. The token-reset in the finally restores the
+    # outer value so concurrent sessions can't bleed sandbox state
+    # into one another.
+    from gapt_server.agent import executor_patches  # noqa: PLC0415 — avoid import cycle at module load
+
+    token = executor_patches.set_current_sandbox(runtime.sandbox)
+    try:
+        await _drive_pipeline(runtime, message)
+    finally:
+        executor_patches.reset_current_sandbox(token)
+
+
+async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
     """Drives `Pipeline.run_stream(message)` and maps each
     `PipelineEvent` onto a SessionEvent.
 

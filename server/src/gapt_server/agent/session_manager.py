@@ -74,6 +74,7 @@ class AgentSessionHandle:
     user_id: str
     env_manifest_id: str
     pipeline: Pipeline
+    worktree_path: str = ""
     status: enums.AgentSessionStatus = enums.AgentSessionStatus.ACTIVE
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -196,6 +197,7 @@ class ProjectAwareSessionManager:
             user_id=user.id,
             env_manifest_id=env_manifest_id,
             pipeline=pipeline,
+            worktree_path=ws.worktree_path,
             status=enums.AgentSessionStatus.ACTIVE,
         )
 
@@ -282,6 +284,7 @@ class ProjectAwareSessionManager:
             user_id=row.user_id,
             env_manifest_id=row.env_manifest_id,
             pipeline=pipeline,
+            worktree_path=ws.worktree_path,
             status=row.status,
         )
 

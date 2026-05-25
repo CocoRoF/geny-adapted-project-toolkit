@@ -1,27 +1,46 @@
 """Runtime patches on top of `geny-executor`.
 
-The executor's s06_api default-artifact `_call_streaming` forwards
-*only* `text_delta` chunks to `state.add_event`. Other canonical
-chunks the provider emits — `tool_use` / `thinking_delta` /
-`input_json_delta` / `content_block_stop` — get silently dropped
-between the provider stream and the pipeline event bus. The result:
-even when the spawned `claude_code_cli` *does* run Bash / Read / Edit
-internally, the GAPT chat trace has no idea any tool ran. The user's
-"agentic visibility" complaint is the symptom.
+Two reasons this module exists:
 
-Per [[feedback_extend_executor_not_adapter_layer]] the real fix
-belongs upstream. This module is a temporary shim that swaps the
-method body with one that also forwards `tool_use` (with the input
-accumulated across delta frames). Remove when the upstream patch
-ships.
+1. **Agentic visibility** — the executor's s06_api default-artifact
+   `_call_streaming` forwards *only* `text_delta` chunks to
+   `state.add_event`. Other canonical chunks the provider emits —
+   `tool_use` / `thinking_delta` / `input_json_delta` /
+   `content_block_stop` — get silently dropped between the provider
+   stream and the pipeline event bus. Without our patched
+   `_call_streaming`, the GAPT chat trace has no idea any tool ran.
+
+2. **Workspace sandbox routing** — the bundled
+   `CLIProcessRunner._spawn` runs the `claude` binary directly on the
+   host. That means `cd /` from inside the agent's view exposes the
+   GAPT operator's `/home`, sibling worktrees, and every other host
+   path the server process can read. We swap `_spawn` for a wrapper
+   that checks a ContextVar set by the session invoke runner: when a
+   sandbox is bound for the current task we re-route the call through
+   ``docker exec -i <gapt-ws-X> claude ...`` so the agent only ever
+   sees the workspace's bind-mounted `/workspace`. ContextVar
+   propagation gives us per-task scoping for free — two concurrent
+   sessions for two different workspaces stay isolated even though
+   they share the patched function.
+
+Per [[feedback_extend_executor_not_adapter_layer]] the longer-term
+fix for #1 belongs upstream. #2 is a GAPT-server concern (the
+executor library has no opinion on per-tenant containment), so it
+stays here.
 
 Applied once at import time of `gapt_server.agent` (see __init__).
 """
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Dict, List, Optional
+import asyncio
+import contextvars
+import os
+import sys
+import time
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
+from geny_executor.llm_client._cli_runtime import CLIProcessRunner, scrub_env
 from geny_executor.llm_client.base import BaseClient
 from geny_executor.llm_client.translators._cli import StreamJsonAccumulator
 from geny_executor.stages.s06_api.artifact.default.stage import (
@@ -32,8 +51,33 @@ from geny_executor.stages.s06_api.artifact.default.stage import (
     PipelineState,
 )
 
+if TYPE_CHECKING:
+    from gapt_server.domains.workspace_sandbox import WorkspaceSandbox
+
+
+# Bound by the session-invoke runner just before `pipeline.run_stream`.
+# When set, the patched _spawn re-routes the CLI call through this
+# sandbox's container. ContextVar (not module global) so two concurrent
+# session invocations in the same process can target different
+# containers.
+_CURRENT_SANDBOX: contextvars.ContextVar[Optional["WorkspaceSandbox"]] = (
+    contextvars.ContextVar("gapt_current_sandbox", default=None)
+)
+
+
+def set_current_sandbox(sandbox: Optional["WorkspaceSandbox"]) -> contextvars.Token:
+    """Set the sandbox the current async task should route CLI spawns
+    into. Returns the token the caller should pass to
+    `reset_current_sandbox` in a `finally` block."""
+    return _CURRENT_SANDBOX.set(sandbox)
+
+
+def reset_current_sandbox(token: contextvars.Token) -> None:
+    _CURRENT_SANDBOX.reset(token)
+
 
 _ORIGINAL_FEED = StreamJsonAccumulator.feed
+_ORIGINAL_SPAWN = CLIProcessRunner._spawn  # type: ignore[attr-defined]
 
 
 def _patched_feed(self: StreamJsonAccumulator, line: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -215,14 +259,80 @@ async def _patched_call_streaming(
     return response
 
 
+async def _patched_spawn(
+    self: CLIProcessRunner, argv: Any
+) -> tuple[asyncio.subprocess.Process, float]:
+    """Wraps `CLIProcessRunner._spawn`.
+
+    - With no sandbox bound to the current task → behaves identically
+      to the upstream `_spawn` (test paths, oneshot host invocations).
+    - With a sandbox bound → rewrites the spawn so it runs inside that
+      sandbox's docker container:
+        * argv becomes `docker exec -i -w /workspace --env ... <container>
+          claude <original argv>`
+        * cwd on the host side is unused (the container's `-w` sets the
+          child's cwd inside the container)
+        * env_extras flow through as `--env KEY=VAL` flags so the
+          ANTHROPIC_API_KEY etc. land inside the container instead of
+          the host process
+
+    `start_new_session=True` is preserved on POSIX so the existing
+    timeout / cancellation path can still killpg the docker exec
+    process group; sending SIGTERM to the host docker exec propagates
+    to the child claude process inside the container.
+
+    Why not configure this through `creds.extras`: the executor's
+    `_creds_to_client_kwargs` only forwards a fixed allowlist of
+    extras to the client (`workspace_dir`, `bare_mode`, ...). Adding a
+    new dimension there means patching the executor itself. The
+    ContextVar lets us scope per-invocation without changing the
+    library's surface."""
+    sandbox = _CURRENT_SANDBOX.get()
+    if sandbox is None:
+        return await _ORIGINAL_SPAWN(self, argv)
+
+    # Sandbox might not have a container running yet — first agent
+    # call after a server restart. ensure() is idempotent.
+    try:
+        await sandbox.ensure()
+    except Exception:  # noqa: BLE001 — let the spawn attempt fail loudly below
+        pass
+
+    docker_argv: list[str] = ["exec", "-i", "-w", "/workspace"]
+    env_extras = dict(self.env_extras or {})
+    for k, v in env_extras.items():
+        docker_argv += ["--env", f"{k}={v}"]
+    # Inside the container the agent CLI is always `claude` on PATH
+    # (the gapt-workspace image installs it via npm). We deliberately
+    # don't forward `self.binary` (a host-side path that doesn't
+    # exist in the container).
+    docker_argv += [sandbox.container_name, "claude", *list(argv)]
+
+    kwargs: dict[str, Any] = dict(
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        # Docker binary needs the *host* env (PATH, DOCKER_HOST,
+        # ...). The child's view of env is what we passed via --env
+        # flags above; that's separate.
+        env=os.environ.copy(),
+        cwd=None,
+    )
+    if sys.platform != "win32":
+        kwargs["start_new_session"] = True
+    proc = await asyncio.create_subprocess_exec("docker", *docker_argv, **kwargs)
+    return proc, time.monotonic()
+
+
 _APPLIED = False
 
 
 def apply_executor_patches() -> None:
-    """Install the streaming patch. Idempotent."""
+    """Install the streaming + sandbox patches. Idempotent."""
     global _APPLIED  # noqa: PLW0603
     if _APPLIED:
         return
     APIStage._call_streaming = _patched_call_streaming  # type: ignore[assignment]
     StreamJsonAccumulator.feed = _patched_feed  # type: ignore[assignment]
+    CLIProcessRunner._spawn = _patched_spawn  # type: ignore[assignment]
     _APPLIED = True

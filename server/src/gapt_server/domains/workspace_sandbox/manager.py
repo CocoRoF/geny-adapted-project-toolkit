@@ -57,7 +57,7 @@ from gapt_server.domains.terminal.pty import PtyHandle, PtySpawnError, spawn_pty
 logger = structlog.get_logger(__name__)
 
 
-DEFAULT_IMAGE = os.environ.get("GAPT_WORKSPACE_SANDBOX_IMAGE", "ubuntu:24.04")
+DEFAULT_IMAGE = os.environ.get("GAPT_WORKSPACE_SANDBOX_IMAGE", "gapt-workspace:latest")
 
 
 class WorkspaceSandboxError(RuntimeError):

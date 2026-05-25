@@ -132,6 +132,14 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
     # 2) Build the runtime + hook chain — same shape as the
     #    interactive endpoint.
     placeholder = CostAccumulator(session_id=handle.session_id)
+    # Bind the workspace sandbox so the agent CLI runs inside
+    # `gapt-ws-<wid>` via the patched `_spawn`. Same logic as the
+    # interactive path.
+    sandbox = None
+    if handle.worktree_path:
+        sandbox = container.workspace_sandbox.get(
+            handle.workspace_id, handle.worktree_path
+        )
     runtime = SessionRuntime(
         session_id=handle.session_id,
         project_id=handle.project_id,
@@ -139,6 +147,7 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
         user_id=handle.user_id,
         pipeline=handle.pipeline,
         accumulator=placeholder,
+        sandbox=sandbox,
     )
 
     _last = {"input": 0, "output": 0, "cost": 0.0}
