@@ -163,3 +163,22 @@ export const triggerRollback = (envId: string, body: RollbackRequestBody) =>
     method: "POST",
     json: body,
   });
+
+// ─────────────────────────── Deploy history ──
+
+export interface DeployRunRow {
+  id: string;
+  environment_id: string;
+  version: string;
+  status: string;
+  bound_url: string | null;
+  exec_code: string | null;
+  log_tail: string;
+  started_at: string;
+  finished_at: string | null;
+  actor_id: string | null;
+  trigger_kind: string;
+}
+
+export const listDeployRuns = (envId: string, limit = 20) =>
+  apiGet<DeployRunRow[]>(`/api/environments/${envId}/runs?limit=${limit}`);

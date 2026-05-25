@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ExternalLink, Loader2, Plus, RotateCcw, Rocket } from "lucide-react";
+import {
+  ExternalLink,
+  History,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Rocket,
+  Undo2,
+} from "lucide-react";
 
 import {
+  type DeployRunRow,
   type EnvironmentResponse,
+  listDeployRuns,
   listEnvironments,
   streamDeploy,
+  triggerRollback,
 } from "@/api/environments";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
@@ -46,6 +57,13 @@ export function DeployWorkspace({ projectId }: Props) {
   const [logs, setLogs] = useState<DeployLogState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logScrollRef = useRef<HTMLPreElement | null>(null);
+  // History UI state: which env is expanded, that env's recent
+  // runs, plus a busy flag while a rollback is in flight. Hooks
+  // that need `refresh` are declared further down after `refresh`.
+  const [historyEnvId, setHistoryEnvId] = useState<string | null>(null);
+  const [historyRuns, setHistoryRuns] = useState<DeployRunRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [rollbackBusyRunId, setRollbackBusyRunId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -122,6 +140,50 @@ export function DeployWorkspace({ projectId }: Props) {
     abortRef.current = null;
     setLogs((cur) => (cur ? { ...cur, state: "idle" } : cur));
   }, []);
+
+  const loadHistory = useCallback(async (envId: string) => {
+    setHistoryLoading(true);
+    try {
+      const runs = await listDeployRuns(envId, 20);
+      setHistoryRuns(runs);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const toggleHistory = useCallback(
+    (envId: string) => {
+      if (historyEnvId === envId) {
+        setHistoryEnvId(null);
+        setHistoryRuns([]);
+        return;
+      }
+      setHistoryEnvId(envId);
+      void loadHistory(envId);
+    },
+    [historyEnvId, loadHistory],
+  );
+
+  const rollbackToRun = useCallback(
+    async (envId: string, run: DeployRunRow) => {
+      setRollbackBusyRunId(run.id);
+      try {
+        await triggerRollback(envId, {
+          run_id: run.id,
+          to_version: run.version,
+        });
+        await refresh();
+        if (historyEnvId === envId) await loadHistory(envId);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRollbackBusyRunId(null);
+      }
+    },
+    [historyEnvId, loadHistory, refresh],
+  );
 
   return (
     <div className="grid h-full grid-cols-[minmax(380px,_460px)_1fr] overflow-hidden">
@@ -210,12 +272,28 @@ export function DeployWorkspace({ projectId }: Props) {
                       )}
                       {t("deploy.deploy")}
                     </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => toggleHistory(env.id)}
+                      title={t("deploy.history.toggle")}
+                    >
+                      <History className="mr-1 h-3 w-3" />
+                      {t("deploy.history.toggle")}
+                    </Button>
                     {logs?.envId === env.id && logs.state === "running" ? (
                       <Button variant="secondary" onClick={cancelDeploy}>
                         {t("deploy.cancel")}
                       </Button>
                     ) : null}
                   </div>
+                  {historyEnvId === env.id ? (
+                    <HistoryPane
+                      runs={historyRuns}
+                      loading={historyLoading}
+                      busyRunId={rollbackBusyRunId}
+                      onRollback={(run) => rollbackToRun(env.id, run)}
+                    />
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -260,3 +338,78 @@ export function DeployWorkspace({ projectId }: Props) {
     </div>
   );
 }
+
+
+function HistoryPane({
+  runs,
+  loading,
+  busyRunId,
+  onRollback,
+}: {
+  runs: DeployRunRow[];
+  loading: boolean;
+  busyRunId: string | null;
+  onRollback: (run: DeployRunRow) => void;
+}) {
+  const { t } = useI18n();
+  if (loading) {
+    return (
+      <p className="mt-2 flex items-center gap-1 text-[11px] text-fg-subtle">
+        <Loader2 className="h-3 w-3 animate-spin" /> {t("app.loading")}
+      </p>
+    );
+  }
+  if (runs.length === 0) {
+    return (
+      <p className="mt-2 text-[11px] text-fg-subtle">
+        {t("deploy.history.empty")}
+      </p>
+    );
+  }
+  return (
+    <ul className="mt-2 space-y-1 border-t border-border/40 pt-2">
+      {runs.map((r) => {
+        const success = r.status === "success";
+        return (
+          <li
+            key={r.id}
+            className="flex items-start gap-1.5 rounded bg-bg-elevated px-2 py-1 text-[11px]"
+          >
+            <Badge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>
+            <div className="flex-1 overflow-hidden">
+              <div className="font-mono text-fg" title={r.version}>
+                {r.version.length > 24
+                  ? `${r.version.slice(0, 8)}…${r.version.slice(-6)}`
+                  : r.version}
+              </div>
+              <div className="text-fg-subtle">
+                {r.trigger_kind} ·{" "}
+                {r.finished_at
+                  ? new Date(r.finished_at).toLocaleString()
+                  : new Date(r.started_at).toLocaleString()}
+              </div>
+              {r.exec_code ? (
+                <div className="text-warn">{r.exec_code}</div>
+              ) : null}
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => onRollback(r)}
+              disabled={!success || busyRunId === r.id}
+              title={
+                success ? t("deploy.history.rollback") : t("deploy.history.rollback_only_success")
+              }
+            >
+              {busyRunId === r.id ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Undo2 className="h-3 w-3" />
+              )}
+            </Button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+

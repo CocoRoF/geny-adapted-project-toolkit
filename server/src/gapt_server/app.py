@@ -70,9 +70,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 .values(status=enums.WorkspaceStatus.FAILED)
             )
             await db.commit()
+    # gapt-net reconciler — periodic sweep that keeps prod compose
+    # stacks attached to the shared network. Compose `--no-deps`
+    # restarts strip external nets; without this loop the user has
+    # to `docker network connect` by hand. Daemon task; cancelled on
+    # shutdown.
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    from gapt_server.domains.workspace_sandbox.reconciler import (  # noqa: PLC0415
+        reconcile_loop,
+    )
+
+    reconciler_task = _asyncio.create_task(
+        reconcile_loop(), name="gapt-net-reconciler"
+    )
     try:
         yield
     finally:
+        reconciler_task.cancel()
+        try:
+            await reconciler_task
+        except (BaseException,):  # noqa: BLE001 — cancellation is expected
+            pass
         await container.aclose()
         logger.info("gapt.server.shutdown")
 
