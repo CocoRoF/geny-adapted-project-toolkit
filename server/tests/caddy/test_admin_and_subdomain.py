@@ -165,6 +165,9 @@ async def test_subdomain_manager_subdomain_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_subdomain_manager_unregister_targets_id_path() -> None:
+    """Unregister deletes both the primary route AND its Referer
+    fallback (the route that catches `/favicon.png`-style root-
+    relative assets emitted by the upstream app)."""
     seen_paths: list[str] = []
 
     async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
@@ -174,7 +177,10 @@ async def test_subdomain_manager_unregister_targets_id_path() -> None:
     client = CaddyAdminClient(transport=transport)
     manager = SubdomainManager(client=client, preview_domain="gapt.example")
     await manager.unregister("01KWS")
-    assert seen_paths == ["/id/gapt-preview-01kws"]
+    assert seen_paths == [
+        "/id/gapt-preview-01kws",
+        "/id/gapt-preview-01kws-asset",
+    ]
 
 
 @pytest.mark.asyncio

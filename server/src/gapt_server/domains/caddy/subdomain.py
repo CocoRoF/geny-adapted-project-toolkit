@@ -75,41 +75,74 @@ def _route_id(workspace_slug: str) -> str:
     return f"gapt-preview-{workspace_slug.lower()}"
 
 
-def _path_route_payload(binding: SubdomainBinding) -> dict[str, Any]:
-    """Caddy route JSON for path-mode previews.
+def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
+    """Two Caddy routes per path-mode preview binding.
 
-    Matches `/preview/<slug>` and `/preview/<slug>/*`, then
-    reverse-proxies. When `binding.strip_prefix` is True (the
-    opt-in), a `rewrite.strip_path_prefix` runs first so the upstream
-    sees `/...`. Default keeps the prefix in the forwarded URL — that
-    matches the canonical "app knows its basePath" pattern (Next.js
-    basePath, Vite base, FastAPI root_path) and lets the app emit
-    self-referential URLs that round-trip through the same route.
+    **Primary route** — matches `/preview/<slug>` and `/preview/<slug>/*`
+    and reverse-proxies. When `binding.strip_prefix` is True (opt-in),
+    `rewrite.strip_path_prefix` runs first so the upstream sees `/`.
+    Default keeps the prefix so basePath-aware apps (Next.js basePath,
+    Vite base, FastAPI root_path) round-trip cleanly.
 
-    Both the bare path and the trailing-slash form match — without
-    that, hitting `/preview/foo` (no slash) would fall through to the
-    IDE catch-all below it."""
+    **Referer fallback** — Next.js (and many other frameworks) emit
+    plain `<link rel="icon" href="/favicon.png">` and similar
+    root-relative URLs that bypass basePath entirely. The browser
+    requests those from the apex (`gapt.hrletsgo.me/favicon.png`)
+    where the IDE catch-all would catch them. This second route
+    matches any request whose `Referer` header starts with
+    `/preview/<slug>` and reverse-proxies to the same upstream, so
+    those stragglers land on the right app. The strip-prefix toggle
+    doesn't apply here — Referer-borne requests are already at root.
+
+    The primary route is registered first so prefixed requests never
+    need the Referer check. Both carry the same upstream and a
+    terminal flag.
+
+    Both routes share a stable `@id` family (main + `-asset`) so the
+    upsert / unregister flow can target them by id."""
     slug = binding.workspace_slug.lower()
     prefix = f"/preview/{slug}"
-    handlers: list[dict[str, Any]] = []
+    upstream_handler: dict[str, Any] = {
+        "handler": "reverse_proxy",
+        "upstreams": [
+            {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
+        ],
+    }
+    primary_handlers: list[dict[str, Any]] = []
     if binding.strip_prefix:
-        handlers.append(
+        primary_handlers.append(
             {"handler": "rewrite", "strip_path_prefix": prefix}
         )
-    handlers.append(
-        {
-            "handler": "reverse_proxy",
-            "upstreams": [
-                {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
-            ],
-        }
-    )
-    return {
+    primary_handlers.append(upstream_handler)
+    primary = {
         "@id": _route_id(binding.workspace_slug),
         "match": [{"path": [prefix, f"{prefix}/*"]}],
-        "handle": handlers,
+        "handle": primary_handlers,
         "terminal": True,
     }
+    # Referer fallback: catch root-relative asset requests whose
+    # Referer originates from this preview, and *rewrite* the path
+    # to include the preview prefix before forwarding. Without the
+    # rewrite the upstream (basePath-aware) returns 404 because it
+    # only knows URLs under `/preview/<slug>/...`.
+    asset_fallback = {
+        "@id": _route_id(binding.workspace_slug) + "-asset",
+        "match": [
+            {
+                "header_regexp": {
+                    "Referer": {
+                        "pattern": f"://[^/]+{prefix}(/|$|\\?)",
+                    }
+                }
+            }
+        ],
+        "handle": [
+            {"handler": "rewrite", "uri": prefix + "{http.request.uri}"},
+            upstream_handler,
+        ],
+        "terminal": True,
+    }
+    return [primary, asset_fallback]
 
 
 def _subdomain_route_payload(
@@ -158,27 +191,28 @@ class SubdomainManager:
         return f"/config/apps/http/servers/{self.server_name}/routes"
 
     async def register(self, binding: SubdomainBinding) -> str:
-        """POST a fresh route onto the main server's routes. Returns
-        the user-visible URL host (path mode: `<apex>/preview/<slug>`;
-        subdomain mode: `<slug>.<preview-domain>`).
+        """Splice the route(s) for this binding ahead of the IDE
+        catch-all in the main server's `routes` array. Returns the
+        user-visible URL host:
+            path mode      → `<apex>/preview/<slug>`
+            subdomain mode → `<slug>.<preview-domain>`
 
-        The route is *prepended* so it matches before the IDE-fallback
-        `handle {}` block in the Caddyfile — without that the IDE
-        catches `/preview/<slug>` first."""
+        Path mode registers TWO routes — the primary `/preview/<slug>`
+        match plus a Referer-based fallback for root-relative assets
+        (`<link rel="icon" href="/favicon.png">` etc.) that bypass the
+        framework's basePath. See `_path_route_payloads` for details."""
         if binding.mode == PreviewMode.SUBDOMAIN:
-            payload = _subdomain_route_payload(binding, self.preview_domain)
-            await self._upsert(payload)
+            await self._upsert([_subdomain_route_payload(binding, self.preview_domain)])
             return _full_host(binding.workspace_slug, self.preview_domain)
 
         # Path mode — preview_domain is the apex (no subdomain).
-        payload = _path_route_payload(binding)
-        await self._upsert(payload)
+        await self._upsert(_path_route_payloads(binding))
         host = self.preview_domain.rstrip(".").lower()
         return f"{host}/preview/{binding.workspace_slug.lower()}"
 
-    async def _upsert(self, payload: dict[str, Any]) -> None:
-        """Replace any pre-existing route with the same `@id`, then
-        splice the fresh route in *before* the IDE catch-all.
+    async def _upsert(self, payloads: list[dict[str, Any]]) -> None:
+        """Replace any pre-existing routes with matching `@id`s, then
+        splice the fresh route(s) in *before* the IDE catch-all.
 
         Caddy's admin semantics aren't REST-vanilla: POST on an array
         element merges/appends; PUT on an existing path returns 409
@@ -187,19 +221,22 @@ class SubdomainManager:
         sequence so two simultaneous registers can't observe the
         intermediate empty state.
 
-        The IDE catch-all from `handle {}` in Caddyfile compiles to a
-        no-match terminal subroute that would otherwise eat every
-        request before our preview route runs. We splice in *before*
-        it; the catch-all stays last."""
-        route_id = payload["@id"]
+        Multiple payloads land contiguously in front of the IDE
+        catch-all in the order given — important when one route's
+        match is a superset of another (e.g. Referer-fallback should
+        sit after the primary path match for predictable ordering)."""
+        route_ids = {p["@id"] for p in payloads}
         async with self._lock:
             try:
                 current = await self.client.get(self.routes_path)
             except CaddyAdminError:
                 current = None
             arr: list[dict[str, Any]] = current if isinstance(current, list) else []
-            # Drop any prior route with the same @id (upsert semantics).
-            arr = [r for r in arr if not (isinstance(r, dict) and r.get("@id") == route_id)]
+            # Drop prior routes sharing any of the fresh @ids.
+            arr = [
+                r for r in arr
+                if not (isinstance(r, dict) and r.get("@id") in route_ids)
+            ]
             # Find the IDE catch-all (no `match`, terminal-ish handler
             # that responds). The leading `encode` block also has no
             # match but its handler is `encode` (a header filter), so
@@ -215,7 +252,8 @@ class SubdomainManager:
                 ):
                     insert_at = i
                     break
-            arr.insert(insert_at, payload)
+            for offset, payload in enumerate(payloads):
+                arr.insert(insert_at + offset, payload)
             # DELETE then POST — see method docstring.
             try:
                 await self.client.delete(self.routes_path)
@@ -226,13 +264,17 @@ class SubdomainManager:
             await self.client.post(self.routes_path, arr)
 
     async def unregister(self, workspace_slug: str) -> None:
-        route_id = _route_id(workspace_slug)
-        try:
-            await self.client.delete(f"/id/{route_id}")
-        except CaddyAdminError as exc:
-            if "404" in str(exc):
-                return
-            raise
+        """Delete both the primary preview route and its Referer
+        fallback (if registered). Idempotent — 404 means "already
+        gone" and is swallowed."""
+        primary = _route_id(workspace_slug)
+        for route_id in (primary, f"{primary}-asset"):
+            try:
+                await self.client.delete(f"/id/{route_id}")
+            except CaddyAdminError as exc:
+                if "404" in str(exc):
+                    continue
+                raise
 
     async def list_routes(self) -> list[dict[str, Any]]:
         body = await self.client.get(self.routes_path)
