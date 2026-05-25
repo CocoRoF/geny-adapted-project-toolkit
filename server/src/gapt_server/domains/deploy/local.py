@@ -311,15 +311,28 @@ class LocalComposeTarget:
             )
             return None
 
-        # Register the Caddy route. Subdomain is per-environment so
+        # Register the Caddy route. Slug is per-environment so
         # multiple envs of the same project don't clobber each other.
-        from gapt_server.domains.caddy.subdomain import SubdomainBinding  # noqa: PLC0415
+        # Path mode by default (single apex domain, no wildcard DNS
+        # needed). Subdomain mode is opt-in via the env's
+        # `target_options.preview_mode`.
+        from gapt_server.domains.caddy.subdomain import (  # noqa: PLC0415
+            PreviewMode,
+            SubdomainBinding,
+        )
 
         slug = f"prod-{request.environment}-{request.project_id}".lower()
+        mode_str = request.target_options.get("preview_mode", "path")
+        mode = (
+            PreviewMode.SUBDOMAIN
+            if str(mode_str).lower() == "subdomain"
+            else PreviewMode.PATH
+        )
         binding = SubdomainBinding(
             workspace_slug=slug,
             upstream_host=container_name,
             upstream_port=primary_port,
+            mode=mode,
         )
         host = await self.subdomain_manager.register(binding)
         return f"https://{host}"

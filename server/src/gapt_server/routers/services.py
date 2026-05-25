@@ -389,10 +389,17 @@ async def expose_service(
     # case where the operator runs Caddy off-network and needs a host
     # bridge address.
     default_upstream = f"gapt-ws-{workspace_id.lower()}"
+    # Default to path-based routing on the apex GAPT domain. Apps
+    # that require root-relative paths can switch to subdomain mode
+    # by passing `mode: "subdomain"` on the request body once that
+    # field lands (current shape covers the common case).
+    from gapt_server.domains.caddy.subdomain import PreviewMode  # noqa: PLC0415
+
     binding = SubdomainBinding(
         workspace_slug=slug,
         upstream_host=payload.upstream_host or default_upstream,
         upstream_port=port,
+        mode=PreviewMode.PATH,
     )
     try:
         host = await manager.register(binding)

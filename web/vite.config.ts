@@ -47,23 +47,23 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
-    port: 5173,
-    // When fronted by a Cloudflare tunnel (or any reverse proxy) we
-    // expose a single port and forward API + auth callbacks to the
-    // FastAPI server. Vite's HMR uses websockets on the same port,
-    // which Cloudflare tunnels handle transparently.
+    // GAPT port convention: 3xxxx prefix. Vite dev → 35173 (was 5173).
+    // The host server (uvicorn) → 38001 (was 8001). Cloudflare tunnel
+    // for `gapt.hrletsgo.me` points at Caddy on 38080; bare vite is
+    // only used during local development without Caddy in front.
+    port: 35173,
     proxy: {
       "/api": {
-        target: "http://localhost:8001",
+        target: "http://localhost:38001",
         changeOrigin: false,
         ws: true,
       },
       "/health": {
-        target: "http://localhost:8001",
+        target: "http://localhost:38001",
         changeOrigin: false,
       },
       "/metrics": {
-        target: "http://localhost:8001",
+        target: "http://localhost:38001",
         changeOrigin: false,
       },
     },

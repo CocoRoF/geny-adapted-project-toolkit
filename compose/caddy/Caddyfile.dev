@@ -1,23 +1,35 @@
-# GAPT Caddy dev config.
+# GAPT Caddy dev config — single edge, path-based routing.
 #
-# Two HTTP servers:
-#   - Main edge (:8080) — control plane. /api + /health → `server`.
-#   - Preview (:8081) — per-workspace dev-server previews. Routes are
-#     mutated by GAPT's `SubdomainManager` via the admin API; the file
-#     here just bootstraps the empty server so the admin path
-#     `apps/http/servers/preview/routes` is addressable.
+# Domain model:
+#   gapt.hrletsgo.me/             → IDE (vite dev on host:35173)
+#   gapt.hrletsgo.me/api/*        → control-plane server (compose: server:8088)
+#   gapt.hrletsgo.me/health       → control-plane health
+#   gapt.hrletsgo.me/preview/<slug>/* → workspace dev / prod stacks
+#       Routes for individual <slug>s are injected at runtime by the
+#       GAPT server via the Caddy admin API. This file only ships the
+#       static handles; the admin pre-pends per-slug routes ahead of
+#       the IDE fallback.
 #
-# Caddy is on both the compose-default network (talks to `server`)
-# AND the shared `gapt-net` (talks to `gapt-ws-<wid>` workspace
-# containers). Upstreams in the dynamic routes are docker DNS names
-# resolved on gapt-net — no host port publishing needed.
+# Port convention: GAPT infra uses the 3xxxx prefix on the host so
+# user services on 3000/5173/etc. never collide. Inside the compose
+# network upstreams stay on their natural ports.
+#
+# Caddy joins both the compose-default network (talks to `server`)
+# AND `gapt-net` (talks to per-workspace sandbox containers + per-
+# prod compose stacks). The admin API on :2019 listens on all
+# interfaces so the host-side GAPT server (which mutates routes) can
+# reach it via the published 127.0.0.1:32019.
 
 {
     auto_https off
-    # The admin API listens on all interfaces inside the caddy
-    # container so the GAPT server (running on the host) can reach it
-    # via the published `127.0.0.1:2019` mapping in compose.
     admin 0.0.0.0:2019
+    # Naming the listener gives the admin API a stable mount point —
+    # `/config/apps/http/servers/main/routes/...` — instead of the
+    # default `srv0` which can drift if a Caddyfile reshuffle ever
+    # adds a second listener.
+    servers :8080 {
+        name main
+    }
 }
 
 :8080 {
@@ -28,38 +40,30 @@
 
     encode gzip zstd
 
-    # API surface — anything under /api goes straight through to the
-    # control-plane server.
+    # ───── control plane ─────
     handle /api/* {
-        reverse_proxy server:8088
+        reverse_proxy host.docker.internal:38001
     }
 
     handle /health {
-        reverse_proxy server:8088
+        reverse_proxy host.docker.internal:38001
     }
 
-    # Future home of the web bundle (M0-P1 PR4 ships dev-only via vite).
-    # In production we'll serve the built dist from this same edge.
+    # ───── per-workspace previews ─────
+    # No `handle /preview/*` here — the admin API injects one route
+    # per exposed slug with `path /preview/<slug>/*` + strip_prefix.
+    # The fallback below catches bare /preview hits with no slug.
+    @bare_preview path /preview /preview/
+    handle @bare_preview {
+        respond "No preview slug. Expose a service from the IDE Service tab." 404
+    }
+
+    # ───── fallback: IDE / dashboard ─────
+    # Vite dev runs on the host (uvicorn-style — not in compose).
+    # `host.docker.internal` is Docker Desktop's host bridge; on plain
+    # Linux daemons it resolves via the `extra_hosts` declaration on
+    # the caddy service (see docker-compose.dev.yml).
     handle {
-        respond "GAPT dev edge. Open the Vite dev server directly on :5173 during PR4." 200
-    }
-}
-
-# Preview server — per-workspace `gapt-ws-<wid>` reverse proxies live
-# here. The file starts with NO routes; `SubdomainManager.register()`
-# POSTs them as workspaces expose services. The Host matcher on each
-# generated route restricts which subdomain hits which workspace.
-:8081 {
-    log {
-        output stderr
-        format console
-    }
-
-    encode gzip zstd
-
-    # Default fall-through when no matching subdomain — keeps the
-    # response useful rather than a Caddy default 404.
-    handle {
-        respond "No preview is bound to this hostname. Expose a service from the workspace's Service tab." 404
+        reverse_proxy host.docker.internal:35173
     }
 }
