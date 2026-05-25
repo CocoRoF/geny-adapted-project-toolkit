@@ -50,12 +50,19 @@
     }
 
     # ───── per-workspace previews ─────
-    # No `handle /preview/*` here — the admin API injects one route
-    # per exposed slug with `path /preview/<slug>/*` + strip_prefix.
-    # The fallback below catches bare /preview hits with no slug.
-    @bare_preview path /preview /preview/
-    handle @bare_preview {
-        respond "No preview slug. Expose a service from the IDE Service tab." 404
+    # The admin API injects one route per exposed slug with
+    # `path /preview/<slug>` + `/preview/<slug>/*`. Those routes are
+    # MORE specific than `/preview/*` below, so they win when a slug
+    # is registered. The `/preview/*` block here is the SAFETY NET
+    # that catches any `/preview/...` URL whose slug isn't registered
+    # (server restart before recovery completes, slug typo, unexpose
+    # race, etc.) and returns 404 — instead of falling through to the
+    # IDE catch-all and serving the GAPT SPA inside the preview
+    # iframe, which produced an "IDE renders inside iframe" recursion
+    # bug.
+    @any_preview path /preview /preview/*
+    handle @any_preview {
+        respond "Preview not found. Expose a service from the IDE Service tab — or wait for the workspace to finish booting." 404
     }
 
     # ───── fallback: IDE / dashboard ─────

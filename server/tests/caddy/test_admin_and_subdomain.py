@@ -191,3 +191,48 @@ async def test_subdomain_manager_unregister_idempotent_on_404() -> None:
     client = CaddyAdminClient(transport=transport)
     manager = SubdomainManager(client=client, preview_domain="gapt.example")
     await manager.unregister("01KWS")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_upsert_inserts_before_preview_safety_net_404() -> None:
+    """The Caddyfile now ships a `/preview/*` static_response 404 ahead
+    of the IDE catch-all so unregistered slugs don't fall through to
+    the SPA (iframe-in-iframe recursion bug). Dynamic per-slug routes
+    must splice in BEFORE that 404 — otherwise the safety-net wins
+    and every Expose appears broken."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {"match": [{"path": ["/health"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {
+            "match": [{"path": ["/preview", "/preview/*"]}],
+            "handle": [{"handler": "static_response", "status_code": 404}],
+        },
+        {"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "ide:35173"}]}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(workspace_slug="01KWS", upstream_host="gapt-ws-01kws", upstream_port=3000)
+    )
+    posted = calls[2][2]
+    new_idx = next(i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws")
+    safety_net_idx = next(
+        i
+        for i, r in enumerate(posted)
+        if any(
+            isinstance(p, str) and p.startswith("/preview")
+            for p in (r.get("match") or [{}])[0].get("path", [])
+        )
+        and any(h.get("handler") == "static_response" for h in r.get("handle", []))
+    )
+    assert new_idx < safety_net_idx, (
+        "dynamic /preview/<slug> route must run BEFORE the safety-net 404"
+    )

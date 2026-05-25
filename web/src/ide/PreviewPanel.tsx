@@ -31,6 +31,11 @@ function writeStored(workspaceId: string, url: string): void {
 
 interface Props {
   workspaceId: string;
+  /** Optional bump-counter driven by sibling ServicesPanel actions
+   * (expose/restart/etc.) — when it changes, we reload the iframe
+   * WITHOUT touching its URL. Lets the user "click Expose → see the
+   * preview update" without manually hitting Refresh. */
+  reloadNonce?: number;
 }
 
 /** Preview panel — embeds an iframe pointed at a workspace dev server.
@@ -43,7 +48,7 @@ interface Props {
  *      a manual reload.
  *   2. **Manual entry** — for arbitrary URLs (e.g. a remote staging
  *      env, or a public site you're integrating with). */
-export function PreviewPanel({ workspaceId }: Props) {
+export function PreviewPanel({ workspaceId, reloadNonce }: Props) {
   const { t } = useI18n();
   const [url, setUrl] = useState(() => readStored(workspaceId));
   const [device, setDevice] = useState<Device>("desktop");
@@ -54,6 +59,16 @@ export function PreviewPanel({ workspaceId }: Props) {
   useEffect(() => {
     writeStored(workspaceId, url);
   }, [workspaceId, url]);
+
+  // Sibling-driven reload (Expose/Restart in ServicesPanel). The
+  // initial mount fires once with reloadNonce=0 which is a no-op the
+  // first iframe render already covers, so the guard skips it.
+  const firstReloadNonce = useRef(reloadNonce);
+  useEffect(() => {
+    if (reloadNonce === undefined) return;
+    if (reloadNonce === firstReloadNonce.current) return;
+    setReloadKey((k) => k + 1);
+  }, [reloadNonce]);
 
   // Poll the services list so the dropdown picks up newly exposed
   // services without forcing the user to reload the page.

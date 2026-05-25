@@ -227,7 +227,9 @@ class SubdomainManager:
 
     async def _upsert(self, payloads: list[dict[str, Any]]) -> None:
         """Replace any pre-existing routes with matching `@id`s, then
-        splice the fresh route(s) in *before* the IDE catch-all.
+        splice the fresh route(s) in *before* the first anchor route
+        that would otherwise swallow the request (IDE catch-all OR
+        the `/preview/*` safety-net 404 — see the insertion logic).
 
         Caddy's admin semantics aren't REST-vanilla: POST on an array
         element merges/appends; PUT on an existing path returns 409
@@ -236,10 +238,10 @@ class SubdomainManager:
         sequence so two simultaneous registers can't observe the
         intermediate empty state.
 
-        Multiple payloads land contiguously in front of the IDE
-        catch-all in the order given — important when one route's
-        match is a superset of another (e.g. Referer-fallback should
-        sit after the primary path match for predictable ordering)."""
+        Multiple payloads land contiguously at the chosen insert
+        point in the order given — important when one route's match
+        is a superset of another (e.g. Referer-fallback should sit
+        after the primary path match for predictable ordering)."""
         route_ids = {p["@id"] for p in payloads}
         async with self._lock:
             try:
@@ -252,19 +254,37 @@ class SubdomainManager:
                 r for r in arr
                 if not (isinstance(r, dict) and r.get("@id") in route_ids)
             ]
-            # Find the IDE catch-all (no `match`, terminal-ish handler
-            # that responds). The leading `encode` block also has no
-            # match but its handler is `encode` (a header filter), so
-            # we skip past it.
+            # Find the FIRST anchor we must splice in front of. Caddy
+            # evaluates routes in array order, so anything we want to
+            # win must sit *earlier* than the routes that would
+            # otherwise swallow the request:
+            #
+            #   1. The IDE catch-all — no `match`, a "real" handler
+            #      (reverse_proxy / file_server / etc). Skipping past
+            #      the leading `encode` block (handler=`encode`) is the
+            #      reason for the handler-set check.
+            #
+            #   2. The `/preview/*` safety-net 404 (handler=
+            #      `static_response`, match has any `/preview*` path).
+            #      Added to Caddyfile.dev to keep unregistered slugs
+            #      from falling through to the IDE SPA (which
+            #      previously caused an iframe-in-iframe recursion bug
+            #      where the GAPT IDE rendered inside the preview
+            #      iframe). Without this branch the dynamic
+            #      `/preview/<slug>` routes would be inserted AFTER
+            #      the 404 and the 404 would always win.
             insert_at = len(arr)
             for i, r in enumerate(arr):
-                if r.get("match"):
-                    continue
                 handlers = [h.get("handler") for h in r.get("handle", [])]
-                if any(
-                    h in {"subroute", "reverse_proxy", "static_response", "file_server"}
+                paths = (r.get("match") or [{}])[0].get("path") or []
+                is_preview_safety_net = any(
+                    isinstance(p, str) and p.startswith("/preview") for p in paths
+                ) and "static_response" in handlers
+                is_ide_catchall = (not r.get("match")) and any(
+                    h in {"subroute", "reverse_proxy", "file_server"}
                     for h in handlers
-                ):
+                )
+                if is_preview_safety_net or is_ide_catchall:
                     insert_at = i
                     break
             for offset, payload in enumerate(payloads):
