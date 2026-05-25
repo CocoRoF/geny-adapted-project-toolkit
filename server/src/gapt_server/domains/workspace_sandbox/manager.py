@@ -60,6 +60,60 @@ logger = structlog.get_logger(__name__)
 DEFAULT_IMAGE = os.environ.get("GAPT_WORKSPACE_SANDBOX_IMAGE", "gapt-workspace:latest")
 
 
+def _resolve_host_claude_paths() -> tuple[str | None, str | None]:
+    """Where the host's claude CLI keeps its state and top-level config.
+
+    The CLI looks at two locations:
+      * ``~/.claude/`` — state directory: OAuth credentials, sessions,
+        history, MCP cache, etc.
+      * ``~/.claude.json`` — top-level config file (separate from the
+        directory).
+
+    Both must be propagated for OAuth to actually work inside the
+    container — mounting just the directory leaves the CLI throwing
+    ``Claude configuration file not found at: /root/.claude.json``.
+
+    Order:
+      1. `GAPT_HOST_CLAUDE_DIR` + `GAPT_HOST_CLAUDE_CONFIG` — explicit
+         operator overrides (server runs under a different uid than
+         the human who logged in to claude).
+      2. `~/.claude` + `~/.claude.json` — claude's defaults, resolved
+         against the server process's `HOME`.
+
+    Each path is returned only if it actually exists; absent ones are
+    None and the caller silently skips the corresponding bind mount.
+    """
+    dir_override = os.environ.get("GAPT_HOST_CLAUDE_DIR", "").strip()
+    cfg_override = os.environ.get("GAPT_HOST_CLAUDE_CONFIG", "").strip()
+
+    dir_path: str | None
+    cfg_path: str | None
+
+    if dir_override:
+        dir_path = dir_override if os.path.isdir(dir_override) else None
+    else:
+        default_dir = os.path.expanduser("~/.claude")
+        dir_path = default_dir if os.path.isdir(default_dir) else None
+
+    if cfg_override:
+        cfg_path = cfg_override if os.path.isfile(cfg_override) else None
+    else:
+        default_cfg = os.path.expanduser("~/.claude.json")
+        cfg_path = default_cfg if os.path.isfile(default_cfg) else None
+
+    return dir_path, cfg_path
+
+
+# Off by default in case the operator doesn't want their personal
+# OAuth token reachable from workspace containers. Solo deployments
+# (the common GAPT case today) flip this on so the agent picks up
+# the same login the user already did on the host — no API-key
+# round-trip required.
+SHARE_HOST_CLAUDE_AUTH = (
+    os.environ.get("GAPT_SHARE_HOST_CLAUDE_AUTH", "1").strip() not in {"", "0", "false", "False"}
+)
+
+
 class WorkspaceSandboxError(RuntimeError):
     """Stable code suffix surfaces to the router layer as HTTP."""
 
@@ -121,6 +175,14 @@ class WorkspaceSandbox:
     worktree_path: str
     image: str
     container_name: str
+    # When set, the host directory is bind-mounted at `/root/.claude`
+    # inside the container so the in-container `claude` CLI shares
+    # the operator's OAuth login (no API key required). Likewise the
+    # `~/.claude.json` config file is mounted at `/root/.claude.json`
+    # — the CLI errors out without both. The mounts are rw because
+    # claude refreshes its tokens in place.
+    host_claude_dir: str | None = None
+    host_claude_config: str | None = None
 
     async def ensure(self) -> None:
         """Idempotent: start the container if it doesn't already
@@ -140,7 +202,17 @@ class WorkspaceSandbox:
         # them otherwise when the user spawns + kills children).
         # `--label gapt.workspace_id=<wid>` lets `docker ps --filter
         # label=...` find every workspace container for ops.
-        rc, _, err = await _run_docker(
+        # Run the container as the host user so files written to the
+        # bind-mounted worktree land with the right ownership, AND so
+        # the claude CLI's safety check (`--dangerously-skip-permissions
+        # cannot be used with root/sudo privileges`) passes — that
+        # flag is what `bypassPermissions` mode translates to, and we
+        # need it for headless agent operation. The gapt-workspace
+        # image ships with `ubuntu` uid 1000 + HOME=/home/ubuntu;
+        # we mount claude config there.
+        uid = os.getuid()
+        gid = os.getgid()
+        argv: list[str] = [
             "run",
             "-d",
             "--init",
@@ -148,8 +220,19 @@ class WorkspaceSandbox:
             self.container_name,
             "--label",
             f"gapt.workspace_id={self.workspace_id}",
+            "--user",
+            f"{uid}:{gid}",
+            "--env",
+            "HOME=/home/ubuntu",
             "-v",
             f"{self.worktree_path}:/workspace",
+        ]
+        if self.host_claude_dir:
+            # rw — the CLI refreshes OAuth tokens in place.
+            argv += ["-v", f"{self.host_claude_dir}:/home/ubuntu/.claude:rw"]
+        if self.host_claude_config:
+            argv += ["-v", f"{self.host_claude_config}:/home/ubuntu/.claude.json:rw"]
+        argv += [
             "-w",
             "/workspace",
             self.image,
@@ -158,8 +241,8 @@ class WorkspaceSandbox:
             "sh",
             "-c",
             "tail -f /dev/null",
-            timeout_s=60.0,
-        )
+        ]
+        rc, _, err = await _run_docker(*argv, timeout_s=60.0)
         if rc != 0:
             raise WorkspaceSandboxError(
                 "workspace_sandbox.start_failed",
@@ -170,6 +253,8 @@ class WorkspaceSandbox:
             workspace_id=self.workspace_id,
             image=self.image,
             container=self.container_name,
+            host_claude_dir=self.host_claude_dir,
+            host_claude_config=self.host_claude_config,
         )
 
     async def exec(
@@ -324,8 +409,19 @@ class WorkspaceSandboxManager:
     layer if you need it per-request."""
 
     image: str = DEFAULT_IMAGE
+    # When `SHARE_HOST_CLAUDE_AUTH` is on, every WorkspaceSandbox
+    # spawned through this manager bind-mounts the host's claude
+    # state dir + config file into the container so the operator's
+    # OAuth login propagates. Computed once at manager construction
+    # time; same value applied to every workspace.
+    host_claude_dir: str | None = field(default=None)
+    host_claude_config: str | None = field(default=None)
     _entries: dict[str, WorkspaceSandbox] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def __post_init__(self) -> None:
+        if SHARE_HOST_CLAUDE_AUTH and self.host_claude_dir is None and self.host_claude_config is None:
+            self.host_claude_dir, self.host_claude_config = _resolve_host_claude_paths()
 
     def get(self, workspace_id: str, worktree_path: str) -> WorkspaceSandbox:
         """Return the handle for `workspace_id`, creating one if
@@ -340,6 +436,8 @@ class WorkspaceSandboxManager:
             worktree_path=worktree_path,
             image=self.image,
             container_name=_container_name(workspace_id),
+            host_claude_dir=self.host_claude_dir,
+            host_claude_config=self.host_claude_config,
         )
         self._entries[workspace_id] = sandbox
         return sandbox
