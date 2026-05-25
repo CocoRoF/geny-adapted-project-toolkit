@@ -20,6 +20,7 @@ import {
   FileTreePanel,
   PanelPlaceholder,
   PreviewPanelDock,
+  ServicesPanelDock,
   TerminalPanelDock,
 } from "@/ide/panels";
 
@@ -61,6 +62,7 @@ const components = {
   ),
   diff: (props: IDockviewPanelProps<{ workspaceId: string }>) => <DiffPanelDock {...props} />,
   terminal: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TerminalPanelDock {...props} />,
+  services: (props: IDockviewPanelProps<{ workspaceId: string }>) => <ServicesPanelDock {...props} />,
   preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
   audit: (props: IDockviewPanelProps<{ projectId: string }>) => <AuditPanelDock {...props} />,
   ci: (props: IDockviewPanelProps<{ projectId: string }>) => <CiPanelDock {...props} />,
@@ -73,6 +75,7 @@ const HYDRATED_PANEL_KINDS = new Set([
   "chat",
   "diff",
   "terminal",
+  "services",
   "preview",
   "audit",
   "ci",

@@ -43,6 +43,7 @@ from gapt_server.domains.sandbox import (
     SysboxBackend,
     make_default_client,
 )
+from gapt_server.domains.services import ServiceRegistry
 from gapt_server.observability.metrics import MetricsRegistry
 from gapt_server.policy.config_loader import PolicyConfigError, load_yaml
 from gapt_server.policy.engine import PolicyEngine
@@ -83,9 +84,11 @@ class AppContainer:
     session_registry: SessionRegistry
     registry: MetricsRegistry
     notifications: NotificationService
+    services: ServiceRegistry
 
     async def aclose(self) -> None:
         await self.session_registry.aclose()
+        await self.services.aclose()
         await self.audit_sink.aclose()
         if self.engine is not None:
             await self.engine.dispose()
@@ -134,9 +137,10 @@ def build_container(
             session_registry=SessionRegistry(),
             registry=MetricsRegistry(),
             notifications=notifications,
+            services=ServiceRegistry(),
         )
 
-    engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
+    engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))  # noqa: E501
     factory = create_session_factory(engine)
     sink: AuditSink
     if audit_sink is not None:
@@ -160,6 +164,7 @@ def build_container(
         session_registry=SessionRegistry(),
         registry=MetricsRegistry(),
         notifications=notifications,
+        services=ServiceRegistry(),
     )
 
 
@@ -255,6 +260,12 @@ def get_notifications(
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> NotificationService:
     return container.notifications
+
+
+def get_service_registry(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> ServiceRegistry:
+    return container.services
 
 
 def attach_container(app: FastAPI, container: AppContainer) -> None:

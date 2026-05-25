@@ -86,6 +86,15 @@ function terminalPanel(id: string = "terminal", title: string = "Terminal") {
   };
 }
 
+function servicesPanel(id: string = "services", title: string = "Services") {
+  return {
+    id,
+    contentComponent: "services",
+    title,
+    params: { workspaceId: "", kind: "services" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -192,7 +201,7 @@ const DEBUG: SerializedDockview = {
               type: "leaf",
               size: 400,
               data: {
-                views: ["terminal", "preview"],
+                views: ["terminal", "services", "preview"],
                 activeView: "terminal",
                 id: "bottom-group",
               },
@@ -206,6 +215,7 @@ const DEBUG: SerializedDockview = {
     tree: treePanel(),
     editor: editorPanel(),
     terminal: terminalPanel(),
+    services: servicesPanel(),
     preview: previewPanel(),
   },
   activeGroup: "editor-group",

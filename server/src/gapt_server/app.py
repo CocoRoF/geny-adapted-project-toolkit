@@ -27,6 +27,7 @@ from gapt_server.routers import (
     preview,
     projects,
     secrets,
+    services,
     sessions,
     terminal,
     workspaces,
@@ -122,6 +123,7 @@ def create_app(
     app.include_router(oneshot.router)
     app.include_router(agent_prefs.router)
     app.include_router(terminal.router)
+    app.include_router(services.router)
     return app
 
 

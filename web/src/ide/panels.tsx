@@ -11,6 +11,7 @@ import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { FileTree } from "@/ide/FileTree";
 import { PreviewPanel } from "@/ide/PreviewPanel";
+import { ServicesPanel } from "@/ide/ServicesPanel";
 import { TerminalPanel } from "@/ide/TerminalPanel";
 
 /** Placeholder panel — used by every leaf that hasn't shipped yet. */
@@ -96,6 +97,16 @@ export function TerminalPanelDock(props: IDockviewPanelProps<{ workspaceId: stri
   return (
     <div data-panel-kind="terminal" className="h-full bg-bg">
       <TerminalPanel workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
+/** Services panel — start/stop/expose long-running dev servers
+ * inside the worktree. */
+export function ServicesPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="services" className="h-full bg-bg">
+      <ServicesPanel workspaceId={props.params.workspaceId} />
     </div>
   );
 }
