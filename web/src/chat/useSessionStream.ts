@@ -90,7 +90,15 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       });
     }
 
-    for (const kind of ["text", "tool_call", "tool_result", "cost", "error", "done"] as const) {
+    for (const kind of [
+      "text",
+      "tool_call",
+      "tool_result",
+      "cost",
+      "error",
+      "done",
+      "step",
+    ] as const) {
       attach(kind);
     }
 

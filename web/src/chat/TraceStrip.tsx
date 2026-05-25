@@ -1,0 +1,160 @@
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+
+import type { SessionStreamEvent } from "@/chat/useSessionStream";
+import { cn } from "@/ui/cn";
+
+interface Props {
+  /** All events in the current session (already merged user+server). */
+  events: SessionStreamEvent[];
+  /** True while the assistant has work in flight. Drives the spinner. */
+  active: boolean;
+}
+
+/** Compact, collapsible "과정" panel — surfaces the pipeline stages
+ * the agent is executing so the user can see *what* is happening
+ * between "send" and "first token". Renders the *current* phase
+ * inline (one line) when collapsed, the full step list when expanded.
+ *
+ * Source events: `kind="step"` payloads from `_maybe_step_payload`
+ * server-side (stage_enter/exit/bypass + api_* + parse + evaluate +
+ * loop + yield + guard + context + ...). Each step has
+ * `{phase, stage, event, summary}`. We render at most the last
+ * `MAX_STEPS` so a long agent loop doesn't push the chat off-screen.
+ */
+const MAX_STEPS = 50;
+
+interface Step {
+  ts: string;
+  phase: string;
+  stage: string;
+  event: string;
+  summary: string;
+}
+
+function toStep(ev: SessionStreamEvent): Step | null {
+  if (ev.kind !== "step") return null;
+  return {
+    ts: ev.ts,
+    phase: asString(ev.data["phase"]),
+    stage: asString(ev.data["stage"]),
+    event: asString(ev.data["event"]),
+    summary: asString(ev.data["summary"]),
+  };
+}
+
+function asString(v: unknown, fallback = ""): string {
+  return typeof v === "string" ? v : fallback;
+}
+
+/** Human-readable label per phase code. */
+const PHASE_LABEL: Record<string, string> = {
+  stage_enter: "단계 진입",
+  stage_exit: "단계 완료",
+  stage_bypass: "단계 건너뜀",
+  api_request: "API 호출",
+  api_response: "API 응답",
+  parse: "파싱",
+  evaluate_start: "평가 시작",
+  evaluate_complete: "평가 완료",
+  loop: "루프",
+  yield: "최종 결과",
+  guard: "가드",
+  context: "컨텍스트",
+  system: "시스템 프롬프트",
+  memory: "메모리",
+  task_registry: "작업 레지스트리",
+  input: "입력 정규화",
+};
+
+/** Phase-bucket → tailwind colour. Picks 1 of 4 tones so the
+ * collapsed strip + expanded list read at a glance. */
+function phaseTone(phase: string): string {
+  if (phase.startsWith("api")) return "text-accent";
+  if (phase.startsWith("evaluate") || phase === "yield") return "text-success";
+  if (phase === "guard") return "text-warn";
+  if (phase === "stage_bypass") return "text-fg-subtle";
+  return "text-fg-muted";
+}
+
+export function TraceStrip({ events, active }: Props) {
+  const [open, setOpen] = useState(false);
+
+  const steps = useMemo<Step[]>(() => {
+    const out: Step[] = [];
+    for (const ev of events) {
+      const s = toStep(ev);
+      if (s) out.push(s);
+    }
+    return out.slice(-MAX_STEPS);
+  }, [events]);
+
+  if (steps.length === 0 && !active) return null;
+
+  // Show the *most recent* step that signals "live activity" — prefer
+  // stage_enter over stage_exit (because we want to say "doing X",
+  // not "did X"). Fall back to the latest step of any kind.
+  const lastLiveStep = (() => {
+    for (let i = steps.length - 1; i >= 0; i -= 1) {
+      const s = steps[i]!;
+      if (s.phase === "stage_enter" || s.phase === "api_request" || s.phase === "evaluate_start") {
+        return s;
+      }
+    }
+    return steps[steps.length - 1] ?? null;
+  })();
+
+  const headLabel = lastLiveStep
+    ? `${PHASE_LABEL[lastLiveStep.phase] ?? lastLiveStep.phase}${
+        lastLiveStep.stage ? ` · ${lastLiveStep.stage}` : ""
+      }${lastLiveStep.summary ? ` · ${lastLiveStep.summary}` : ""}`
+    : "대기 중…";
+
+  return (
+    <div
+      data-testid="trace-strip"
+      className="rounded-md border border-border bg-bg-elevated/60 text-[11px] text-fg-muted"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface-hover"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-fg-subtle" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
+        )}
+        {active ? (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" />
+        ) : (
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle" />
+        )}
+        <span className="truncate">{headLabel}</span>
+        <span className="ml-auto shrink-0 font-mono tabular-nums text-fg-subtle">
+          {steps.length}
+        </span>
+      </button>
+      {open ? (
+        <ol className="max-h-[260px] overflow-y-auto border-t border-border px-2 py-1.5">
+          {steps.map((step, i) => (
+            <li
+              key={`${step.ts}-${i}`}
+              className="flex items-center gap-2 py-0.5 font-mono leading-snug"
+            >
+              <span className="w-16 shrink-0 truncate text-[10px] text-fg-subtle">
+                {step.stage || "·"}
+              </span>
+              <span className={cn("shrink-0", phaseTone(step.phase))}>
+                {PHASE_LABEL[step.phase] ?? step.phase}
+              </span>
+              {step.summary ? (
+                <span className="truncate text-fg-subtle">{step.summary}</span>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+}

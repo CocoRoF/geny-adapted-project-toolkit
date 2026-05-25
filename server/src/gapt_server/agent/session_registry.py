@@ -171,6 +171,7 @@ async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
     """
     async for ev in runtime.pipeline.run_stream(message):
         event_type = getattr(ev, "type", "")
+        stage_name = getattr(ev, "stage", "") or ""
         data: dict[str, object] = dict(getattr(ev, "data", {}) or {})
 
         # Token + cost accounting: token.tracked carries the real numbers.
@@ -186,10 +187,91 @@ async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
             )
             continue
 
+        # Pipeline trace: forward the executor's verbose stage events
+        # as `step` frames so the chat UI's "과정" panel can show
+        # what the agent is doing in near-real-time. This is *separate*
+        # from the chat-text path — text/tool_call still fire below.
+        step_payload = _maybe_step_payload(event_type, stage_name, data)
+        if step_payload is not None:
+            await runtime.bus.publish(SessionEventKind.STEP, step_payload)
+
         kind, payload = _map_pipeline_event(event_type, data)
         if kind is None:
             continue
         await runtime.bus.publish(kind, payload)
+
+
+# Stage events to forward as `step` frames. Whitelisted so we don't
+# spam the UI with internal-only chatter; each entry maps an event
+# type → human-readable phase + which interesting payload field to
+# keep. `summary` is freeform; the front-end uses the `phase` field
+# (one of {stage_enter,stage_exit,stage_bypass,api,parse,evaluate,
+# loop,yield}) to bucket / colour. Missing keys leave the payload
+# minimal.
+_STEP_EVENT_MAP: dict[str, str] = {
+    "stage.enter": "stage_enter",
+    "stage.exit": "stage_exit",
+    "stage.bypass": "stage_bypass",
+    "api.request": "api_request",
+    "api.response": "api_response",
+    "parse.complete": "parse",
+    "evaluate.start": "evaluate_start",
+    "evaluate.complete": "evaluate_complete",
+    "loop.complete": "loop",
+    "yield.complete": "yield",
+    "guard.check": "guard",
+    "context.built": "context",
+    "system.built": "system",
+    "memory.updated": "memory",
+    "task_registry.synced": "task_registry",
+    "input.normalized": "input",
+}
+
+
+def _maybe_step_payload(
+    event_type: str, stage: str, data: dict[str, object]
+) -> dict[str, object] | None:
+    """Translate an executor pipeline event into a compact `step`
+    payload, or return None when the event isn't trace-worthy.
+
+    The UI gets just enough to render one collapsible row per stage
+    crossing — `stage`, `phase`, and a short `summary` derived from
+    the data payload (model name for API requests, tool count for
+    parse, etc.). Heavy data (full text, prompt content) is *not*
+    forwarded — that's the role of `text` / `tool_result`."""
+    phase = _STEP_EVENT_MAP.get(event_type)
+    if phase is None:
+        return None
+    summary = ""
+    if event_type == "api.request":
+        model = data.get("model")
+        provider = data.get("provider")
+        summary = f"{provider} / {model}" if model else ""
+    elif event_type == "api.response":
+        in_t = data.get("input_tokens")
+        out_t = data.get("output_tokens")
+        if in_t is not None or out_t is not None:
+            summary = f"in={in_t} out={out_t}"
+    elif event_type == "parse.complete":
+        tc = data.get("tool_calls", 0)
+        tl = data.get("text_length", 0)
+        summary = f"text={tl}, tools={tc}"
+    elif event_type == "guard.check":
+        if data.get("passed") is False:
+            summary = f"FAIL: {data.get('message', '')}"
+    elif event_type == "yield.complete":
+        summary = f"iters={data.get('iterations', 0)}"
+    elif event_type == "loop.complete":
+        summary = f"iter={data.get('iteration', 0)}"
+    elif event_type == "context.built":
+        summary = f"msgs={data.get('message_count', 0)}"
+
+    return {
+        "phase": phase,
+        "stage": stage,
+        "event": event_type,
+        "summary": summary,
+    }
 
 
 def _update_accumulator(runtime: SessionRuntime, data: dict[str, object]) -> None:

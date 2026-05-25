@@ -17,6 +17,7 @@ import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
 import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
 import { ToolCallCard } from "@/chat/ToolCallCard";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
+import { TraceStrip } from "@/chat/TraceStrip";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
 
 type ChatMode = "plan" | "act";
@@ -377,7 +378,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             data-testid="chat-events"
             className="flex-1 space-y-2 overflow-y-auto px-3 py-3"
           >
-            {mergeAssistantText(allEvents).map((event) => {
+            {mergeAssistantText(allEvents.filter((e) => e.kind !== "step")).map((event) => {
               // The call event renders as a ToolCallCard (with its
               // matched outcome folded in). Result/error events that
               // belong to a paired call are suppressed — they live
@@ -405,6 +406,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               }
               return <EventRow key={event.seq} event={event} workspaceId={workspaceId} />;
             })}
+            <TraceStrip events={allEvents} active={isThinking} />
             {isThinking ? <TypingIndicator /> : null}
           </div>
 

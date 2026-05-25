@@ -21,7 +21,14 @@ export interface CreateSessionInput {
   env_id?: string;
 }
 
-export type SessionEventKind = "text" | "tool_call" | "tool_result" | "cost" | "error" | "done";
+export type SessionEventKind =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "cost"
+  | "error"
+  | "done"
+  | "step";
 
 export interface MessageReplayEntry {
   seq: number;

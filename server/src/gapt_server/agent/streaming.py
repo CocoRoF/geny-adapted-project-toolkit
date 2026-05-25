@@ -38,6 +38,12 @@ class SessionEventKind(StrEnum):
     COST = "cost"
     ERROR = "error"
     DONE = "done"
+    # `step` is a verbose-but-low-volume trace of what the pipeline
+    # is doing right now — stage transitions, API calls, parse
+    # decisions. The chat panel renders these as a collapsible
+    # "과정" subpanel so the user can see the agent's progress
+    # without having to scrape the server log.
+    STEP = "step"
 
 
 @dataclass(frozen=True)
