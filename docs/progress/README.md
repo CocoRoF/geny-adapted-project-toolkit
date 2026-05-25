@@ -12,8 +12,10 @@
 
 ## 현재 진행 중인 cycle
 
-M1.5 완료. M2 진입 전에 사용자 측 dogfood (1 PR end-to-end) + geny-executor
-stage-6 fix 가 필요 — [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) §6.
+M1.5 완료 → **M2 Phase A** ([`../plan/m2_serve_capability.md`](../plan/m2_serve_capability.md))
+시작 대기. Phase A 는 "다른 프로젝트 서빙" 의 inner-loop (Terminal / Logs /
+Port exposure / Watch / Deploy UI / CI trigger) 를 채우는 6 cycle 묶음.
+원래 M2 outline (E1~E6) 은 이 Phase A 가 끝난 *다음* 시작.
 
 ## cycle 상태 인덱스
 

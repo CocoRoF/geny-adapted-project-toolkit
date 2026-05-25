@@ -9,11 +9,20 @@
 
 ## M2 — 멀티 프로젝트 + 워크트리 + UX 다듬기
 
+> **2026-05-25 재정렬**: 본 outline 의 E1~E6 보다 **먼저** Phase A
+> ([`m2_serve_capability.md`](m2_serve_capability.md)) 를 통과해야 한다.
+> 사용자가 IDE 안에서 클론한 프로젝트를 실제로 *띄울 수* 없으면
+> "멀티 프로젝트 운영" 자체가 무의미. Phase A 가 끝난 다음 본 outline 의
+> E1~E6 가 의미를 가진다. 그 시점에 E1~E6 는 다시 재디테일화 예정.
+
 ### 진입 조건
 - M1-E4 완료 (Dogfood + Geny 어댑트 통과)
 - **M1.5 ([`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md)) 완료** —
   1 cycle inner loop (파일 열기 → 편집 → 채팅 → 도구 → diff → apply → PR)
   외부 IDE 없이 통과
+- **M2 Phase A ([`m2_serve_capability.md`](m2_serve_capability.md)) 완료** —
+  Terminal / Logs / Port exposure / Watch / Deploy UI / CI trigger
+  6 시나리오 사용자 측 통과
 - M1 retrospective (analysis/2026XXXX_m1_retrospective.md) 사용자 검토
 - *최소 1주일* 일상 사용 (사용자 본인 P1 페르소나)
 

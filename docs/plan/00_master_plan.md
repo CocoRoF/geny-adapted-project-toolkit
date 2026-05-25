@@ -30,7 +30,8 @@
 | **M0** docs-first / PoC | M0-P1, M0-P2, M0-P3 | **상세** | [`m0/`](m0/) |
 | **M1** 첫 통합 워크플로 | M1-E1, M1-E2, M1-E3, M1-E4 | **상세** | [`m1/`](m1/) |
 | **M1.5** dogfood readiness | 1.5-A ~ 1.5-F | **상세** | [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) |
-| M2 멀티 프로젝트 + UX | (M2 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
+| **M2 Phase A** serving capability | M2-A1 ~ M2-A5 | **상세** | [`m2_serve_capability.md`](m2_serve_capability.md) |
+| M2 Phase B (멀티 프로젝트 / 워크트리 본 cycle / UX 다듬기) | (M2 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
 | M3 멀티 사용자 + OIDC | (M3 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
 | M4 K8s / 엔터프라이즈 | (M4 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
 | M5 자동 운영 / 비즈니스 | (M5 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
