@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Server } from "lucide-react";
+import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Rocket, Server } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -10,12 +10,13 @@ import {
   getWorkspaceCloneLog,
 } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
+import { DeployWorkspace } from "@/ide/DeployWorkspace";
 import { DockviewShell } from "@/ide/DockviewShell";
 import { ServiceWorkspace } from "@/ide/ServiceWorkspace";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 
-type WorkspaceView = "ide" | "service";
+type WorkspaceView = "ide" | "service" | "deploy";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -112,8 +113,14 @@ export function WorkspaceIde() {
             <ViewTab
               active={view === "service"}
               icon={<Server className="h-3.5 w-3.5" />}
-              label={t("workspace.view.service")}
+              label={t("workspace.view.dev")}
               onClick={() => setView("service")}
+            />
+            <ViewTab
+              active={view === "deploy"}
+              icon={<Rocket className="h-3.5 w-3.5" />}
+              label={t("workspace.view.deploy")}
+              onClick={() => setView("deploy")}
             />
           </div>
         ) : null}
@@ -147,8 +154,10 @@ export function WorkspaceIde() {
         <div className="flex-1 overflow-hidden">
           {view === "ide" ? (
             <DockviewShell workspaceId={wid} projectId={pid} />
-          ) : (
+          ) : view === "service" ? (
             <ServiceWorkspace workspaceId={wid} />
+          ) : (
+            <DeployWorkspace projectId={pid} />
           )}
         </div>
       ) : null}

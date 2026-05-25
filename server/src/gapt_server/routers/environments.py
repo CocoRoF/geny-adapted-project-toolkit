@@ -63,6 +63,10 @@ class EnvironmentResponse(EnvironmentPayload):
     id: str
     project_id: str
     created_at: datetime
+    # Last deploy summary — {run_id, status, bound_url, deployed_at,
+    # version} from the most recent successful deploy. Empty dict
+    # when the env has never been deployed.
+    last_run: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_row(cls, row: models.Environment) -> EnvironmentResponse:
@@ -76,6 +80,7 @@ class EnvironmentResponse(EnvironmentPayload):
             secret_refs=list(row.secret_refs or []),
             cost_multiplier=float(row.cost_multiplier),
             hooks=dict(row.hooks or {}),
+            last_run=dict(row.last_run or {}),
             created_at=row.created_at,
         )
 

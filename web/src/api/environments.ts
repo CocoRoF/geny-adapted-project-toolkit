@@ -12,10 +12,19 @@ export interface EnvironmentPayload {
   hooks?: Record<string, unknown>;
 }
 
+export interface EnvironmentLastRun {
+  run_id?: string;
+  status?: string;
+  bound_url?: string | null;
+  version?: string;
+  deployed_at?: string;
+}
+
 export interface EnvironmentResponse extends EnvironmentPayload {
   id: string;
   project_id: string;
   created_at: string;
+  last_run?: EnvironmentLastRun;
 }
 
 export const listEnvironments = (projectId: string) =>
@@ -49,6 +58,7 @@ export interface DeployResultResponse {
   status: string;
   exec_code?: string | null;
   log: string;
+  bound_url?: string | null;
 }
 
 export const triggerDeploy = (envId: string, body: DeployRequestBody) =>
@@ -56,6 +66,82 @@ export const triggerDeploy = (envId: string, body: DeployRequestBody) =>
     method: "POST",
     json: body,
   });
+
+/** SSE wrapper around POST /deploy/stream. Returns an AbortController
+ * the caller can use to cancel mid-flight; pushes parsed frames to
+ * `onFrame` until the stream closes. */
+export interface DeployStreamFrame {
+  type: "log" | "status" | "done";
+  content?: string;
+  status?: string;
+  result?: DeployResultResponse;
+}
+
+export function streamDeploy(
+  envId: string,
+  body: DeployRequestBody,
+  onFrame: (frame: DeployStreamFrame) => void,
+): AbortController {
+  const ctrl = new AbortController();
+  (async () => {
+    try {
+      const resp = await fetch(`/api/environments/${envId}/deploy/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+        credentials: "include",
+      });
+      if (!resp.ok || !resp.body) {
+        onFrame({
+          type: "done",
+          result: {
+            run_id: "",
+            status: "failed",
+            log: `HTTP ${resp.status}: ${await resp.text().catch(() => "")}`,
+            bound_url: null,
+          },
+        });
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) !== -1) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of chunk.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const raw = line.slice(5).trim();
+            if (!raw) continue;
+            try {
+              onFrame(JSON.parse(raw) as DeployStreamFrame);
+            } catch {
+              // Malformed frame — skip silently.
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      onFrame({
+        type: "done",
+        result: {
+          run_id: "",
+          status: "failed",
+          log: String(err),
+          bound_url: null,
+        },
+      });
+    }
+  })();
+  return ctrl;
+}
 
 export interface RollbackRequestBody {
   run_id: string;

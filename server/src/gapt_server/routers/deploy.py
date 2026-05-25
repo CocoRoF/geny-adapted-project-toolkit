@@ -13,15 +13,18 @@ second deploy on the same environment blocks until the first lands.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from gapt_server.container import (
+    get_app_settings,
     get_audit_sink,
     get_db_session,
     get_notifications,
@@ -29,6 +32,8 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.caddy.admin_api import CaddyAdminClient, CaddyHttpTransport
+from gapt_server.domains.caddy.subdomain import SubdomainManager
 from gapt_server.domains.deploy import (
     AcceptAnyCodeVerifier,
     DeployOrchestrator,
@@ -42,6 +47,7 @@ from gapt_server.domains.deploy import (
     TwoFactorVerifier,
     WebhookTarget,
 )
+from gapt_server.settings import Settings  # noqa: TC001
 from gapt_server.domains.notifications import NotificationKind, NotificationService
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.policy.engine import PolicyEngine  # noqa: TC001
@@ -92,6 +98,7 @@ class DeployResultResponse(BaseModel):
     status: str
     exec_code: str | None = None
     log: str = ""
+    bound_url: str | None = None
 
 
 class RollbackResultResponse(BaseModel):
@@ -105,9 +112,24 @@ class RollbackResultResponse(BaseModel):
 # ──────────────────────────────────────────── target factory ──
 
 
-def _build_target(kind: enums.DeployTargetKind) -> DeployTarget:
+def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
+    """Same lazy-construction as `routers/services.py` — when the
+    Caddy admin URL + preview domain are configured, hand a wired
+    manager to the LocalComposeTarget for post-up routing. Otherwise
+    the deploy still works; it just won't auto-expose a URL."""
+    if not settings.caddy_admin_url or not settings.caddy_preview_domain:
+        return None
+    transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
+    client = CaddyAdminClient(transport=transport)
+    return SubdomainManager(client=client, preview_domain=settings.caddy_preview_domain)
+
+
+def _build_target(kind: enums.DeployTargetKind, settings: Settings) -> DeployTarget:
     if kind == enums.DeployTargetKind.LOCAL:
-        return LocalComposeTarget()
+        # LocalComposeTarget gets the SubdomainManager when Caddy is
+        # wired; that's what makes the prod stack externally
+        # reachable after a successful `up -d`.
+        return LocalComposeTarget(subdomain_manager=_build_subdomain_manager(settings))
     if kind == enums.DeployTargetKind.REMOTE_SSH:
         return RemoteSshTarget()
     if kind == enums.DeployTargetKind.WEBHOOK:
@@ -161,6 +183,7 @@ async def trigger_deploy(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
     notifications: NotificationService = Depends(get_notifications),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> DeployResultResponse:
     env_row = await _resolve_env(db, env_id=env_id)
     try:
@@ -168,7 +191,7 @@ async def trigger_deploy(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind)
+    target = _build_target(env_row.deploy_target_kind, settings)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -237,11 +260,28 @@ async def trigger_deploy(
         details={"run_id": result.run_id, "env_id": env_row.id},
     )
 
+    # Persist the last-run summary on the env row so the UI can show
+    # "last deployed X" + "current URL Y" without keeping a separate
+    # runs table around. Only writes on success — failed deploys
+    # leave the prior last_run intact so the UI keeps the last good
+    # state visible.
+    if is_success:
+        env_row.last_run = {
+            "run_id": result.run_id,
+            "status": result.status.value,
+            "bound_url": result.bound_url,
+            "version": payload.version,
+            "deployed_at": datetime.now(tz=UTC).isoformat(),
+        }
+        await db.flush()
+        await db.commit()
+
     return DeployResultResponse(
         run_id=result.run_id,
         status=result.status.value,
         exec_code=result.exec_code,
         log=result.log,
+        bound_url=result.bound_url,
     )
 
 
@@ -258,6 +298,7 @@ async def trigger_rollback(
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> RollbackResultResponse:
     env_row = await _resolve_env(db, env_id=env_id)
     try:
@@ -265,7 +306,7 @@ async def trigger_rollback(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind)
+    target = _build_target(env_row.deploy_target_kind, settings)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -316,6 +357,165 @@ async def trigger_rollback(
         restored_version=result.restored_version,
         exec_code=result.exec_code,
         log=result.log,
+    )
+
+
+# ──────────────────────────────────────────────── live log stream ──
+
+
+@router.post("/{env_id}/deploy/stream")
+async def trigger_deploy_stream(
+    env_id: str,
+    payload: DeployRequestBody,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
+    notifications: NotificationService = Depends(get_notifications),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+) -> StreamingResponse:
+    """Run a deploy and stream progress as Server-Sent Events.
+
+    Three frame kinds the UI listens for:
+      * `{"type": "log", "content": "..."}` — incremental log tail.
+      * `{"type": "status", "status": "running"|"success"|...}`.
+      * `{"type": "done", "result": {run_id, status, bound_url, log,
+        exec_code}}` — final result. Stream closes after.
+
+    Implementation: start `orchestrator.deploy()` as a background task,
+    poll the LocalComposeTarget's internal `_runs` state every 500 ms,
+    emit deltas. Falls back to a single "done" frame for non-Local
+    targets (SSH/webhook return synchronously with no in-progress log
+    state, so streaming would only emit the final result anyway)."""
+    env_row = await _resolve_env(db, env_id=env_id)
+    try:
+        await fetch_project_for(db, actor=user, project_id=env_row.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    target = _build_target(env_row.deploy_target_kind, settings)
+    orchestrator = DeployOrchestrator(
+        policy_engine=policy_engine,
+        target=target,
+        audit_sink=audit_sink,
+        two_factor=two_factor,
+    )
+    compose_cfg = (
+        env_row.deploy_target_config if isinstance(env_row.deploy_target_config, dict) else {}
+    )
+    compose_path = compose_cfg.get("compose_path", "docker-compose.yml")
+    raw_paths = compose_cfg.get("compose_paths") or []
+    compose_paths: list[str] = [p for p in raw_paths if isinstance(p, str)]
+    target_options: dict[str, Any] = {
+        **(env_row.deploy_target_config or {}),
+        **payload.target_options,
+    }
+
+    project_id = env_row.project_id
+    env_name = env_row.name
+    env_id_local = env_row.id
+    actor_id = user.id
+    version = payload.version
+
+    async def stream():  # type: ignore[no-untyped-def]
+        lock = _lock_for(env_id)
+        async with lock:
+            deploy_task = asyncio.create_task(
+                orchestrator.deploy(
+                    actor_id=actor_id,
+                    project_id=project_id,
+                    environment_id=env_id_local,
+                    environment_name=env_name,
+                    version=version,
+                    compose_path=compose_path,
+                    compose_paths=compose_paths,
+                    secret_refs=list(env_row.secret_refs or []),
+                    target_options=target_options,
+                    two_factor_code=payload.two_factor_code,
+                )
+            )
+            try:
+                last_log = ""
+                last_status = ""
+                # Wait briefly for the target to register a run_id (Local
+                # only — other targets don't surface in-progress state).
+                run_id: str | None = None
+                for _ in range(40):  # ~4s ceiling
+                    if isinstance(target, LocalComposeTarget) and target._runs:  # noqa: SLF001
+                        run_id = next(iter(target._runs.keys()))  # noqa: SLF001
+                        break
+                    if deploy_task.done():
+                        break
+                    await asyncio.sleep(0.1)
+
+                while not deploy_task.done():
+                    if (
+                        run_id is not None
+                        and isinstance(target, LocalComposeTarget)
+                        and run_id in target._runs  # noqa: SLF001
+                    ):
+                        state = target._runs[run_id]  # noqa: SLF001
+                        if state.log_tail != last_log:
+                            delta = state.log_tail[len(last_log):]
+                            last_log = state.log_tail
+                            if delta.strip():
+                                yield (
+                                    f"data: {json.dumps({'type': 'log', 'content': delta})}\n\n"
+                                ).encode()
+                        if state.status.value != last_status:
+                            last_status = state.status.value
+                            yield (
+                                f"data: {json.dumps({'type': 'status', 'status': last_status})}\n\n"
+                            ).encode()
+                    await asyncio.sleep(0.5)
+
+                # Capture the final result. Surface any orchestrator-
+                # raised error as a single status=failed frame so the
+                # UI doesn't see a silent close.
+                try:
+                    result = await deploy_task
+                except (TwoFactorError, OrchestratorError, DeployTargetError) as exc:
+                    yield (
+                        f"data: {json.dumps({'type': 'done', 'result': {'status': 'failed', 'exec_code': exc.code, 'log': str(exc), 'run_id': '', 'bound_url': None}})}\n\n"
+                    ).encode()
+                    return
+
+                # Persist last_run + notify (same logic as the sync
+                # POST /deploy endpoint).
+                is_success = result.status == DeployStatusKind.SUCCESS
+                if is_success:
+                    env_row.last_run = {
+                        "run_id": result.run_id,
+                        "status": result.status.value,
+                        "bound_url": result.bound_url,
+                        "version": version,
+                        "deployed_at": datetime.now(tz=UTC).isoformat(),
+                    }
+                    await db.flush()
+                    await db.commit()
+                await notifications.emit(
+                    kind=NotificationKind.DEPLOY_SUCCESS
+                    if is_success
+                    else NotificationKind.DEPLOY_FAILED,
+                    title=f"Deploy {result.status.value}: {env_name}",
+                    body=f"Project={project_id} version={version}",
+                    actor_id=actor_id,
+                    project_id=project_id,
+                    severity="info" if is_success else "error",
+                    details={"run_id": result.run_id, "env_id": env_id_local},
+                )
+                yield (
+                    f"data: {json.dumps({'type': 'done', 'result': {'run_id': result.run_id, 'status': result.status.value, 'bound_url': result.bound_url, 'log': result.log, 'exec_code': result.exec_code}})}\n\n"
+                ).encode()
+            finally:
+                if not deploy_task.done():
+                    deploy_task.cancel()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
 
 

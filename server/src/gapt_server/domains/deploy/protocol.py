@@ -97,6 +97,12 @@ class DeployResult:
     status: DeployStatusKind
     log: str = ""  # combined stdout/stderr tail (truncated)
     exec_code: str | None = None  # only on FAILED / non-success
+    # Public URL the target exposed for the deployed stack, if any.
+    # For LocalComposeTarget this is the Caddy preview subdomain that
+    # was auto-registered after a successful `up -d`. None when no
+    # routing happened (no SubdomainManager wired / no published port
+    # to expose / non-local target without an external URL convention).
+    bound_url: str | None = None
 
 
 @dataclass(frozen=True)

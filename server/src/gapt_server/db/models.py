@@ -231,6 +231,12 @@ class Environment(Base):
         Numeric(8, 4), nullable=False, server_default="1"
     )
     hooks: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Last deploy summary — kept here so the UI can show "last deployed
+    # X, current URL Y" without joining a runs table (none exists yet).
+    # Schema: {run_id, status, bound_url, deployed_at, version}.
+    last_run: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_environments_project_name"),)
