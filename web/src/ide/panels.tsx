@@ -11,9 +11,11 @@ import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { EnvEditor } from "@/ide/EnvEditor";
 import { FileTree } from "@/ide/FileTree";
+import { GitPanel } from "@/ide/GitPanel";
 import { PreviewPanel } from "@/ide/PreviewPanel";
 import { ServicesPanel } from "@/ide/ServicesPanel";
 import { TerminalPanel } from "@/ide/TerminalPanel";
+import { TestRunnerPanel } from "@/ide/TestRunnerPanel";
 
 /** Placeholder panel — used by every leaf that hasn't shipped yet. */
 export function PanelPlaceholder(props: IDockviewPanelProps<{ kind: string }>) {
@@ -129,6 +131,26 @@ export function EnvPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>
   return (
     <div data-panel-kind="env" className="h-full bg-bg-elevated">
       <EnvEditor workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
+/** Test runner — SSE-streamed `<test_command>` output. The default
+ * command comes from introspection (`scripts.test`, `pytest` etc.). */
+export function TestsPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="tests" className="h-full bg-bg-elevated">
+      <TestRunnerPanel workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
+/** Source-control panel — git status + commit + push + PR. All
+ * git operations run inside the workspace sandbox. */
+export function GitPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="git" className="h-full bg-bg-elevated">
+      <GitPanel workspaceId={props.params.workspaceId} />
     </div>
   );
 }

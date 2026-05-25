@@ -20,6 +20,7 @@ from gapt_server.routers import (
     cost,
     deploy,
     environments,
+    git,
     health,
     introspect,
     metrics,
@@ -32,6 +33,7 @@ from gapt_server.routers import (
     services,
     sessions,
     terminal,
+    tests,
     webhooks,
     workspaces,
 )
@@ -150,6 +152,8 @@ def create_app(
     app.include_router(environments.by_id)
     app.include_router(introspect.router)
     app.include_router(webhooks.router)
+    app.include_router(tests.router)
+    app.include_router(git.router)
     return app
 
 

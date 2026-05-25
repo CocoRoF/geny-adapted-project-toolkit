@@ -22,6 +22,7 @@ export interface IntrospectResponse {
   dev_port: number | null;
   dev_cwd: string | null;
   dev_env_hints: Record<string, string>;
+  test_command: string | null;
   prod_compose_path: string | null;
   prod_compose_paths: string[];
   prod_primary_service: string | null;

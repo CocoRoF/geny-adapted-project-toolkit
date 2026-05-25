@@ -5,7 +5,7 @@ import {
   type IDockviewPanelProps,
   type SerializedDockview,
 } from "dockview";
-import { GitCompare, KeyRound, RotateCcw, TerminalSquare } from "lucide-react";
+import { FlaskConical, GitBranch, GitCompare, KeyRound, RotateCcw, TerminalSquare } from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
@@ -15,8 +15,10 @@ import {
   EDITOR_GROUP_ID,
   EDITOR_ID,
   ENV_ID,
+  GIT_ID,
   IDE_BASELINE,
   TERMINAL_ID,
+  TESTS_ID,
 } from "@/ide/layouts";
 import {
   ChatPanelDock,
@@ -24,8 +26,10 @@ import {
   EditorPanel,
   EnvPanelDock,
   FileTreePanel,
+  GitPanelDock,
   PanelPlaceholder,
   TerminalPanelDock,
+  TestsPanelDock,
 } from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
@@ -66,9 +70,13 @@ const components = {
   diff: (props: IDockviewPanelProps<{ workspaceId: string }>) => <DiffPanelDock {...props} />,
   terminal: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TerminalPanelDock {...props} />,
   env: (props: IDockviewPanelProps<{ workspaceId: string }>) => <EnvPanelDock {...props} />,
+  tests: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TestsPanelDock {...props} />,
+  git: (props: IDockviewPanelProps<{ workspaceId: string }>) => <GitPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "diff", "terminal", "env"]);
+const HYDRATED_PANEL_KINDS = new Set([
+  "tree", "editor", "chat", "diff", "terminal", "env", "tests", "git",
+]);
 
 interface Props {
   workspaceId: string;
@@ -124,7 +132,14 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
    * Terminal lands as a horizontal split below the editor group;
    * Diff + Env land as extra tabs on the editor group. */
   const togglePanel = useCallback(
-    (id: typeof TERMINAL_ID | typeof DIFF_ID | typeof ENV_ID) => {
+    (
+      id:
+        | typeof TERMINAL_ID
+        | typeof DIFF_ID
+        | typeof ENV_ID
+        | typeof TESTS_ID
+        | typeof GIT_ID,
+    ) => {
       const api = apiRef.current;
       if (!api) return;
       const existing = api.getPanel(id);
@@ -156,6 +171,22 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
           params: { workspaceId, kind: "env" },
           position: { referenceGroup: EDITOR_GROUP_ID, direction: "within" },
         });
+      } else if (id === TESTS_ID) {
+        api.addPanel({
+          id: TESTS_ID,
+          component: "tests",
+          title: t("ide.panel.tests"),
+          params: { workspaceId, kind: "tests" },
+          position: { referenceGroup: EDITOR_GROUP_ID, direction: "below" },
+        });
+      } else if (id === GIT_ID) {
+        api.addPanel({
+          id: GIT_ID,
+          component: "git",
+          title: t("ide.panel.git"),
+          params: { workspaceId, kind: "git" },
+          position: { referenceGroup: EDITOR_GROUP_ID, direction: "within" },
+        });
       }
     },
     [t, workspaceId],
@@ -178,6 +209,16 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
       if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
         e.preventDefault();
         togglePanel(ENV_ID);
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+        e.preventDefault();
+        togglePanel(TESTS_ID);
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        e.preventDefault();
+        togglePanel(GIT_ID);
         return;
       }
       if (e.ctrlKey && e.shiftKey && (e.key === "R" || e.key === "r")) {
@@ -209,6 +250,20 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
     section: t("palette.section.layout"),
     shortcut: "⌃⇧E",
     run: () => togglePanel(ENV_ID),
+  });
+  usePaletteAction({
+    id: "ide.tests.toggle",
+    title: t("ide.toolbar.tests"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⇧T",
+    run: () => togglePanel(TESTS_ID),
+  });
+  usePaletteAction({
+    id: "ide.git.toggle",
+    title: t("ide.toolbar.git"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⇧S",
+    run: () => togglePanel(GIT_ID),
   });
   usePaletteAction({
     id: "ide.layout.reset",
@@ -244,6 +299,8 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
           onToggleTerminal={() => togglePanel(TERMINAL_ID)}
           onToggleDiff={() => togglePanel(DIFF_ID)}
           onToggleEnv={() => togglePanel(ENV_ID)}
+          onToggleTests={() => togglePanel(TESTS_ID)}
+          onToggleGit={() => togglePanel(GIT_ID)}
           onReset={() => {
             window.localStorage.removeItem(storageKey(workspaceId));
             loadBaseline();
@@ -265,11 +322,15 @@ function Toolbar({
   onToggleTerminal,
   onToggleDiff,
   onToggleEnv,
+  onToggleTests,
+  onToggleGit,
   onReset,
 }: {
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
   onToggleEnv: () => void;
+  onToggleTests: () => void;
+  onToggleGit: () => void;
   onReset: () => void;
 }) {
   const { t } = useI18n();
@@ -299,6 +360,20 @@ function Toolbar({
         {t("ide.toolbar.env")}
         <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
           Ctrl+Shift+E
+        </kbd>
+      </button>
+      <button type="button" className={btnCls} onClick={onToggleTests} title="Ctrl+Shift+T">
+        <FlaskConical className="h-3.5 w-3.5" />
+        {t("ide.toolbar.tests")}
+        <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
+          Ctrl+Shift+T
+        </kbd>
+      </button>
+      <button type="button" className={btnCls} onClick={onToggleGit} title="Ctrl+Shift+S">
+        <GitBranch className="h-3.5 w-3.5" />
+        {t("ide.toolbar.git")}
+        <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
+          Ctrl+Shift+S
         </kbd>
       </button>
       <button

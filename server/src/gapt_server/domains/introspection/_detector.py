@@ -95,6 +95,7 @@ def _merge(
         dev_port=first(a.dev_port, b.dev_port),  # type: ignore[arg-type]
         dev_cwd=first(a.dev_cwd, b.dev_cwd),  # type: ignore[arg-type]
         dev_env_hints={**a.dev_env_hints, **b.dev_env_hints},
+        test_command=first(a.test_command, b.test_command),  # type: ignore[arg-type]
         prod_compose_path=first(a.prod_compose_path, b.prod_compose_path),  # type: ignore[arg-type]
         prod_compose_paths=merge_list(a.prod_compose_paths, b.prod_compose_paths),
         prod_primary_service=first(a.prod_primary_service, b.prod_primary_service),  # type: ignore[arg-type]

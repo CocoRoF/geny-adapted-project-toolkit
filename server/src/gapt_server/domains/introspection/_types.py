@@ -66,6 +66,12 @@ class ProjectIntrospection:
     # the UI shows them as a starter template the user edits.
     dev_env_hints: dict[str, str] = field(default_factory=dict)
 
+    # ─── tests ───
+    # The command to run the project's test suite. Examples:
+    # "npm test", "pytest", "vitest run". Same `dev_cwd` applies —
+    # the test runner panel wraps `cd <dev_cwd> && <test_command>`.
+    test_command: str | None = None
+
     # ─── prod mode (compose-based) ───
     # Most projects with a real prod story use compose. We pick the
     # first compose file we see; multi-file overrides land in

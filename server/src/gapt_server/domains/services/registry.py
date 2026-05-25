@@ -287,6 +287,21 @@ class ServiceRegistry:
         service_env = dict(env or {})
         if port is not None and "PORT" not in service_env:
             service_env["PORT"] = str(port)
+        # File-watcher polling — bind-mounted worktrees over docker's
+        # overlay sometimes drop inotify events, especially on Linux
+        # hosts with cgroup v2 or remote-fs storage. The frameworks
+        # below honour these env vars (or one of them, depending on
+        # version) and fall back to scheduled re-scans. Setting them
+        # unconditionally is harmless — non-watcher processes ignore
+        # unknown env. Caller can override by passing their own
+        # values in `env=`.
+        for k, v in (
+            ("CHOKIDAR_USEPOLLING", "1"),   # nodemon, ts-node-dev, vite older versions
+            ("WATCHPACK_POLLING", "true"),  # webpack-dev-server, next dev (webpack)
+            ("WATCHPACK_POLLING_INTERVAL", "500"),
+            ("NEXT_WEBPACK_USEPOLLING", "1"),  # explicit Next.js hook
+        ):
+            service_env.setdefault(k, v)
 
         sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
         try:

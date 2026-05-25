@@ -105,11 +105,16 @@ def detect_node(root: Path) -> ProjectIntrospection:
     if needs_basepath and basepath_file:
         notes.append(f"basePath-capable framework — config at {basepath_file}")
 
+    test_cmd = _parse_test_script(pkg.get("scripts", {}))
+    if test_cmd:
+        notes.append(f"test command: `{test_cmd}`")
+
     return ProjectIntrospection(
         kind=kind,
         dev_command=dev_cmd,
         dev_port=dev_port,
         dev_cwd=cwd_rel,
+        test_command=test_cmd,
         needs_basepath=needs_basepath,
         basepath_config_file=basepath_file,
         confidence=0.7 if dev_cmd else 0.4,
@@ -194,6 +199,22 @@ def _parse_dev_script(scripts: Any) -> tuple[str | None, int | None]:
     full = f"npm run {chosen_name}"
     port = _extract_port(chosen_cmd)
     return full, port
+
+
+def _parse_test_script(scripts: Any) -> str | None:
+    """Return `npm test` style command for the project's test suite.
+
+    Looks for `test`, `test:unit`, or `vitest`-equivalent. Many
+    packages don't ship a `test` script; we return None in that case
+    rather than guessing — the user can hand-fill if needed.
+    """
+    if not isinstance(scripts, dict):
+        return None
+    for name in ("test", "test:unit", "test:run", "vitest"):
+        cmd = scripts.get(name)
+        if isinstance(cmd, str) and cmd.strip():
+            return f"npm run {name}" if name != "vitest" else "npm run vitest"
+    return None
 
 
 _PORT_PATTERNS = (

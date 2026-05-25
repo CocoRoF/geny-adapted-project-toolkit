@@ -61,6 +61,7 @@ class IntrospectResponse(BaseModel):
     dev_port: int | None = None
     dev_cwd: str | None = None
     dev_env_hints: dict[str, str] = Field(default_factory=dict)
+    test_command: str | None = None
     prod_compose_path: str | None = None
     prod_compose_paths: list[str] = Field(default_factory=list)
     prod_primary_service: str | None = None
@@ -133,6 +134,7 @@ def _to_response(result: ProjectIntrospection) -> IntrospectResponse:
         dev_port=result.dev_port,
         dev_cwd=result.dev_cwd,
         dev_env_hints=result.dev_env_hints,
+        test_command=result.test_command,
         prod_compose_path=result.prod_compose_path,
         prod_compose_paths=result.prod_compose_paths,
         prod_primary_service=result.prod_primary_service,

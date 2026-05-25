@@ -64,11 +64,27 @@ def detect_python(root: Path) -> ProjectIntrospection:
         f"dev command (suggested): `{default_cmd}`",
     ]
 
+    # pytest is the de facto standard. Django ships its own runner
+    # via `manage.py test`. Either way: when the framework dep is
+    # in `deps` we set the obvious command. The user edits later.
+    test_cmd: str | None = None
+    if "pytest" in deps:
+        test_cmd = "pytest"
+    elif kind == ProjectKind.DJANGO:
+        test_cmd = "python manage.py test"
+    elif kind == ProjectKind.FLASK or kind == ProjectKind.FASTAPI:
+        # FastAPI / Flask projects without pytest usually still
+        # have it; default to pytest and let it fail loudly if not.
+        test_cmd = "pytest"
+    if test_cmd:
+        notes.append(f"test command (suggested): `{test_cmd}`")
+
     return ProjectIntrospection(
         kind=kind,
         dev_command=default_cmd,
         dev_port=default_port,
         dev_cwd=cwd_rel,
+        test_command=test_cmd,
         confidence=0.6,
         notes=notes,
         sources=[source.name],
