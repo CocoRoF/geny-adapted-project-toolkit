@@ -12,10 +12,9 @@
 
 ## 현재 진행 중인 cycle
 
-M1.5 완료 → **M2 Phase A** ([`../plan/m2_serve_capability.md`](../plan/m2_serve_capability.md))
-시작 대기. Phase A 는 "다른 프로젝트 서빙" 의 inner-loop (Terminal / Logs /
-Port exposure / Watch / Deploy UI / CI trigger) 를 채우는 6 cycle 묶음.
-원래 M2 outline (E1~E6) 은 이 Phase A 가 끝난 *다음* 시작.
+**M2 Phase A 완료** (assistant-side). 사용자 dogfood 대기.
+[`m2_serve_capability.md`](m2_serve_capability.md) §6 의 7단계
+시나리오 통과 후 → 원래 M2 outline (E1~E6) 재디테일화.
 
 ## cycle 상태 인덱스
 
@@ -30,5 +29,6 @@ Port exposure / Watch / Deploy UI / CI trigger) 를 채우는 6 cycle 묶음.
 | M1-E4 | done | [`m1/e4_integration_dogfood_geny.md`](m1/e4_integration_dogfood_geny.md) |
 | M1 post-close hardening | done | [`m1/_post_close_hardening.md`](m1/_post_close_hardening.md) |
 | **M1.5** | done (assistant-side); user dogfood pending | [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) |
+| **M2 Phase A** (serve capability) | done (assistant-side); user dogfood pending | [`m2_serve_capability.md`](m2_serve_capability.md) |
 
 진입 조건은 [`../plan/dependencies.md`](../plan/dependencies.md).

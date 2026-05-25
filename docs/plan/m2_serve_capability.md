@@ -1,7 +1,9 @@
 # M2 — Serving Capability (편집기 + Agent → 실제 서비스 운영)
 
-> Status: planned
+> Status: **done** (Phase A assistant-side) — see [`../progress/m2_serve_capability.md`](../progress/m2_serve_capability.md).
+>   User-driven dogfood pending.
 > Estimated: 3~4 작업주 / 6~9 PR (Phase A 만; Phase B/C 는 별도)
+> Actual: 1 session / 4 feat PRs (M2-A1~A4) + 1 docs PR (M2-A5)
 > Depends on: M1.5 close (`m1_5_dogfood_readiness.md`)
 > Blocks: M2-E1 (멀티 프로젝트 동시 운영) 이후 epic 전부
 > Relates to: [`../07_cicd_and_preview.md`](../07_cicd_and_preview.md),
