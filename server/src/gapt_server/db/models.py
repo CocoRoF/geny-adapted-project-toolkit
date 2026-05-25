@@ -121,6 +121,12 @@ class UserAgentPrefs(Base):
     max_iterations: Mapped[int | None] = mapped_column(Integer)
     cost_budget_usd: Mapped[float | None] = mapped_column(Numeric(10, 4))
     timeout_s: Mapped[int | None] = mapped_column(Integer)
+    # CLI permission mode — controls whether spawned `claude_code_cli`
+    # auto-approves tool calls. Values: "bypassPermissions" (default —
+    # allow all), "acceptEdits" (allow file edits, prompt for risky),
+    # "default" (prompt for everything — almost certainly will hang in
+    # our non-interactive flow), "plan" (read-only). Null = server default.
+    permission_mode: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

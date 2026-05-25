@@ -1,5 +1,7 @@
 import { apiFetch, apiGet } from "@/api/client";
 
+export type PermissionMode = "bypassPermissions" | "acceptEdits" | "default" | "plan";
+
 export interface AgentPrefs {
   id?: string | null;
   model?: string | null;
@@ -7,6 +9,7 @@ export interface AgentPrefs {
   max_iterations?: number | null;
   cost_budget_usd?: number | null;
   timeout_s?: number | null;
+  permission_mode?: PermissionMode | null;
   updated_at?: string | null;
 }
 

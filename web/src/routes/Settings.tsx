@@ -344,10 +344,18 @@ interface AgentPrefsFormState {
   max_iterations: string;
   cost_budget_usd: string;
   timeout_s: string;
+  permission_mode: string;
 }
 
 function emptyForm(): AgentPrefsFormState {
-  return { model: "", max_tokens: "", max_iterations: "", cost_budget_usd: "", timeout_s: "" };
+  return {
+    model: "",
+    max_tokens: "",
+    max_iterations: "",
+    cost_budget_usd: "",
+    timeout_s: "",
+    permission_mode: "",
+  };
 }
 
 function prefsToForm(prefs: AgentPrefs): AgentPrefsFormState {
@@ -357,6 +365,7 @@ function prefsToForm(prefs: AgentPrefs): AgentPrefsFormState {
     max_iterations: prefs.max_iterations != null ? String(prefs.max_iterations) : "",
     cost_budget_usd: prefs.cost_budget_usd != null ? String(prefs.cost_budget_usd) : "",
     timeout_s: prefs.timeout_s != null ? String(prefs.timeout_s) : "",
+    permission_mode: prefs.permission_mode ?? "",
   };
 }
 
@@ -367,14 +376,28 @@ function formToPayload(form: AgentPrefsFormState): AgentPrefs {
     const n = Number(t);
     return Number.isFinite(n) ? n : null;
   };
+  const pm = form.permission_mode.trim();
   return {
     model: form.model.trim() === "" ? null : form.model.trim(),
     max_tokens: numOrNull(form.max_tokens),
     max_iterations: numOrNull(form.max_iterations),
     cost_budget_usd: numOrNull(form.cost_budget_usd),
     timeout_s: numOrNull(form.timeout_s),
+    permission_mode: pm === "" ? null : (pm as AgentPrefs["permission_mode"]),
   };
 }
+
+// CLI permission modes — controls whether spawned `claude` CLI auto-
+// approves tool calls. "bypassPermissions" is the only one that
+// behaves correctly in our headless flow; the others either prompt
+// (CLI hangs) or restrict tool use.
+const PERMISSION_CHOICES: { value: string; label: string }[] = [
+  { value: "", label: "Server default (bypassPermissions — recommended)" },
+  { value: "bypassPermissions", label: "bypassPermissions — auto-allow every tool call" },
+  { value: "acceptEdits", label: "acceptEdits — auto-allow edits, prompt for risky" },
+  { value: "plan", label: "plan — read-only mode (no edits, no Bash)" },
+  { value: "default", label: "default — prompt every call (likely to hang headless)" },
+];
 
 function AgentPrefsCard() {
   const [form, setForm] = useState<AgentPrefsFormState>(emptyForm);
@@ -507,6 +530,22 @@ function AgentPrefsCard() {
               onChange={onField("timeout_s")}
               disabled={busy}
             />
+          </Field>
+          <Field
+            label="Permission mode"
+            hint="Controls whether the spawned Claude CLI auto-approves tool calls (Read / Edit / Bash). The default is the only mode that works headless — the others either prompt (and hang) or restrict tool use."
+          >
+            <Select
+              value={form.permission_mode}
+              onChange={onField("permission_mode")}
+              disabled={busy}
+            >
+              {PERMISSION_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
         {err ? <p className="text-[12px] text-danger">{err}</p> : null}

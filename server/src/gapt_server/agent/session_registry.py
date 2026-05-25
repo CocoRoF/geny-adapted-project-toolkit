@@ -195,6 +195,22 @@ async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
         if step_payload is not None:
             await runtime.bus.publish(SessionEventKind.STEP, step_payload)
 
+        # CLI-side tool invocations (Bash / Read / Edit / ...) come
+        # through the `tool.invoke` event our executor_patches shim
+        # adds. Forward each one as a TOOL_CALL frame too so the
+        # ToolCallCard renders inline in the chat.
+        if event_type == "tool.invoke":
+            await runtime.bus.publish(
+                SessionEventKind.TOOL_CALL,
+                {
+                    "tool": data.get("name"),
+                    "tool_name": data.get("name"),
+                    "tool_use_id": data.get("tool_use_id"),
+                    "input": data.get("input"),
+                },
+            )
+            continue
+
         kind, payload = _map_pipeline_event(event_type, data)
         if kind is None:
             continue
@@ -225,6 +241,11 @@ _STEP_EVENT_MAP: dict[str, str] = {
     "memory.updated": "memory",
     "task_registry.synced": "task_registry",
     "input.normalized": "input",
+    # `tool.invoke` is added by our executor_patches shim. It fires
+    # whenever the CLI runs a tool internally (Bash / Read / Edit /
+    # ...) — gives the user agentic-flow visibility.
+    "tool.invoke": "tool_invoke",
+    "thinking.delta": "thinking",
 }
 
 
@@ -265,6 +286,30 @@ def _maybe_step_payload(
         summary = f"iter={data.get('iteration', 0)}"
     elif event_type == "context.built":
         summary = f"msgs={data.get('message_count', 0)}"
+    elif event_type == "tool.invoke":
+        name = data.get("name", "tool")
+        # The first input arg gives the most useful hint at a glance —
+        # `Bash {command: "ls -la"}` becomes "Bash · ls -la".
+        input_payload = data.get("input")
+        hint = ""
+        if isinstance(input_payload, dict) and input_payload:
+            # Prefer keys users care about, else the first value.
+            for key in ("command", "file_path", "path", "pattern", "query", "url"):
+                if key in input_payload:
+                    hint = str(input_payload[key])
+                    break
+            if not hint:
+                first_val = next(iter(input_payload.values()))
+                hint = str(first_val)
+        if hint:
+            # Trim long shell commands so the trace row stays one line.
+            hint_short = hint if len(hint) <= 60 else hint[:57] + "…"
+            summary = f"{name} · {hint_short}"
+        else:
+            summary = str(name)
+    elif event_type == "thinking.delta":
+        # No summary; the presence of the row is the signal.
+        summary = ""
 
     return {
         "phase": phase,

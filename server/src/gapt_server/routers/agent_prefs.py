@@ -38,6 +38,9 @@ router = APIRouter(prefix="/api/agent-prefs", tags=["agent-prefs"])
 # Lower bounds keep obvious abuse out (0 tokens = no response,
 # negative budget = nonsense). The upper bounds line up with what
 # `claude_code_cli` / `anthropic` will tolerate without 4xx-ing.
+_PERMISSION_MODES = {"bypassPermissions", "acceptEdits", "default", "plan"}
+
+
 class AgentPrefsPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -46,6 +49,13 @@ class AgentPrefsPayload(BaseModel):
     max_iterations: int | None = Field(default=None, ge=1, le=100)
     cost_budget_usd: float | None = Field(default=None, ge=0.0, le=1_000.0)
     timeout_s: int | None = Field(default=None, ge=1, le=600)
+    permission_mode: str | None = Field(default=None, max_length=40)
+
+    def model_post_init(self, _: object) -> None:  # noqa: D401 — pydantic hook
+        if self.permission_mode is not None and self.permission_mode not in _PERMISSION_MODES:
+            raise ValueError(
+                f"permission_mode must be one of {sorted(_PERMISSION_MODES)}; got {self.permission_mode!r}"
+            )
 
 
 class AgentPrefsResponse(AgentPrefsPayload):
@@ -63,6 +73,7 @@ def _row_to_response(row: models.UserAgentPrefs | None) -> AgentPrefsResponse:
         max_iterations=row.max_iterations,
         cost_budget_usd=float(row.cost_budget_usd) if row.cost_budget_usd is not None else None,
         timeout_s=row.timeout_s,
+        permission_mode=row.permission_mode,
         updated_at=row.updated_at,
     )
 
@@ -99,6 +110,7 @@ async def put_prefs(
         "max_iterations": payload.max_iterations,
         "cost_budget_usd": payload.cost_budget_usd,
         "timeout_s": payload.timeout_s,
+        "permission_mode": payload.permission_mode,
     }
     stmt = pg_insert(models.UserAgentPrefs).values(**values)
     stmt = stmt.on_conflict_do_update(
@@ -109,6 +121,7 @@ async def put_prefs(
             "max_iterations": payload.max_iterations,
             "cost_budget_usd": payload.cost_budget_usd,
             "timeout_s": payload.timeout_s,
+            "permission_mode": payload.permission_mode,
         },
     )
     await db.execute(stmt)

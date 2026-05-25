@@ -118,7 +118,7 @@ def build_claude_code_cli_creds(
     settings_path: str | None = None,
     timeout_s: float = 180.0,
     max_budget_usd: float | None = 1.0,
-    default_permission_mode: str = "default",
+    default_permission_mode: str = "bypassPermissions",
     extra_args: tuple[str, ...] = (),
 ) -> ProviderCredentials:
     """`ProviderCredentials` for the `claude_code_cli` provider.
@@ -127,6 +127,16 @@ def build_claude_code_cli_creds(
     automatically on the OAuth subscription path (see
     reference_geny_executor_v2_1). When ANTHROPIC_API_KEY is set,
     the CLI uses that key instead of the host's OAuth credentials.
+
+    `default_permission_mode="bypassPermissions"` makes the spawned
+    CLI auto-allow every tool call (Read / Edit / Bash / Grep / etc.)
+    without prompting. Without this, the CLI runs in `default` mode
+    which prompts for each call → in our headless context the
+    prompts auto-reject → the agent silently degrades to "just chat,
+    no tools." The user reported "agent doesn't seem to look at any
+    files" — that was the cause. Users who want stricter behaviour
+    can override per-user via the `permission_mode` agent pref
+    (`acceptEdits` / `default` / `plan`).
     """
     extras: dict[str, Any] = {
         "bare_mode": True,
@@ -162,6 +172,7 @@ async def build_for_session(
     settings_path: str | None = None,
     timeout_s: float = 180.0,
     max_budget_usd: float | None = 1.0,
+    permission_mode: str = "bypassPermissions",
 ) -> CredentialBundle:
     """Build a `CredentialBundle` for an agent session.
 
@@ -205,6 +216,7 @@ async def build_for_session(
         settings_path=settings_path,
         timeout_s=timeout_s,
         max_budget_usd=max_budget_usd,
+        default_permission_mode=permission_mode,
     )
 
     # SDK providers — project secret_ref takes precedence; otherwise

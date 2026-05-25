@@ -6,7 +6,14 @@ along with a `CredentialBundle`. Sessions, credentials, and
 ProjectAwareSessionManager land in later cycles (2.2 / 2.8 / 2.10).
 """
 
-from gapt_server.agent.credentials import (
+# Apply executor monkey-patches before anything else imports the
+# executor's stage classes. See `executor_patches.py` for the rationale
+# (temporary shim; remove once the upstream patch ships).
+from gapt_server.agent.executor_patches import apply_executor_patches as _apply_patches
+
+_apply_patches()
+
+from gapt_server.agent.credentials import (  # noqa: E402 — must run after patch
     SecretRefMap,
     build_claude_code_cli_creds,
     build_for_session,

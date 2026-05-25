@@ -111,6 +111,10 @@ class ProjectAwareSessionManager:
         # 2) Build credentials. If the caller didn't supply a vault we
         #    still bootstrap claude_code_cli (host OAuth path); SDK
         #    provider keys are skipped.
+        prefs = await _load_user_prefs(db, user_id=user.id)
+        permission_mode = (
+            prefs.permission_mode if prefs and prefs.permission_mode else "bypassPermissions"
+        )
         if vault is None:
             bundle = CredentialBundle(
                 by_provider={
@@ -121,6 +125,7 @@ class ProjectAwareSessionManager:
                         else ws.worktree_path,
                         mcp_config=mcp_config,
                         settings_path=settings_path,
+                        default_permission_mode=permission_mode,
                     )
                 }
             )
@@ -135,11 +140,12 @@ class ProjectAwareSessionManager:
                 ),
                 mcp_config=mcp_config,
                 settings_path=settings_path,
+                permission_mode=permission_mode,
             )
 
         # 3) Instantiate the pipeline against the chosen manifest.
         env_manifest_id = env_id or self.default_manifest_id
-        overrides = await _load_overrides(db, user_id=user.id)
+        overrides = _prefs_to_overrides(prefs)
         try:
             pipeline = await self.env_service.instantiate_pipeline(
                 env_manifest_id, credentials=bundle, overrides=overrides
@@ -224,6 +230,10 @@ class ProjectAwareSessionManager:
             )
         ws = await self._fetch_workspace(db, row.workspace_id)
 
+        prefs = await _load_user_prefs(db, user_id=user.id)
+        permission_mode = (
+            prefs.permission_mode if prefs and prefs.permission_mode else "bypassPermissions"
+        )
         if vault is None:
             bundle = CredentialBundle(
                 by_provider={
@@ -232,6 +242,7 @@ class ProjectAwareSessionManager:
                         workspace_root=ws.worktree_path,
                         mcp_config=mcp_config,
                         settings_path=settings_path,
+                        default_permission_mode=permission_mode,
                     )
                 }
             )
@@ -243,9 +254,10 @@ class ProjectAwareSessionManager:
                 workspace_root=ws.worktree_path,
                 mcp_config=mcp_config,
                 settings_path=settings_path,
+                permission_mode=permission_mode,
             )
 
-        overrides = await _load_overrides(db, user_id=user.id)
+        overrides = _prefs_to_overrides(prefs)
         try:
             pipeline = await self.env_service.instantiate_pipeline(
                 row.env_manifest_id, credentials=bundle, overrides=overrides
@@ -335,27 +347,42 @@ class ProjectAwareSessionManager:
         return await _ensure_project_membership_impl(db, user_id=user_id, project_id=project_id)
 
 
-async def _load_overrides(
+async def _load_user_prefs(
     db: AsyncSession, *, user_id: str
-) -> ManifestOverrides | None:
-    """Read the user's `user_agent_prefs` row and produce a
-    `ManifestOverrides` for the env_service to patch the manifest
-    with. Returns None when nothing is configured — env_service will
-    skip the patch step and use the bundled manifest verbatim."""
-    row = (
+) -> models.UserAgentPrefs | None:
+    """Fetch the user's `user_agent_prefs` row (or None when unset).
+    Used twice per session boot — once to feed `permission_mode`
+    into `build_for_session` (creds layer), once to derive
+    `ManifestOverrides` for the env_service (manifest layer)."""
+    return (
         await db.execute(
             select(models.UserAgentPrefs).where(models.UserAgentPrefs.user_id == user_id)
         )
     ).scalar_one_or_none()
-    if row is None:
+
+
+def _prefs_to_overrides(
+    prefs: models.UserAgentPrefs | None,
+) -> ManifestOverrides | None:
+    """Project the prefs row onto the subset of fields that patch the
+    manifest. `permission_mode` is *not* part of the manifest — it's
+    a credentials concern handled by `build_for_session`."""
+    if prefs is None:
         return None
     return ManifestOverrides(
-        model=row.model,
-        max_tokens=row.max_tokens,
-        max_iterations=row.max_iterations,
-        cost_budget_usd=float(row.cost_budget_usd) if row.cost_budget_usd is not None else None,
-        timeout_s=row.timeout_s,
+        model=prefs.model,
+        max_tokens=prefs.max_tokens,
+        max_iterations=prefs.max_iterations,
+        cost_budget_usd=float(prefs.cost_budget_usd) if prefs.cost_budget_usd is not None else None,
+        timeout_s=prefs.timeout_s,
     )
+
+
+# Kept for back-compat with any external callers.
+async def _load_overrides(
+    db: AsyncSession, *, user_id: str
+) -> ManifestOverrides | None:
+    return _prefs_to_overrides(await _load_user_prefs(db, user_id=user_id))
 
 
 async def _ensure_project_membership_impl(
