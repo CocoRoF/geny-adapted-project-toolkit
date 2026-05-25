@@ -11,6 +11,7 @@ import { FileEditor } from "@/ide/Editor";
 import { useEditorBus } from "@/ide/editor-store";
 import { FileTree } from "@/ide/FileTree";
 import { PreviewPanel } from "@/ide/PreviewPanel";
+import { TerminalPanel } from "@/ide/TerminalPanel";
 
 /** Placeholder panel — used by every leaf that hasn't shipped yet. */
 export function PanelPlaceholder(props: IDockviewPanelProps<{ kind: string }>) {
@@ -85,6 +86,16 @@ export function ChatPanelDock(
   return (
     <div data-panel-kind="chat" className="h-full bg-bg-elevated">
       <ChatPanel projectId={props.params.projectId} workspaceId={props.params.workspaceId} />
+    </div>
+  );
+}
+
+/** Terminal panel — bidirectional PTY shell into the workspace
+ * worktree (mock backend: host PTY rooted in the worktree dir). */
+export function TerminalPanelDock(props: IDockviewPanelProps<{ workspaceId: string }>) {
+  return (
+    <div data-panel-kind="terminal" className="h-full bg-bg">
+      <TerminalPanel workspaceId={props.params.workspaceId} />
     </div>
   );
 }

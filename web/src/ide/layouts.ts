@@ -77,6 +77,15 @@ function diffPanel(id: string = "diff", title: string = "Diff") {
   };
 }
 
+function terminalPanel(id: string = "terminal", title: string = "Terminal") {
+  return {
+    id,
+    contentComponent: "terminal",
+    title,
+    params: { workspaceId: "", kind: "terminal" },
+  };
+}
+
 const FOCUS: SerializedDockview = {
   grid: {
     height: 1000,
@@ -196,7 +205,7 @@ const DEBUG: SerializedDockview = {
   panels: {
     tree: treePanel(),
     editor: editorPanel(),
-    terminal: placeholder("terminal", "Terminal", "terminal"),
+    terminal: terminalPanel(),
     preview: previewPanel(),
   },
   activeGroup: "editor-group",

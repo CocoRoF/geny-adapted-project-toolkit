@@ -20,6 +20,7 @@ import {
   FileTreePanel,
   PanelPlaceholder,
   PreviewPanelDock,
+  TerminalPanelDock,
 } from "@/ide/panels";
 
 import "dockview/dist/styles/dockview.css";
@@ -59,6 +60,7 @@ const components = {
     <ChatPanelDock {...props} />
   ),
   diff: (props: IDockviewPanelProps<{ workspaceId: string }>) => <DiffPanelDock {...props} />,
+  terminal: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TerminalPanelDock {...props} />,
   preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
   audit: (props: IDockviewPanelProps<{ projectId: string }>) => <AuditPanelDock {...props} />,
   ci: (props: IDockviewPanelProps<{ projectId: string }>) => <CiPanelDock {...props} />,
@@ -70,6 +72,7 @@ const HYDRATED_PANEL_KINDS = new Set([
   "editor",
   "chat",
   "diff",
+  "terminal",
   "preview",
   "audit",
   "ci",
