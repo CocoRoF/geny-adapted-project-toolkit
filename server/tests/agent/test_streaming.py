@@ -229,10 +229,14 @@ async def test_stream_replays_then_streams_live() -> None:
     await asyncio.wait_for(reader_task, timeout=1.0)
 
     decoded = [f.decode() for f in frames]
-    # Past + live + done — 3 frames, in order.
+    # Past + live + done + retry hint.
     assert any("past" in f for f in decoded)
     assert any("live" in f for f in decoded)
-    assert decoded[-1].startswith("event: done\n")
+    assert any(f.startswith("event: done\n") for f in decoded)
+    # Terminal events emit a 1-day retry hint so the browser's
+    # EventSource does not auto-reconnect (which would surface as a
+    # spurious "Stream interrupted" banner in the chat panel).
+    assert decoded[-1] == "retry: 86400000\n\n"
 
 
 @pytest.mark.asyncio

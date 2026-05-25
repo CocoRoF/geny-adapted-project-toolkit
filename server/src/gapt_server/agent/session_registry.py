@@ -331,6 +331,14 @@ async def stream_to_async_iter(
                 return
             yield event.to_sse()
             if event.kind in {SessionEventKind.DONE, SessionEventKind.ERROR}:
+                # Tell the browser's EventSource to back off (1 day)
+                # before retrying. Without this hint the auto-reconnect
+                # fires immediately after we close, triggering an
+                # `onerror` flash in the UI even though the close was
+                # expected. The browser still reconnects when the user
+                # invokes again — useSessionStream rebuilds the URL on
+                # the next state change.
+                yield b"retry: 86400000\n\n"
                 return
     finally:
         await runtime.bus.unsubscribe(queue)

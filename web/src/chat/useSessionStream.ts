@@ -34,6 +34,14 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   const [errorReason, setErrorReason] = useState<string | null>(null);
   const lastSeqRef = useRef(0);
   const sourceRef = useRef<EventSource | null>(null);
+  // When did we last see a terminal `done`/`error` frame?  The server
+  // closes the SSE socket cleanly after a terminal frame; the browser
+  // fires `onerror` for that close and we'd otherwise show a noisy
+  // "Stream interrupted — attempting to reconnect." banner *even
+  // though the session ended successfully*. We treat any onerror
+  // within this grace window as the expected close, not an interruption.
+  const lastTerminalAtRef = useRef(0);
+  const TERMINAL_GRACE_MS = 3000;
 
   const reset = useCallback(() => {
     setEvents([]);
@@ -67,6 +75,9 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
           data = { raw: event.data };
         }
         if (Number.isFinite(seq)) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+        if (kind === "done" || kind === "error") {
+          lastTerminalAtRef.current = Date.now();
+        }
         setEvents((prev) => [
           ...prev,
           {
@@ -90,9 +101,16 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
     source.onerror = () => {
       // EventSource transitions to readyState=2 (CLOSED) for terminal
       // errors and readyState=0 (CONNECTING) when it's about to retry.
-      // The browser handles reconnects for us; we just surface state.
-      if (source.readyState === EventSource.CLOSED) {
+      // We only ever paint the noisy "Stream interrupted" banner for
+      // *unexpected* drops — after a `done`/`error` frame the server
+      // closes the socket on purpose and the browser fires onerror
+      // as part of that close. The 3 s grace window keeps the
+      // post-success UI clean.
+      const sinceTerminalMs = Date.now() - lastTerminalAtRef.current;
+      const expectedClose = sinceTerminalMs < TERMINAL_GRACE_MS;
+      if (source.readyState === EventSource.CLOSED || expectedClose) {
         setStatus("closed");
+        setErrorReason(null);
       } else {
         setStatus("error");
         setErrorReason("Stream interrupted — attempting to reconnect.");

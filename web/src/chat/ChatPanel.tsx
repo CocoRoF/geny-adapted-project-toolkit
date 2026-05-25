@@ -581,14 +581,15 @@ function EventRow({ event, workspaceId }: EventRowProps) {
     // used `{chunk: ...}`. Accept both.
     const text = asString(event.data["text"]) || asString(event.data["chunk"]);
     const isUser = asString(event.data["role"]) === "user";
+    if (!text) return null;
     return (
       <div
         data-event-kind="text"
         data-role={isUser ? "user" : "assistant"}
         className={
           isUser
-            ? "ml-auto max-w-[85%] rounded-md bg-accent/15 px-3 py-2"
-            : "max-w-[95%] rounded-md bg-bg-elevated px-3 py-2"
+            ? "ml-auto max-w-[85%] rounded-md border border-accent/30 bg-accent/15 px-3 py-2"
+            : "mr-auto max-w-[95%] rounded-md border border-border bg-bg-subtle px-3 py-2"
         }
       >
         <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
@@ -631,28 +632,26 @@ function EventRow({ event, workspaceId }: EventRowProps) {
     );
   }
   if (kind === "error") {
-    const code = asString(event.data["exec_code"], "error");
-    const reason = asString(event.data["reason"]);
+    const code = asString(event.data["exec_code"]);
+    const reason = asString(event.data["reason"]) || asString(event.data["message"]);
+    // Suppress empty errors — a frame with no useful payload is noise.
+    // The `Stream interrupted` banner (driven by useSessionStream's
+    // status) is the right signal for transport-layer trouble.
+    if (!code && !reason) return null;
     return (
       <div
         role="alert"
         data-event-kind="error"
         className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
       >
-        <strong className="font-mono">{code}</strong>
-        {reason ? <span className="ml-2">{reason}</span> : null}
+        {code ? <strong className="font-mono">{code}</strong> : null}
+        {reason ? <span className={code ? "ml-2" : ""}>{reason}</span> : null}
       </div>
     );
   }
-  if (kind === "done") {
-    return (
-      <div
-        data-event-kind="done"
-        className="text-center text-[11px] uppercase tracking-wide text-fg-subtle"
-      >
-        {t("chat.done")}
-      </div>
-    );
-  }
+  // DONE events are noise in the chat panel — the TypingIndicator
+  // disappearance and the cost-header update already convey "the
+  // assistant is finished." Suppress the centred "완료." row.
+  if (kind === "done") return null;
   return null;
 }
