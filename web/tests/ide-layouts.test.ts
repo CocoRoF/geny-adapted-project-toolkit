@@ -1,39 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { ALL_PRESETS, PRESETS } from "@/ide/layouts";
+import {
+  CHAT_ID,
+  EDITOR_GROUP_ID,
+  EDITOR_ID,
+  IDE_BASELINE,
+  TREE_ID,
+} from "@/ide/layouts";
 
-describe("dockview layout presets", () => {
-  it("exposes 4 named presets", () => {
-    expect(ALL_PRESETS).toEqual(["focus", "review", "debug", "custom"]);
+describe("IDE baseline layout", () => {
+  it("contains exactly the three baseline panels (tree, editor, chat)", () => {
+    expect(Object.keys(IDE_BASELINE.panels).sort()).toEqual(
+      [CHAT_ID, EDITOR_ID, TREE_ID].sort(),
+    );
   });
 
-  it("each preset is a SerializedDockview with at least one panel", () => {
-    for (const name of ALL_PRESETS) {
-      const layout = PRESETS[name];
-      expect(layout.grid).toBeDefined();
-      expect(Object.keys(layout.panels).length).toBeGreaterThan(0);
+  it("starts focused on the editor group", () => {
+    expect(IDE_BASELINE.activeGroup).toBe(EDITOR_GROUP_ID);
+  });
+
+  it("each baseline panel references a real component kind", () => {
+    for (const panel of Object.values(IDE_BASELINE.panels)) {
+      expect(typeof panel.contentComponent).toBe("string");
     }
-  });
-
-  it("focus preset has the canonical [tree | editor | chat] layout", () => {
-    const layout = PRESETS.focus;
-    expect(Object.keys(layout.panels).sort()).toEqual(["chat", "editor", "tree"]);
-  });
-
-  it("review preset surfaces the diff panel + audit panel", () => {
-    const layout = PRESETS.review;
-    expect(Object.keys(layout.panels)).toContain("diff");
-    // Cycle 3.13 swapped the "CI" slot for the audit panel because
-    // CI streaming is deferred to M1-E4. The slot stays available.
-    expect(Object.keys(layout.panels)).toContain("audit");
-  });
-
-  it("debug preset surfaces the terminal panel", () => {
-    const layout = PRESETS.debug;
-    expect(Object.keys(layout.panels)).toContain("terminal");
-  });
-
-  it("custom preset defaults to a focus baseline", () => {
-    expect(PRESETS.custom).toBe(PRESETS.focus);
   });
 });

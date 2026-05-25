@@ -1,26 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type DockviewApi,
   DockviewReact,
   type IDockviewPanelProps,
   type SerializedDockview,
 } from "dockview";
+import { GitCompare, RotateCcw, TerminalSquare } from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
 import { EditorBus, EditorBusContext } from "@/ide/editor-store";
-import { ALL_PRESETS, type LayoutPreset, PRESETS } from "@/ide/layouts";
 import {
-  AuditPanelDock,
+  DIFF_ID,
+  EDITOR_GROUP_ID,
+  EDITOR_ID,
+  IDE_BASELINE,
+  TERMINAL_ID,
+} from "@/ide/layouts";
+import {
   ChatPanelDock,
-  CiPanelDock,
-  CostPanelDock,
   DiffPanelDock,
   EditorPanel,
   FileTreePanel,
   PanelPlaceholder,
-  PreviewPanelDock,
-  ServicesPanelDock,
   TerminalPanelDock,
 } from "@/ide/panels";
 
@@ -33,8 +35,7 @@ function storageKey(workspaceId: string): string {
 }
 
 interface StoredLayout {
-  preset: LayoutPreset;
-  customSnapshot?: SerializedDockview;
+  snapshot?: SerializedDockview;
 }
 
 function readStored(workspaceId: string): StoredLayout | null {
@@ -62,102 +63,31 @@ const components = {
   ),
   diff: (props: IDockviewPanelProps<{ workspaceId: string }>) => <DiffPanelDock {...props} />,
   terminal: (props: IDockviewPanelProps<{ workspaceId: string }>) => <TerminalPanelDock {...props} />,
-  services: (props: IDockviewPanelProps<{ workspaceId: string }>) => <ServicesPanelDock {...props} />,
-  preview: (props: IDockviewPanelProps<{ workspaceId: string }>) => <PreviewPanelDock {...props} />,
-  audit: (props: IDockviewPanelProps<{ projectId: string }>) => <AuditPanelDock {...props} />,
-  ci: (props: IDockviewPanelProps<{ projectId: string }>) => <CiPanelDock {...props} />,
-  cost: (props: IDockviewPanelProps<Record<string, never>>) => <CostPanelDock {...props} />,
 };
 
-const HYDRATED_PANEL_KINDS = new Set([
-  "tree",
-  "editor",
-  "chat",
-  "diff",
-  "terminal",
-  "services",
-  "preview",
-  "audit",
-  "ci",
-  "cost",
-]);
+const HYDRATED_PANEL_KINDS = new Set(["tree", "editor", "chat", "diff", "terminal"]);
 
 interface Props {
   workspaceId: string;
   projectId: string;
 }
 
-/** Full IDE shell: dockview component + preset switcher. Real panel
- * implementations land in Cycles 3.4–3.10; today every leaf renders
- * `<PanelPlaceholder>`. */
+/** IDE shell. One baseline layout (Tree | Editor | Chat); auxiliary
+ * panels (Terminal, Diff) toggle in/out via the toolbar or keyboard
+ * shortcuts. The user's drag-and-resize state is persisted per
+ * workspace so reload picks up where they left off. */
 export function DockviewShell({ workspaceId, projectId }: Props) {
   const { t } = useI18n();
-  const initial = useMemo<StoredLayout>(
-    () => readStored(workspaceId) ?? { preset: "focus" },
-    [workspaceId],
-  );
-  const [preset, setPreset] = useState<LayoutPreset>(initial.preset);
   const apiRef = useRef<DockviewApi | null>(null);
   // Each shell instance owns its own bus — multiple workspaces in
   // the same browser session don't cross-talk.
   const editorBus = useMemo(() => new EditorBus(), []);
 
-  // Register the layout presets as palette actions while this shell
-  // is mounted. Plan §3.11 calls for Ctrl+Alt+1..4 shortcuts as
-  // well — registered alongside.
-  usePaletteAction({
-    id: "ide.layout.focus",
-    title: t("ide.layout.focus"),
-    section: t("palette.section.layout"),
-    shortcut: "⌃⌥1",
-    run: () => setPreset("focus"),
-  });
-  usePaletteAction({
-    id: "ide.layout.review",
-    title: t("ide.layout.review"),
-    section: t("palette.section.layout"),
-    shortcut: "⌃⌥2",
-    run: () => setPreset("review"),
-  });
-  usePaletteAction({
-    id: "ide.layout.debug",
-    title: t("ide.layout.debug"),
-    section: t("palette.section.layout"),
-    shortcut: "⌃⌥3",
-    run: () => setPreset("debug"),
-  });
-  usePaletteAction({
-    id: "ide.layout.custom",
-    title: t("ide.layout.custom"),
-    section: t("palette.section.layout"),
-    shortcut: "⌃⌥4",
-    run: () => setPreset("custom"),
-  });
-
-  // Ctrl+Alt+1..4 maps to the four presets.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || !e.altKey) return;
-      const idx = ["1", "2", "3", "4"].indexOf(e.key);
-      if (idx < 0) return;
-      e.preventDefault();
-      setPreset(ALL_PRESETS[idx] ?? "focus");
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  const loadPreset = useCallback(
-    (next: LayoutPreset) => {
-      const api = apiRef.current;
-      if (!api) return;
-      const stored = readStored(workspaceId);
-      const layout =
-        next === "custom" && stored?.customSnapshot ? stored.customSnapshot : PRESETS[next];
-      // Inject the live workspaceId into every panel that needs it
-      // (`tree`, `editor`) — the layout snapshot was authored with a
-      // blank id placeholder.
-      const hydrated = {
+  /** Inject the live workspaceId/projectId into a serialized snapshot's
+   * panel params so the components don't render against blank ids. */
+  const hydrate = useCallback(
+    (layout: SerializedDockview): SerializedDockview => {
+      return {
         ...layout,
         panels: Object.fromEntries(
           Object.entries(layout.panels).map(([id, panel]) => {
@@ -177,71 +107,124 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
           }),
         ),
       };
-      api.fromJSON(hydrated);
     },
     [workspaceId, projectId],
   );
 
-  // Apply preset whenever it changes (after the dockview has mounted).
+  const loadBaseline = useCallback(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    api.fromJSON(hydrate(IDE_BASELINE));
+  }, [hydrate]);
+
+  /** Add (or focus, if already mounted) one of the toggle-able panels.
+   * Terminal lands as a horizontal split below the editor group;
+   * Diff lands as an extra tab on the editor group. */
+  const togglePanel = useCallback(
+    (id: typeof TERMINAL_ID | typeof DIFF_ID) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const existing = api.getPanel(id);
+      if (existing) {
+        existing.api.close();
+        return;
+      }
+      if (id === TERMINAL_ID) {
+        api.addPanel({
+          id: TERMINAL_ID,
+          component: "terminal",
+          title: t("ide.panel.terminal"),
+          params: { workspaceId, kind: "terminal" },
+          position: { referenceGroup: EDITOR_GROUP_ID, direction: "below" },
+        });
+      } else if (id === DIFF_ID) {
+        api.addPanel({
+          id: DIFF_ID,
+          component: "diff",
+          title: t("ide.panel.diff"),
+          params: { workspaceId, kind: "diff" },
+          position: { referenceGroup: EDITOR_GROUP_ID, direction: "within" },
+        });
+      }
+    },
+    [t, workspaceId],
+  );
+
+  // Keyboard shortcuts. Ctrl+`  → terminal (Cursor/VS Code parity).
+  // Ctrl+Shift+G → diff. Ctrl+Shift+R → reset layout.
   useEffect(() => {
-    loadPreset(preset);
-    writeStored(workspaceId, {
-      preset,
-      // Preserve any previously captured custom snapshot.
-      ...(readStored(workspaceId)?.customSnapshot
-        ? { customSnapshot: readStored(workspaceId)!.customSnapshot }
-        : {}),
-    });
-  }, [preset, workspaceId, loadPreset]);
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "`" || e.code === "Backquote")) {
+        e.preventDefault();
+        togglePanel(TERMINAL_ID);
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "G" || e.key === "g")) {
+        e.preventDefault();
+        togglePanel(DIFF_ID);
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "R" || e.key === "r")) {
+        e.preventDefault();
+        loadBaseline();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [togglePanel, loadBaseline]);
+
+  usePaletteAction({
+    id: "ide.terminal.toggle",
+    title: t("ide.toolbar.terminal"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃`",
+    run: () => togglePanel(TERMINAL_ID),
+  });
+  usePaletteAction({
+    id: "ide.diff.toggle",
+    title: t("ide.toolbar.diff"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⇧G",
+    run: () => togglePanel(DIFF_ID),
+  });
+  usePaletteAction({
+    id: "ide.layout.reset",
+    title: t("ide.layout.reset"),
+    section: t("palette.section.layout"),
+    shortcut: "⌃⇧R",
+    run: () => loadBaseline(),
+  });
 
   function onReady(event: { api: DockviewApi }): void {
     apiRef.current = event.api;
-    loadPreset(preset);
+    // Restore the user's previously-shaped layout when present; fall
+    // back to the baseline. If the stored snapshot is missing the
+    // editor panel (somehow corrupted / closed), treat as fresh.
+    const stored = readStored(workspaceId);
+    const candidate = stored?.snapshot;
+    const usable =
+      candidate &&
+      candidate.panels &&
+      Object.keys(candidate.panels).some((id) => id === EDITOR_ID);
+    event.api.fromJSON(hydrate(usable ? (candidate as SerializedDockview) : IDE_BASELINE));
 
-    // Persist user-driven changes to the custom snapshot so the
-    // `custom` preset survives reload.
+    // Save dragged / toggled state so reload survives.
     event.api.onDidLayoutChange(() => {
-      const snapshot = event.api.toJSON();
-      writeStored(workspaceId, { preset: "custom", customSnapshot: snapshot });
-      setPreset((current) => (current === "custom" ? current : "custom"));
+      writeStored(workspaceId, { snapshot: event.api.toJSON() });
     });
   }
 
   return (
     <EditorBusContext.Provider value={editorBus}>
       <div className="flex h-full flex-col">
-        <nav
-          className="flex shrink-0 items-center gap-1 border-b border-border bg-bg-elevated px-3 py-1.5"
-          aria-label="layout presets"
-        >
-          <span className="mr-2 text-[10px] uppercase tracking-wide text-fg-muted">Layout</span>
-          {ALL_PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              aria-pressed={preset === p}
-              onClick={() => setPreset(p)}
-              className={
-                preset === p
-                  ? "rounded-md bg-bg px-2.5 py-1 text-[12px] font-medium text-fg shadow-sm"
-                  : "rounded-md px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
-              }
-            >
-              {t(`ide.layout.${p}`)}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              window.localStorage.removeItem(storageKey(workspaceId));
-              setPreset("focus");
-              loadPreset("focus");
-            }}
-            className="ml-auto rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
-          >
-            {t("ide.layout.reset")}
-          </button>
-        </nav>
+        <Toolbar
+          onToggleTerminal={() => togglePanel(TERMINAL_ID)}
+          onToggleDiff={() => togglePanel(DIFF_ID)}
+          onReset={() => {
+            window.localStorage.removeItem(storageKey(workspaceId));
+            loadBaseline();
+          }}
+        />
         <div className="flex-1 overflow-hidden">
           <DockviewReact
             components={components}
@@ -251,5 +234,49 @@ export function DockviewShell({ workspaceId, projectId }: Props) {
         </div>
       </div>
     </EditorBusContext.Provider>
+  );
+}
+
+function Toolbar({
+  onToggleTerminal,
+  onToggleDiff,
+  onReset,
+}: {
+  onToggleTerminal: () => void;
+  onToggleDiff: () => void;
+  onReset: () => void;
+}) {
+  const { t } = useI18n();
+  const btnCls =
+    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg";
+  return (
+    <nav
+      className="flex shrink-0 items-center gap-1 border-b border-border bg-bg-elevated px-3 py-1.5"
+      aria-label="ide toolbar"
+    >
+      <button type="button" className={btnCls} onClick={onToggleTerminal} title="Ctrl+`">
+        <TerminalSquare className="h-3.5 w-3.5" />
+        {t("ide.toolbar.terminal")}
+        <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
+          Ctrl+`
+        </kbd>
+      </button>
+      <button type="button" className={btnCls} onClick={onToggleDiff} title="Ctrl+Shift+G">
+        <GitCompare className="h-3.5 w-3.5" />
+        {t("ide.toolbar.diff")}
+        <kbd className="ml-1 hidden rounded bg-bg px-1 text-[10px] text-fg-subtle sm:inline">
+          Ctrl+Shift+G
+        </kbd>
+      </button>
+      <button
+        type="button"
+        className={`${btnCls} ml-auto`}
+        onClick={onReset}
+        title="Ctrl+Shift+R"
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        {t("ide.layout.reset")}
+      </button>
+    </nav>
   );
 }

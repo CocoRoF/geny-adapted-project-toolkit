@@ -109,11 +109,12 @@ export const ko: Record<keyof typeof en, string> = {
   "nav.settings": "설정",
 
   // --- IDE shell ---
-  "ide.layout.focus": "포커스",
-  "ide.layout.review": "리뷰",
-  "ide.layout.debug": "디버그",
-  "ide.layout.custom": "사용자 정의",
   "ide.layout.reset": "레이아웃 초기화",
+  "ide.toolbar.terminal": "터미널",
+  "ide.toolbar.diff": "Diff",
+  "workspace.view.aria_label": "워크스페이스 뷰",
+  "workspace.view.ide": "IDE",
+  "workspace.view.service": "서비스",
   "ide.panel.tree": "파일",
   "ide.panel.editor": "에디터",
   "ide.panel.diff": "Diff",

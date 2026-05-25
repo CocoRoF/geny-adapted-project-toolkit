@@ -110,11 +110,12 @@ export const en = {
   "nav.settings": "Settings",
 
   // --- IDE shell ---
-  "ide.layout.focus": "Focus",
-  "ide.layout.review": "Review",
-  "ide.layout.debug": "Debug",
-  "ide.layout.custom": "Custom",
   "ide.layout.reset": "Reset layout",
+  "ide.toolbar.terminal": "Terminal",
+  "ide.toolbar.diff": "Diff",
+  "workspace.view.aria_label": "Workspace view",
+  "workspace.view.ide": "IDE",
+  "workspace.view.service": "Service",
   "ide.panel.tree": "Files",
   "ide.panel.editor": "Editor",
   "ide.panel.diff": "Diff",

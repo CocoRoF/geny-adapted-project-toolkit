@@ -1,101 +1,58 @@
 import { Orientation, type SerializedDockview } from "dockview";
 
-/** Layout preset library.
+/** Single baseline IDE layout — Tree | Editor | Chat.
  *
- * Each preset is a `SerializedDockview` snapshot dockview can load
- * via `api.fromJSON(layout)`. Three built-in presets (Focus / Review
- * / Debug) per plan §3.3 + a `custom` slot the user populates by
- * dragging — `custom` defaults to Focus until the user changes it.
- *
- * Panel ids match what `PanelPlaceholder` expects: `tree`, `editor`,
- * `diff`, `terminal`, `preview`, `chat`, `ci`. */
+ * The previous preset library (Focus / Review / Debug / Custom) is
+ * gone: switching presets reshuffled the workspace on every click and
+ * the user was correct that it was friction without payoff. Everything
+ * else (Terminal / Diff / Audit / etc.) is opened on demand via the
+ * toolbar buttons or keyboard shortcuts driven by `DockviewShell`,
+ * not by swapping the whole snapshot. */
 
-export type LayoutPreset = "focus" | "review" | "debug" | "custom";
+export const TREE_ID = "tree";
+export const EDITOR_ID = "editor";
+export const CHAT_ID = "chat";
+export const TERMINAL_ID = "terminal";
+export const DIFF_ID = "diff";
 
-function placeholder(id: string, title: string, kind: string) {
+export const EDITOR_GROUP_ID = "editor-group";
+export const TREE_GROUP_ID = "tree-group";
+export const CHAT_GROUP_ID = "chat-group";
+
+/** Hydration-time replacement happens in `DockviewShell` — `params`
+ * here is just a placeholder so the serialized snapshot validates. */
+function treePanel() {
   return {
-    id,
-    contentComponent: "placeholder",
-    title,
-    params: { kind },
-  };
-}
-
-function treePanel(id: string = "tree", title: string = "Files") {
-  return {
-    id,
+    id: TREE_ID,
     contentComponent: "tree",
-    title,
-    // `workspaceId` is injected at runtime by `DockviewShell`'s
-    // `loadPreset` — `params` here is a placeholder we never persist.
+    title: "Files",
     params: { workspaceId: "", kind: "tree" },
   };
 }
 
-function editorPanel(id: string = "editor", title: string = "Editor") {
+function editorPanel() {
   return {
-    id,
+    id: EDITOR_ID,
     contentComponent: "editor",
-    title,
+    title: "Editor",
     params: { workspaceId: "", kind: "editor" },
   };
 }
 
-function chatPanel(id: string = "chat", title: string = "Chat") {
+function chatPanel() {
   return {
-    id,
+    id: CHAT_ID,
     contentComponent: "chat",
-    title,
+    title: "Chat",
     params: { workspaceId: "", projectId: "", kind: "chat" },
   };
 }
 
-function previewPanel(id: string = "preview", title: string = "Preview") {
-  return {
-    id,
-    contentComponent: "preview",
-    title,
-    params: { workspaceId: "", kind: "preview" },
-  };
-}
-
-function auditPanel(id: string = "audit", title: string = "Audit") {
-  return {
-    id,
-    contentComponent: "audit",
-    title,
-    params: { projectId: "", kind: "audit" },
-  };
-}
-
-function diffPanel(id: string = "diff", title: string = "Diff") {
-  return {
-    id,
-    contentComponent: "diff",
-    title,
-    params: { workspaceId: "", kind: "diff" },
-  };
-}
-
-function terminalPanel(id: string = "terminal", title: string = "Terminal") {
-  return {
-    id,
-    contentComponent: "terminal",
-    title,
-    params: { workspaceId: "", kind: "terminal" },
-  };
-}
-
-function servicesPanel(id: string = "services", title: string = "Services") {
-  return {
-    id,
-    contentComponent: "services",
-    title,
-    params: { workspaceId: "", kind: "services" },
-  };
-}
-
-const FOCUS: SerializedDockview = {
+/** The single baseline layout the IDE loads on first visit + after
+ * the user resets. Three groups left → right: file tree, editor,
+ * chat. Terminal / Diff get inserted on demand into their own groups
+ * via `api.addPanel`. */
+export const IDE_BASELINE: SerializedDockview = {
   grid: {
     height: 1000,
     width: 1600,
@@ -106,126 +63,25 @@ const FOCUS: SerializedDockview = {
         {
           type: "leaf",
           size: 220,
-          data: { views: ["tree"], activeView: "tree", id: "tree-group" },
+          data: { views: [TREE_ID], activeView: TREE_ID, id: TREE_GROUP_ID },
         },
         {
           type: "leaf",
           size: 880,
-          data: { views: ["editor"], activeView: "editor", id: "editor-group" },
+          data: { views: [EDITOR_ID], activeView: EDITOR_ID, id: EDITOR_GROUP_ID },
         },
         {
           type: "leaf",
           size: 500,
-          data: { views: ["chat"], activeView: "chat", id: "chat-group" },
+          data: { views: [CHAT_ID], activeView: CHAT_ID, id: CHAT_GROUP_ID },
         },
       ],
     },
   },
   panels: {
-    tree: treePanel(),
-    editor: editorPanel(),
-    chat: chatPanel(),
+    [TREE_ID]: treePanel(),
+    [EDITOR_ID]: editorPanel(),
+    [CHAT_ID]: chatPanel(),
   },
-  activeGroup: "editor-group",
+  activeGroup: EDITOR_GROUP_ID,
 };
-
-const REVIEW: SerializedDockview = {
-  grid: {
-    height: 1000,
-    width: 1600,
-    orientation: Orientation.HORIZONTAL,
-    root: {
-      type: "branch",
-      data: [
-        {
-          type: "leaf",
-          size: 220,
-          data: { views: ["tree"], activeView: "tree", id: "tree-group" },
-        },
-        {
-          type: "leaf",
-          size: 880,
-          data: { views: ["diff"], activeView: "diff", id: "diff-group" },
-        },
-        {
-          type: "branch",
-          size: 500,
-          data: [
-            {
-              type: "leaf",
-              size: 600,
-              data: { views: ["chat"], activeView: "chat", id: "chat-group" },
-            },
-            {
-              type: "leaf",
-              size: 400,
-              data: { views: ["audit"], activeView: "audit", id: "audit-group" },
-            },
-          ],
-        },
-      ],
-    },
-  },
-  panels: {
-    tree: treePanel(),
-    diff: diffPanel(),
-    chat: chatPanel(),
-    audit: auditPanel(),
-  },
-  activeGroup: "diff-group",
-};
-
-const DEBUG: SerializedDockview = {
-  grid: {
-    height: 1000,
-    width: 1600,
-    orientation: Orientation.HORIZONTAL,
-    root: {
-      type: "branch",
-      data: [
-        {
-          type: "leaf",
-          size: 220,
-          data: { views: ["tree"], activeView: "tree", id: "tree-group" },
-        },
-        {
-          type: "branch",
-          size: 1380,
-          data: [
-            {
-              type: "leaf",
-              size: 600,
-              data: { views: ["editor"], activeView: "editor", id: "editor-group" },
-            },
-            {
-              type: "leaf",
-              size: 400,
-              data: {
-                views: ["terminal", "services", "preview"],
-                activeView: "terminal",
-                id: "bottom-group",
-              },
-            },
-          ],
-        },
-      ],
-    },
-  },
-  panels: {
-    tree: treePanel(),
-    editor: editorPanel(),
-    terminal: terminalPanel(),
-    services: servicesPanel(),
-    preview: previewPanel(),
-  },
-  activeGroup: "editor-group",
-};
-
-export const PRESETS: Record<LayoutPreset, SerializedDockview> = {
-  focus: FOCUS,
-  review: REVIEW,
-  debug: DEBUG,
-  custom: FOCUS, // initial baseline; the user reshapes it via drag
-};
-
-export const ALL_PRESETS: LayoutPreset[] = ["focus", "review", "debug", "custom"];

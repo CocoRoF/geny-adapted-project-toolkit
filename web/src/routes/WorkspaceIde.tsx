@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Archive, ChevronLeft, GitBranch, Loader2 } from "lucide-react";
+import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Server } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -11,8 +11,11 @@ import {
 } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
 import { DockviewShell } from "@/ide/DockviewShell";
+import { ServiceWorkspace } from "@/ide/ServiceWorkspace";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
+
+type WorkspaceView = "ide" | "service";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -37,6 +40,7 @@ export function WorkspaceIde() {
   const [error, setError] = useState<string | null>(null);
   const startedAt = useRef<number>(Date.now());
   const [elapsedSec, setElapsedSec] = useState<number>(0);
+  const [view, setView] = useState<WorkspaceView>("ide");
 
   const fetchOnce = useCallback(() => {
     if (!wid) return;
@@ -93,6 +97,26 @@ export function WorkspaceIde() {
             <span className="text-[13px] font-semibold text-fg">{t("workspace.title")}</span>
           )}
         </div>
+        {state === "ready" && workspace?.status === "running" ? (
+          <div
+            role="tablist"
+            aria-label={t("workspace.view.aria_label")}
+            className="ml-4 flex items-center gap-0.5 rounded-md bg-bg p-0.5"
+          >
+            <ViewTab
+              active={view === "ide"}
+              icon={<Code2 className="h-3.5 w-3.5" />}
+              label={t("workspace.view.ide")}
+              onClick={() => setView("ide")}
+            />
+            <ViewTab
+              active={view === "service"}
+              icon={<Server className="h-3.5 w-3.5" />}
+              label={t("workspace.view.service")}
+              onClick={() => setView("service")}
+            />
+          </div>
+        ) : null}
       </header>
 
       {state === "loading" ? (
@@ -121,10 +145,43 @@ export function WorkspaceIde() {
       ) : null}
       {state === "ready" && wid && pid && workspace?.status === "running" ? (
         <div className="flex-1 overflow-hidden">
-          <DockviewShell workspaceId={wid} projectId={pid} />
+          {view === "ide" ? (
+            <DockviewShell workspaceId={wid} projectId={pid} />
+          ) : (
+            <ServiceWorkspace workspaceId={wid} />
+          )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ViewTab({
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="tab"
+      type="button"
+      aria-selected={active}
+      onClick={onClick}
+      className={
+        active
+          ? "inline-flex items-center gap-1.5 rounded-md bg-bg-elevated px-2.5 py-1 text-[12px] font-medium text-fg shadow-sm"
+          : "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+      }
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
