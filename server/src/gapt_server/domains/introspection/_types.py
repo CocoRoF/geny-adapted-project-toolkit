@@ -65,6 +65,12 @@ class ProjectIntrospection:
     # Extra env vars the dev command typically needs. Suggested only —
     # the UI shows them as a starter template the user edits.
     dev_env_hints: dict[str, str] = field(default_factory=dict)
+    # Command that installs the project's dependencies. Run once
+    # before `dev_command` (and again if `dev_command` ever fails
+    # with a "module not found" — the wrapper handles the retry).
+    # Empty for stacks that don't need an install step (Go, Rust
+    # compiled-on-build, static sites).
+    install_command: str | None = None
 
     # ─── tests ───
     # The command to run the project's test suite. Examples:

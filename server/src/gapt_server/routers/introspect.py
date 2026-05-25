@@ -61,6 +61,7 @@ class IntrospectResponse(BaseModel):
     dev_port: int | None = None
     dev_cwd: str | None = None
     dev_env_hints: dict[str, str] = Field(default_factory=dict)
+    install_command: str | None = None
     test_command: str | None = None
     prod_compose_path: str | None = None
     prod_compose_paths: list[str] = Field(default_factory=list)
@@ -134,6 +135,7 @@ def _to_response(result: ProjectIntrospection) -> IntrospectResponse:
         dev_port=result.dev_port,
         dev_cwd=result.dev_cwd,
         dev_env_hints=result.dev_env_hints,
+        install_command=result.install_command,
         test_command=result.test_command,
         prod_compose_path=result.prod_compose_path,
         prod_compose_paths=result.prod_compose_paths,
@@ -172,6 +174,11 @@ class ApplyIntrospectionRequest(BaseModel):
     dev_command: str | None = None
     dev_port: int | None = None
     dev_cwd: str | None = None
+    # When True, prepend `<install_command> && ` to the dev cmd so
+    # the dev service installs deps before starting. Idempotent: pip
+    # / npm / pnpm all skip "already-installed" packages fast. Set
+    # to False if you've already installed manually.
+    dev_run_install: bool = True
 
     # Overrides for the prod side.
     prod_environment_name: str = "prod"
@@ -253,13 +260,19 @@ async def apply_introspection(
         dev_port = payload.dev_port or intro.dev_port
         dev_cwd = payload.dev_cwd if payload.dev_cwd is not None else intro.dev_cwd
         if dev_cmd:
-            # If a subdir cwd is suggested (e.g. `frontend/src`), wrap
-            # the command so spawn_background runs it in the right
-            # place. The sandbox spawn_background sets cwd to /workspace
-            # by default; we cd into the subdir first.
+            # Two transforms before this command lands in the
+            # ServiceRegistry:
+            #   1. Prepend `<install_command> && ` so the first dev
+            #      start doesn't `command not found` because deps
+            #      haven't been pulled. Idempotent on rerun.
+            #   2. Wrap with `cd <dev_cwd> &&` when the project is a
+            #      monorepo (`frontend/src`) — sandbox's
+            #      spawn_background always cwd=/workspace.
             cmd_to_run = dev_cmd
+            if payload.dev_run_install and intro.install_command:
+                cmd_to_run = f"{intro.install_command} && {dev_cmd}"
             if dev_cwd:
-                cmd_to_run = f"cd {dev_cwd} && {dev_cmd}"
+                cmd_to_run = f"cd {dev_cwd} && {cmd_to_run}"
             try:
                 svc = await registry.start(
                     workspace_id=workspace_id,

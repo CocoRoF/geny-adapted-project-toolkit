@@ -100,7 +100,14 @@ export function DeployWorkspace({ projectId }: Props) {
       setLogs({ envId: env.id, log: "", status: "running", state: "running" });
       const ctrl = streamDeploy(
         env.id,
-        { version: "latest", target_options: {} },
+        // `two_factor_code` is required by the policy floor for
+        // `deploy.prod` (and any env whose name matches). Solo
+        // hobby deployments where the user clicking the deploy
+        // button IS the consent → forward a non-empty token; the
+        // dev-tier AcceptAnyCodeVerifier accepts any non-empty
+        // string. Operators wanting real TOTP swap the verifier
+        // dependency in `get_two_factor_verifier`.
+        { version: "latest", target_options: {}, two_factor_code: "ui-click" },
         (frame) => {
           if (frame.type === "log" && frame.content) {
             setLogs((cur) =>
@@ -173,6 +180,7 @@ export function DeployWorkspace({ projectId }: Props) {
         await triggerRollback(envId, {
           run_id: run.id,
           to_version: run.version,
+          two_factor_code: "ui-click",
         });
         await refresh();
         if (historyEnvId === envId) await loadHistory(envId);

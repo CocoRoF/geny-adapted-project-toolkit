@@ -400,6 +400,15 @@ async def expose_service(
         upstream_host=payload.upstream_host or default_upstream,
         upstream_port=port,
         mode=PreviewMode.PATH,
+        # Workspace dev services start with `npm run dev` / `vite` /
+        # `uvicorn --reload` — none of which know they're mounted at
+        # `/preview/<slug>`. Strip the prefix so the upstream sees
+        # its own root. The Referer-fallback route the manager also
+        # creates handles `<link href="/favicon.png">`-style root
+        # requests for free. Prod-deploy paths (LocalComposeTarget)
+        # keep the default `strip_prefix=False` because they build
+        # with NEXT_PUBLIC_BASE_PATH baked in.
+        strip_prefix=True,
     )
     try:
         host = await manager.register(binding)

@@ -109,11 +109,28 @@ def detect_node(root: Path) -> ProjectIntrospection:
     if test_cmd:
         notes.append(f"test command: `{test_cmd}`")
 
+    # Pick a package manager based on lockfile presence. pnpm/yarn
+    # users are usually loud about that choice; npm is the safe
+    # default that ships with Node. Each manager's `install` is
+    # idempotent — re-running with the lockfile satisfied is a fast
+    # no-op (~3-5s), so the dev wrapper can prepend it unconditionally.
+    pkg_dir = pkg_path.parent
+    if (pkg_dir / "pnpm-lock.yaml").is_file():
+        install_cmd = "pnpm install --frozen-lockfile"
+    elif (pkg_dir / "yarn.lock").is_file():
+        install_cmd = "yarn install --frozen-lockfile"
+    else:
+        # `--no-audit --no-fund` cuts ~10s off the cold install and
+        # spam noise off the dev service log.
+        install_cmd = "npm install --no-audit --no-fund"
+    notes.append(f"install command: `{install_cmd}`")
+
     return ProjectIntrospection(
         kind=kind,
         dev_command=dev_cmd,
         dev_port=dev_port,
         dev_cwd=cwd_rel,
+        install_command=install_cmd,
         test_command=test_cmd,
         needs_basepath=needs_basepath,
         basepath_config_file=basepath_file,

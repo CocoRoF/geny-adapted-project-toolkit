@@ -22,6 +22,7 @@ export interface IntrospectResponse {
   dev_port: number | null;
   dev_cwd: string | null;
   dev_env_hints: Record<string, string>;
+  install_command: string | null;
   test_command: string | null;
   prod_compose_path: string | null;
   prod_compose_paths: string[];
@@ -44,6 +45,7 @@ export interface ApplyIntrospectionInput {
   dev_command?: string | null;
   dev_port?: number | null;
   dev_cwd?: string | null;
+  dev_run_install?: boolean;
   prod_environment_name?: string;
   prod_compose_path?: string | null;
   prod_compose_paths?: string[] | null;

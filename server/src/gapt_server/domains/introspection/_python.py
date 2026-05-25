@@ -79,11 +79,26 @@ def detect_python(root: Path) -> ProjectIntrospection:
     if test_cmd:
         notes.append(f"test command (suggested): `{test_cmd}`")
 
+    # Pick an installer based on which file we found. pyproject.toml
+    # → `pip install -e .` (editable so dev edits don't need
+    # reinstall). requirements*.txt → `pip install -r requirements.txt`.
+    # setup.py → same as pyproject. Each is idempotent on rerun
+    # (pip detects "already satisfied").
+    install_cmd: str | None = None
+    src_name = source.name
+    if src_name == "pyproject.toml" or src_name == "setup.py":
+        install_cmd = "pip install -e ."
+    elif src_name.startswith("requirements"):
+        install_cmd = f"pip install -r {src_name}"
+    if install_cmd:
+        notes.append(f"install command: `{install_cmd}`")
+
     return ProjectIntrospection(
         kind=kind,
         dev_command=default_cmd,
         dev_port=default_port,
         dev_cwd=cwd_rel,
+        install_command=install_cmd,
         test_command=test_cmd,
         confidence=0.6,
         notes=notes,

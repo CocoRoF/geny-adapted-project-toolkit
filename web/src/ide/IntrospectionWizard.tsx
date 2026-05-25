@@ -276,6 +276,25 @@ function DevSection({
           disabled={!enabled}
         />
       ) : null}
+      {intro.install_command ? (
+        <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-fg-muted">
+          <input
+            type="checkbox"
+            checked={overrides.dev_run_install !== false}
+            onChange={(e) =>
+              setOverrides({
+                ...overrides,
+                dev_run_install: e.currentTarget.checked,
+              })
+            }
+            disabled={!enabled}
+          />
+          dev 시작 전에 의존성 설치:{" "}
+          <code className="rounded bg-bg px-1 font-mono">
+            {intro.install_command}
+          </code>
+        </label>
+      ) : null}
     </section>
   );
 }
