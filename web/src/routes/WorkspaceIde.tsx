@@ -12,9 +12,12 @@ import {
 import { useI18n } from "@/app/providers/i18n-context";
 import { DeployWorkspace } from "@/ide/DeployWorkspace";
 import { DockviewShell } from "@/ide/DockviewShell";
+import { IntrospectionWizard } from "@/ide/IntrospectionWizard";
 import { ServiceWorkspace } from "@/ide/ServiceWorkspace";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
+
+const WIZARD_DISMISS_KEY_PREFIX = "gapt.ide.wizard.dismissed";
 
 type WorkspaceView = "ide" | "service" | "deploy";
 
@@ -42,6 +45,8 @@ export function WorkspaceIde() {
   const startedAt = useRef<number>(Date.now());
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [view, setView] = useState<WorkspaceView>("ide");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardToast, setWizardToast] = useState<string | null>(null);
 
   const fetchOnce = useCallback(() => {
     if (!wid) return;
@@ -61,6 +66,16 @@ export function WorkspaceIde() {
   useEffect(() => {
     fetchOnce();
   }, [fetchOnce]);
+
+  // Auto-open the introspection wizard once the workspace finishes
+  // cloning AND the user hasn't dismissed it before. Stored per-
+  // workspace in localStorage; manual reopen via the toolbar.
+  useEffect(() => {
+    if (!wid) return;
+    if (workspace?.status !== "running") return;
+    if (window.localStorage.getItem(`${WIZARD_DISMISS_KEY_PREFIX}.${wid}`)) return;
+    setWizardOpen(true);
+  }, [wid, workspace?.status]);
 
   // Poll while the workspace is still being cloned; ticker also drives
   // the "elapsed" counter shown to the user so they know it's alive.
@@ -159,6 +174,44 @@ export function WorkspaceIde() {
           ) : (
             <DeployWorkspace projectId={pid} />
           )}
+        </div>
+      ) : null}
+      {wid && workspace?.status === "running" ? (
+        <IntrospectionWizard
+          open={wizardOpen}
+          workspaceId={wid}
+          onClose={() => {
+            setWizardOpen(false);
+            window.localStorage.setItem(
+              `${WIZARD_DISMISS_KEY_PREFIX}.${wid}`,
+              "1",
+            );
+          }}
+          onApplied={({ actions }) =>
+            setWizardToast(
+              actions.length > 0
+                ? actions.join(" · ")
+                : "감지 결과를 적용했습니다.",
+            )
+          }
+        />
+      ) : null}
+      {wizardToast ? (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-40 max-w-[480px] rounded-md border border-accent/40 bg-bg-elevated px-3 py-2 text-[12px] text-fg shadow-lg"
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-semibold text-accent">자동 감지 적용됨</span>
+            <button
+              type="button"
+              onClick={() => setWizardToast(null)}
+              className="text-fg-subtle hover:text-fg"
+            >
+              ×
+            </button>
+          </div>
+          <p className="whitespace-pre-line break-all text-fg-muted">{wizardToast}</p>
         </div>
       ) : null}
     </section>
