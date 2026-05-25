@@ -45,12 +45,23 @@ class SubdomainBinding:
 
     `workspace_slug` is the URL-safe identifier the route is keyed
     by — for path mode it appears in the URL as `/preview/<slug>/*`,
-    for subdomain mode it becomes `<slug>.<preview-domain>`."""
+    for subdomain mode it becomes `<slug>.<preview-domain>`.
+
+    `strip_prefix` (path mode only): when True, Caddy removes the
+    `/preview/<slug>` prefix before forwarding so the upstream sees
+    its own root. Use this for apps that hard-bind to root URLs and
+    can't be told their basePath at build time. Default is False —
+    the canonical pattern (Next.js basePath, Vite base, FastAPI
+    root_path, ...) is that the app *itself* knows it's mounted at
+    a prefix and emits its own URLs accordingly. Stripping the
+    prefix then would make the app's self-issued URLs collide with
+    the apex IDE routes."""
 
     workspace_slug: str
     upstream_host: str  # docker DNS name on gapt-net, e.g. "gapt-ws-01k..."
     upstream_port: int  # listening port inside the container
     mode: PreviewMode = PreviewMode.PATH
+    strip_prefix: bool = False
 
 
 def _full_host(workspace_slug: str, preview_domain: str) -> str:
@@ -67,30 +78,36 @@ def _route_id(workspace_slug: str) -> str:
 def _path_route_payload(binding: SubdomainBinding) -> dict[str, Any]:
     """Caddy route JSON for path-mode previews.
 
-    Matches `/preview/<slug>` and `/preview/<slug>/*`, strips the
-    `/preview/<slug>` prefix, then reverse-proxies. `terminal: true`
-    so the route doesn't fall through to the IDE-handle below it.
+    Matches `/preview/<slug>` and `/preview/<slug>/*`, then
+    reverse-proxies. When `binding.strip_prefix` is True (the
+    opt-in), a `rewrite.strip_path_prefix` runs first so the upstream
+    sees `/...`. Default keeps the prefix in the forwarded URL — that
+    matches the canonical "app knows its basePath" pattern (Next.js
+    basePath, Vite base, FastAPI root_path) and lets the app emit
+    self-referential URLs that round-trip through the same route.
 
     Both the bare path and the trailing-slash form match — without
     that, hitting `/preview/foo` (no slash) would fall through to the
-    IDE and surprise the user."""
+    IDE catch-all below it."""
     slug = binding.workspace_slug.lower()
     prefix = f"/preview/{slug}"
+    handlers: list[dict[str, Any]] = []
+    if binding.strip_prefix:
+        handlers.append(
+            {"handler": "rewrite", "strip_path_prefix": prefix}
+        )
+    handlers.append(
+        {
+            "handler": "reverse_proxy",
+            "upstreams": [
+                {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
+            ],
+        }
+    )
     return {
         "@id": _route_id(binding.workspace_slug),
         "match": [{"path": [prefix, f"{prefix}/*"]}],
-        "handle": [
-            {
-                "handler": "rewrite",
-                "strip_path_prefix": prefix,
-            },
-            {
-                "handler": "reverse_proxy",
-                "upstreams": [
-                    {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
-                ],
-            },
-        ],
+        "handle": handlers,
         "terminal": True,
     }
 

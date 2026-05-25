@@ -99,9 +99,39 @@ async def test_subdomain_manager_path_mode_default() -> None:
     assert new_idx < ide_idx
     new_route = posted[new_idx]
     assert new_route["match"][0]["path"] == ["/preview/01kws", "/preview/01kws/*"]
-    assert new_route["handle"][0]["handler"] == "rewrite"
-    assert new_route["handle"][0]["strip_path_prefix"] == "/preview/01kws"
-    assert new_route["handle"][1]["upstreams"][0]["dial"] == "gapt-ws-01kws:3000"
+    # Default: no prefix strip — the app keeps `/preview/<slug>` in
+    # its received URL so basePath-aware apps emit matching URLs.
+    assert new_route["handle"][0]["handler"] == "reverse_proxy"
+    assert new_route["handle"][0]["upstreams"][0]["dial"] == "gapt-ws-01kws:3000"
+
+
+@pytest.mark.asyncio
+async def test_subdomain_manager_path_mode_strip_prefix_opt_in() -> None:
+    """Apps that need the prefix removed (no basePath) opt in via
+    `strip_prefix=True`; Caddy then strips before reverse_proxy."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            strip_prefix=True,
+        )
+    )
+    posted = calls[2][2]
+    route = posted[0]
+    assert route["handle"][0]["handler"] == "rewrite"
+    assert route["handle"][0]["strip_path_prefix"] == "/preview/01kws"
+    assert route["handle"][1]["handler"] == "reverse_proxy"
 
 
 @pytest.mark.asyncio
