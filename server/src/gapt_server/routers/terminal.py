@@ -39,7 +39,11 @@ from sqlalchemy import select
 
 from gapt_server.container import get_db_session
 from gapt_server.db import enums, models
-from gapt_server.domains.terminal import PtyClosed, PtyHandle, PtySpawnError, spawn_pty
+from gapt_server.domains.terminal import PtyClosed, PtyHandle
+from gapt_server.domains.workspace_sandbox import (
+    WorkspaceSandboxError,
+    WorkspaceSandboxUnavailable,
+)
 from gapt_server.routers.auth import get_auth_idp, get_current_user
 
 if TYPE_CHECKING:
@@ -52,13 +56,9 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/api/workspaces", tags=["terminal"])
 
 
-# Shell choice: bash if present, else /bin/sh. Dropped to login-mode
-# (`-l`) so the user's ~/.bashrc / npm shims get sourced — same
-# experience as opening a regular terminal in the worktree.
+# Shell choice: login bash. The container image ships bash by default.
 def _default_shell() -> list[str]:
-    if os.path.exists("/bin/bash"):
-        return ["/bin/bash", "-l"]
-    return ["/bin/sh"]
+    return ["/bin/bash", "-l"]
 
 
 async def _workspace_or_404(
@@ -145,19 +145,28 @@ async def terminal_ws(
 
     await websocket.accept()
 
+    sandbox = container.workspace_sandbox.get(workspace_id, workspace.worktree_path)
     cmd = _default_shell()
     try:
-        handle = await spawn_pty(
-            cmd=cmd,
-            cwd=workspace.worktree_path,
-            rows=rows,
-            cols=cols,
-        )
-    except PtySpawnError as exc:
+        handle = await sandbox.spawn_pty(cmd=cmd, rows=rows, cols=cols)
+    except WorkspaceSandboxUnavailable as exc:
         await websocket.send_json(
-            {"type": "error", "code": "terminal.spawn_failed", "reason": str(exc)}
+            {
+                "type": "error",
+                "code": exc.code,
+                "reason": (
+                    f"{exc} — workspace terminals require Docker. "
+                    "Install Docker and restart the GAPT server."
+                ),
+            }
         )
-        await websocket.close(code=1011, reason="spawn failed")
+        await websocket.close(code=1011, reason="docker unavailable")
+        return
+    except WorkspaceSandboxError as exc:
+        await websocket.send_json(
+            {"type": "error", "code": exc.code, "reason": str(exc)}
+        )
+        await websocket.close(code=1011, reason="sandbox spawn failed")
         return
 
     await _drive_socket(websocket, handle)

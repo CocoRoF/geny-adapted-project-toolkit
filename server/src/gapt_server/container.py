@@ -44,6 +44,7 @@ from gapt_server.domains.sandbox import (
     make_default_client,
 )
 from gapt_server.domains.services import ServiceRegistry
+from gapt_server.domains.workspace_sandbox import WorkspaceSandboxManager
 from gapt_server.observability.metrics import MetricsRegistry
 from gapt_server.policy.config_loader import PolicyConfigError, load_yaml
 from gapt_server.policy.engine import PolicyEngine
@@ -85,10 +86,12 @@ class AppContainer:
     registry: MetricsRegistry
     notifications: NotificationService
     services: ServiceRegistry
+    workspace_sandbox: WorkspaceSandboxManager
 
     async def aclose(self) -> None:
         await self.session_registry.aclose()
         await self.services.aclose()
+        await self.workspace_sandbox.aclose()
         await self.audit_sink.aclose()
         if self.engine is not None:
             await self.engine.dispose()
@@ -123,6 +126,7 @@ def build_container(
     if settings.postgres_dsn is None:
         sink_noop = audit_sink or NullAuditSink()
         policy_noop = _engine_from_settings(settings, sink_noop)
+        ws_sandbox_noop = WorkspaceSandboxManager()
         return AppContainer(
             settings=settings,
             engine=None,
@@ -137,7 +141,8 @@ def build_container(
             session_registry=SessionRegistry(),
             registry=MetricsRegistry(),
             notifications=notifications,
-            services=ServiceRegistry(),
+            services=ServiceRegistry(sandbox_manager=ws_sandbox_noop),
+            workspace_sandbox=ws_sandbox_noop,
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))  # noqa: E501
@@ -152,6 +157,7 @@ def build_container(
             max_batch_size=settings.audit_max_batch_size,
         )
         sink = pg_sink
+    ws_sandbox = WorkspaceSandboxManager()
     return AppContainer(
         settings=settings,
         engine=engine,
@@ -164,7 +170,8 @@ def build_container(
         session_registry=SessionRegistry(),
         registry=MetricsRegistry(),
         notifications=notifications,
-        services=ServiceRegistry(),
+        services=ServiceRegistry(sandbox_manager=ws_sandbox),
+        workspace_sandbox=ws_sandbox,
     )
 
 
@@ -266,6 +273,12 @@ def get_service_registry(
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> ServiceRegistry:
     return container.services
+
+
+def get_workspace_sandbox_manager(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> WorkspaceSandboxManager:
+    return container.workspace_sandbox
 
 
 def attach_container(app: FastAPI, container: AppContainer) -> None:

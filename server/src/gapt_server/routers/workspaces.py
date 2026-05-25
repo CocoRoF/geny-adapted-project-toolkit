@@ -317,6 +317,7 @@ async def delete_workspace(
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
         view = await svc.delete(db, actor=user, workspace_id=workspace_id)
@@ -325,6 +326,16 @@ async def delete_workspace(
         raise _http_from_workspace_error(exc) from exc
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
+    # Tear down the workspace's docker sandbox container too — any
+    # terminals / services were running inside it; the user is
+    # archiving the workspace so we shouldn't leave the container
+    # hanging.
+    try:
+        await container.workspace_sandbox.stop(workspace_id)
+    except Exception:  # noqa: BLE001
+        # Best-effort — the workspace row is already archived; a
+        # dangling container can be cleaned up via `docker rm`.
+        pass
     return WorkspaceResponse.from_view(view)
 
 
