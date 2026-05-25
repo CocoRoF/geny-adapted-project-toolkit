@@ -121,10 +121,28 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
         "terminal": True,
     }
     # Referer fallback: catch root-relative asset requests whose
-    # Referer originates from this preview, and *rewrite* the path
-    # to include the preview prefix before forwarding. Without the
-    # rewrite the upstream (basePath-aware) returns 404 because it
-    # only knows URLs under `/preview/<slug>/...`.
+    # Referer originates from this preview. The right handling
+    # depends on whether the primary route was stripping the
+    # prefix:
+    #
+    #   * `strip_prefix=False` (prod with basePath baked): the
+    #     upstream only knows URLs under `/preview/<slug>/...`, so
+    #     a bare `/favicon.png` has to be rewritten WITH the prefix
+    #     before forwarding.
+    #
+    #   * `strip_prefix=True` (dev servers without basePath): the
+    #     upstream serves at root, so `/favicon.png` should be
+    #     forwarded *as-is*. Re-adding the prefix here would just
+    #     produce 404s — exactly the dev-mode bug we hit.
+    #
+    # Either way the Referer regex is the same; only the rewrite
+    # differs.
+    fallback_handlers: list[dict[str, Any]] = []
+    if not binding.strip_prefix:
+        fallback_handlers.append(
+            {"handler": "rewrite", "uri": prefix + "{http.request.uri}"}
+        )
+    fallback_handlers.append(upstream_handler)
     asset_fallback = {
         "@id": _route_id(binding.workspace_slug) + "-asset",
         "match": [
@@ -136,10 +154,7 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
                 }
             }
         ],
-        "handle": [
-            {"handler": "rewrite", "uri": prefix + "{http.request.uri}"},
-            upstream_handler,
-        ],
+        "handle": fallback_handlers,
         "terminal": True,
     }
     return [primary, asset_fallback]
