@@ -21,7 +21,13 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=C.UTF-8 \
+    # Dev-server convention — most Node frameworks (vite, next dev,
+    # webpack-dev-server, ...) pick this up and bind 0.0.0.0 instead
+    # of 127.0.0.1. Required for Caddy on `gapt-net` to reach the
+    # service via docker DNS. Users can still override per-process.
+    HOST=0.0.0.0 \
+    HOSTNAME=0.0.0.0
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \

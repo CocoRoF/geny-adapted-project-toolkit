@@ -59,6 +59,13 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_IMAGE = os.environ.get("GAPT_WORKSPACE_SANDBOX_IMAGE", "gapt-workspace:latest")
 
+# Shared docker network every workspace container joins. Caddy (the
+# edge reverse proxy) ALSO joins this network so it can address each
+# workspace by container name on docker DNS — `gapt-ws-<wid>:<port>`
+# — without publishing ports on the host. The name is fixed so the
+# compose stack and this server agree on it.
+GAPT_NETWORK = os.environ.get("GAPT_WORKSPACE_NETWORK", "gapt-net")
+
 
 def _resolve_host_claude_paths() -> tuple[str | None, str | None]:
     """Where the host's claude CLI keeps its state and top-level config.
@@ -135,6 +142,23 @@ def _container_name(workspace_id: str) -> str:
     return f"gapt-ws-{workspace_id.lower()}"
 
 
+async def _ensure_network(name: str) -> None:
+    """Create the shared `gapt-net` network if it doesn't already
+    exist. `docker network inspect` is cheap (single RPC) so we run
+    it on every `ensure()` and only fall through to `create` on a
+    miss. The create is also idempotent because docker returns
+    "Conflict: already exists" on a race; we treat that as success."""
+    rc, _, _ = await _run_docker("network", "inspect", name, timeout_s=5.0)
+    if rc == 0:
+        return
+    rc, _, err = await _run_docker("network", "create", name, timeout_s=10.0)
+    if rc != 0 and "already exists" not in err.lower():
+        raise WorkspaceSandboxError(
+            "workspace_sandbox.network_create_failed",
+            f"`docker network create {name}` failed: {err.strip()[:200]}",
+        )
+
+
 async def _run_docker(*args: str, timeout_s: float = 30.0) -> tuple[int, str, str]:
     """Run a `docker` subcommand, returning (rc, stdout, stderr).
     Raises `WorkspaceSandboxUnavailable` when the docker binary isn't
@@ -187,7 +211,12 @@ class WorkspaceSandbox:
     async def ensure(self) -> None:
         """Idempotent: start the container if it doesn't already
         exist + run. Re-creates it if a previous instance died
-        (Docker keeps stopped containers around by name otherwise)."""
+        (Docker keeps stopped containers around by name otherwise).
+
+        Also makes sure the shared `gapt-net` docker network exists
+        — Caddy joins this same network so it can reach the workspace
+        by container DNS without publishing ports."""
+        await _ensure_network(GAPT_NETWORK)
         rc, out, _ = await _run_docker(
             "inspect", "-f", "{{.State.Running}}", self.container_name, timeout_s=5.0
         )
@@ -224,6 +253,12 @@ class WorkspaceSandbox:
             f"{uid}:{gid}",
             "--env",
             "HOME=/home/ubuntu",
+            # Hostname matches container name so Caddy upstreams can
+            # use either; explicit is better than implicit.
+            "--hostname",
+            self.container_name,
+            "--network",
+            GAPT_NETWORK,
             "-v",
             f"{self.worktree_path}:/workspace",
         ]
@@ -346,6 +381,7 @@ class WorkspaceSandbox:
         cmd: str,
         log_path_inside: str,
         env: dict[str, str] | None = None,
+        marker: str | None = None,
     ) -> int:
         """Spawn `cmd` as a background process inside the container,
         redirecting stdout+stderr to `log_path_inside` (worktree-
@@ -353,19 +389,33 @@ class WorkspaceSandbox:
         the host through the bind mount, so `file-tail` on the host
         side just works).
 
-        Returns the *host-side* PID of the `docker exec` process —
-        not the container-side PID. Stopping the host-side process
-        ends the in-container child too (docker exec propagates
-        SIGTERM)."""
+        When `marker` is set, the wrapping `sh` process keeps a
+        recognisable argv (`sh -c <inner> <marker>`) so the caller can
+        `pgrep -f <marker>` to confirm liveness — useful when the
+        user's command rewrites its own argv (`node`, `npm run`, ...)
+        or daemonises in a way `ps` can't trace back to us. We
+        deliberately do *not* `exec` the cmd: the sh parent has to
+        stay alive for pgrep to keep matching.
+
+        Returns -1 because `docker exec -d` doesn't surface a PID.
+        Lifecycle is tracked container-side via the marker, not
+        host-side via PID."""
         await self.ensure()
-        # Build the inner shell command: redirect + exec so the child
-        # process replaces the shell (no double-fork zombie).
-        inner = f"mkdir -p $(dirname {shlex.quote(log_path_inside)}) && exec {cmd} >> {shlex.quote(log_path_inside)} 2>&1"
+        # `sh` redirects child stdout/stderr to the log then runs cmd
+        # as a foreground child (no `exec`). When marker is provided
+        # we pass it as $0; that puts it in the sh process's
+        # /proc/PID/cmdline so `pgrep -f <marker>` matches.
+        inner = (
+            f"mkdir -p $(dirname {shlex.quote(log_path_inside)}) && "
+            f"{cmd} >> {shlex.quote(log_path_inside)} 2>&1"
+        )
         exec_args = ["docker", "exec", "-d", "-w", "/workspace"]
         if env:
             for k, v in env.items():
                 exec_args += ["--env", f"{k}={v}"]
         exec_args += [self.container_name, "sh", "-c", inner]
+        if marker:
+            exec_args.append(marker)
         proc = await asyncio.create_subprocess_exec(
             *exec_args,
             stdout=asyncio.subprocess.PIPE,

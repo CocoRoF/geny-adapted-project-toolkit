@@ -279,25 +279,22 @@ class ServiceRegistry:
         log_path_in_container = f"/workspace/.gapt/services/{label}.log"
 
         # Unique marker for pgrep — gives us a reliable alive-check
-        # later (`pgrep -f` matches the full cmdline). Marker is
-        # passed as an inert env var so it lands in /proc/<pid>/cmdline.
+        # later (`pgrep -f` matches the full cmdline). The sandbox
+        # plants it as $0 on the wrapping `sh` so /proc/PID/cmdline
+        # carries it without polluting the user's cmd.
         marker = f"GAPT_SVC={workspace_id}:{label}"
 
         service_env = dict(env or {})
         if port is not None and "PORT" not in service_env:
             service_env["PORT"] = str(port)
 
-        # Inner: prepend the marker as an env-set before the user's
-        # cmd so pgrep -f hits it. `exec` so the shell hands its PID
-        # to the user's process.
-        inner_cmd = f"{marker} exec {cmd}"
-
         sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
         try:
             await sandbox.spawn_background(
-                cmd=inner_cmd,
+                cmd=cmd,
                 log_path_inside=log_path_in_container,
                 env=service_env,
+                marker=marker,
             )
         except WorkspaceSandboxError as exc:
             raise RuntimeError(f"failed to spawn service {label!r}: {exc}") from exc

@@ -126,7 +126,17 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     ports:
-      - "127.0.0.1:8080:8080" # main entry
+      - "127.0.0.1:8080:8080" # main entry — API + static + IDE
+      - "127.0.0.1:8081:8081" # preview server — workspace dev servers
+      - "127.0.0.1:2019:2019" # admin API (host can drive route mutations)
+    networks:
+      # `default` is the compose-internal network (Postgres/Redis/server
+      # talk over it). `gapt-net` is the SHARED network workspace
+      # sandbox containers join — Caddy must be on both so it can
+      # reverse-proxy `gapt-ws-<wid>:<port>` for the preview server
+      # while still hitting `server:8088` for the API.
+      - default
+      - gapt-net
     # No 443 in dev — TLS happens at host level on the real domain.
 
   # ---------- observability (optional `metrics` profile) ----------
@@ -167,3 +177,11 @@ volumes:
 networks:
   default:
     name: gapt-dev
+  # `gapt-net` is the shared bridge every workspace sandbox container
+  # (`gapt-ws-<wid>`) joins at startup. The server (running on the
+  # host) creates it lazily via `docker network create gapt-net` on
+  # the first workspace boot, so we mark it `external: true` here —
+  # compose won't try to create or own it.
+  gapt-net:
+    external: true
+    name: gapt-net

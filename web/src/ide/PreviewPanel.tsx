@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { type WorkspaceService, listServices } from "@/api/services";
 import { useI18n } from "@/app/providers/i18n-context";
 
 type Device = "desktop" | "tablet" | "phone";
@@ -11,6 +12,7 @@ const DEVICE_WIDTH: Record<Device, number | null> = {
 };
 
 const STORAGE_KEY_PREFIX = "gapt.ide.preview";
+const SERVICES_POLL_MS = 4000;
 
 function storageKey(workspaceId: string): string {
   return `${STORAGE_KEY_PREFIX}.${workspaceId}`;
@@ -31,22 +33,55 @@ interface Props {
   workspaceId: string;
 }
 
-/** Preview panel — embeds an iframe pointed at a user-supplied URL.
+/** Preview panel — embeds an iframe pointed at a workspace dev server.
  *
- * Plan §3.12 calls for the eventual `https://{slug}.preview.{domain}/`
- * subdomain that lands once M1-E1's Caddy is fully wired (Cycle 3.13
- * / M1-E4). Until then the user enters the URL manually — same UX
- * as Vite's "Network" hint. */
+ * Two ways to populate the URL:
+ *   1. **Exposed-service dropdown** — picks from services the user
+ *      already hit "Expose" on in the Service tab. The selected
+ *      service's `bound_url` becomes the iframe src. Refreshed
+ *      every few seconds so newly-exposed services appear without
+ *      a manual reload.
+ *   2. **Manual entry** — for arbitrary URLs (e.g. a remote staging
+ *      env, or a public site you're integrating with). */
 export function PreviewPanel({ workspaceId }: Props) {
   const { t } = useI18n();
   const [url, setUrl] = useState(() => readStored(workspaceId));
   const [device, setDevice] = useState<Device>("desktop");
   const [reloadKey, setReloadKey] = useState(0);
+  const [services, setServices] = useState<WorkspaceService[]>([]);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     writeStored(workspaceId, url);
   }, [workspaceId, url]);
+
+  // Poll the services list so the dropdown picks up newly exposed
+  // services without forcing the user to reload the page.
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () =>
+      listServices(workspaceId)
+        .then((rows) => {
+          if (!cancelled) setServices(rows);
+        })
+        .catch(() => {
+          // 404/transient is fine — the dropdown just stays empty.
+        });
+    pull();
+    const id = window.setInterval(pull, SERVICES_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [workspaceId]);
+
+  const exposed = useMemo(
+    () =>
+      services.filter(
+        (s): s is WorkspaceService & { bound_url: string } => !!s.bound_url,
+      ),
+    [services],
+  );
 
   const refresh = useCallback(() => {
     setReloadKey((k) => k + 1);
@@ -56,7 +91,28 @@ export function PreviewPanel({ workspaceId }: Props) {
 
   return (
     <div data-panel-kind="preview" className="flex h-full flex-col">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
+        {exposed.length > 0 ? (
+          <select
+            aria-label={t("preview.exposed.aria_label")}
+            value={exposed.find((s) => s.bound_url === url)?.label ?? ""}
+            onChange={(e) => {
+              const next = exposed.find((s) => s.label === e.currentTarget.value);
+              if (next) setUrl(next.bound_url);
+            }}
+            className="h-7 max-w-[200px] rounded-md border border-border bg-surface px-2 text-[12px] text-fg focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="" disabled>
+              {t("preview.exposed.placeholder")}
+            </option>
+            {exposed.map((s) => (
+              <option key={s.label} value={s.label}>
+                {s.label}
+                {s.port ? ` :${s.port}` : ""}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <label className="flex flex-1 items-center gap-2">
           <span className="sr-only">{t("preview.url_label")}</span>
           <input

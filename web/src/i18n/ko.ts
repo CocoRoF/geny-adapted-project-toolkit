@@ -238,6 +238,8 @@ export const ko: Record<keyof typeof en, string> = {
   "preview.title": "프리뷰",
   "preview.empty": "여기서 미리 보려면 URL 을 설정하세요.",
   "preview.url_label": "URL",
+  "preview.exposed.aria_label": "노출된 서비스 선택",
+  "preview.exposed.placeholder": "서비스 선택…",
   "preview.url_placeholder": "https://localhost:3000",
   "preview.open_external": "새 탭에서 열기",
   "preview.refresh": "새로고침",

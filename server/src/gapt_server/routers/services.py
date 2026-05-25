@@ -382,9 +382,16 @@ async def expose_service(
         )
 
     slug = _workspace_slug(workspace_id, label)
+    # The workspace container's hostname matches `gapt-ws-<wid>`, and
+    # Caddy is on the same `gapt-net` docker network, so Caddy resolves
+    # the upstream via docker DNS without publishing the port to the
+    # host. `payload.upstream_host` still overrides this for the rare
+    # case where the operator runs Caddy off-network and needs a host
+    # bridge address.
+    default_upstream = f"gapt-ws-{workspace_id.lower()}"
     binding = SubdomainBinding(
         workspace_slug=slug,
-        upstream_host=payload.upstream_host or "host.docker.internal",
+        upstream_host=payload.upstream_host or default_upstream,
         upstream_port=port,
     )
     try:

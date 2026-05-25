@@ -239,6 +239,8 @@ export const en = {
   "preview.title": "Preview",
   "preview.empty": "Set a preview URL to load it here.",
   "preview.url_label": "URL",
+  "preview.exposed.aria_label": "Select an exposed service",
+  "preview.exposed.placeholder": "Pick a service…",
   "preview.url_placeholder": "https://localhost:3000",
   "preview.open_external": "Open in new tab",
   "preview.refresh": "Refresh",

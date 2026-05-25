@@ -1,14 +1,23 @@
-# GAPT Caddy dev config — simple reverse proxy to the control plane.
+# GAPT Caddy dev config.
 #
-# Production version (M1-E4 cycle 4.4): on-demand TLS + dynamic
-# subdomain registration for per-workspace previews. Here we keep
-# everything on plain HTTP at :8080 so a fresh `docker compose up`
-# Just Works without certificate provisioning headaches.
+# Two HTTP servers:
+#   - Main edge (:8080) — control plane. /api + /health → `server`.
+#   - Preview (:8081) — per-workspace dev-server previews. Routes are
+#     mutated by GAPT's `SubdomainManager` via the admin API; the file
+#     here just bootstraps the empty server so the admin path
+#     `apps/http/servers/preview/routes` is addressable.
+#
+# Caddy is on both the compose-default network (talks to `server`)
+# AND the shared `gapt-net` (talks to `gapt-ws-<wid>` workspace
+# containers). Upstreams in the dynamic routes are docker DNS names
+# resolved on gapt-net — no host port publishing needed.
 
 {
-    # Dev only: turn off automatic HTTPS so :8080 stays plain HTTP.
     auto_https off
-    admin :2019
+    # The admin API listens on all interfaces inside the caddy
+    # container so the GAPT server (running on the host) can reach it
+    # via the published `127.0.0.1:2019` mapping in compose.
+    admin 0.0.0.0:2019
 }
 
 :8080 {
@@ -19,7 +28,8 @@
 
     encode gzip zstd
 
-    # API surface — anything under /api goes straight through.
+    # API surface — anything under /api goes straight through to the
+    # control-plane server.
     handle /api/* {
         reverse_proxy server:8088
     }
@@ -32,5 +42,24 @@
     # In production we'll serve the built dist from this same edge.
     handle {
         respond "GAPT dev edge. Open the Vite dev server directly on :5173 during PR4." 200
+    }
+}
+
+# Preview server — per-workspace `gapt-ws-<wid>` reverse proxies live
+# here. The file starts with NO routes; `SubdomainManager.register()`
+# POSTs them as workspaces expose services. The Host matcher on each
+# generated route restricts which subdomain hits which workspace.
+:8081 {
+    log {
+        output stderr
+        format console
+    }
+
+    encode gzip zstd
+
+    # Default fall-through when no matching subdomain — keeps the
+    # response useful rather than a Caddy default 404.
+    handle {
+        respond "No preview is bound to this hostname. Expose a service from the workspace's Service tab." 404
     }
 }
