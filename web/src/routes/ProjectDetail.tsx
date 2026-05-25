@@ -145,10 +145,20 @@ export function ProjectDetail() {
         {t("nav.back_to_projects")}
       </Link>
 
-      <header className="mb-6 flex flex-col gap-1 border-b border-border pb-5">
-        <h1 className="text-[22px] font-semibold tracking-tight text-fg">
-          {project?.display_name ?? t("projects.title")}
-        </h1>
+      <header className="mb-6 flex flex-col gap-2 border-b border-border pb-5">
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-[22px] font-semibold tracking-tight text-fg">
+            {project?.display_name ?? t("projects.title")}
+          </h1>
+          {project ? (
+            <Link
+              to={`/projects/${project.id}/environments`}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+            >
+              Environments →
+            </Link>
+          ) : null}
+        </div>
         {project ? (
           <div className="flex flex-wrap items-center gap-3 text-[12px]">
             <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-fg-muted">{project.slug}</code>

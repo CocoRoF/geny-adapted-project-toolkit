@@ -19,6 +19,7 @@ from gapt_server.routers import (
     ci,
     cost,
     deploy,
+    environments,
     health,
     metrics,
     notifications,
@@ -124,6 +125,8 @@ def create_app(
     app.include_router(agent_prefs.router)
     app.include_router(terminal.router)
     app.include_router(services.router)
+    app.include_router(environments.by_project)
+    app.include_router(environments.by_id)
     return app
 
 

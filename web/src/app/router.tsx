@@ -4,6 +4,7 @@ import { AppShellLayout } from "@/app/layouts/AppShellLayout";
 import { RequireAuth } from "@/app/RequireAuth";
 import { AuthCallback } from "@/routes/AuthCallback";
 import { Cost } from "@/routes/Cost";
+import { Environments } from "@/routes/Environments";
 import { Login } from "@/routes/Login";
 import { ProjectDetail } from "@/routes/ProjectDetail";
 import { ProjectsIndex } from "@/routes/ProjectsIndex";
@@ -51,6 +52,16 @@ export function AppRouter() {
           <RequireAuth>
             <AppShellLayout>
               <ProjectDetail />
+            </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/projects/:pid/environments"
+        element={
+          <RequireAuth>
+            <AppShellLayout>
+              <Environments />
             </AppShellLayout>
           </RequireAuth>
         }
