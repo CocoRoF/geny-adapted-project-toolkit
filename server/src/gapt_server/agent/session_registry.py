@@ -210,6 +210,21 @@ async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
                 },
             )
             continue
+        # Tool result (paired with tool.invoke by tool_use_id) — also
+        # synthesised by the executor_patches shim from `user` lines
+        # carrying tool_result blocks. Without this the ToolCallCard
+        # stays in "running" forever.
+        if event_type == "tool.result":
+            await runtime.bus.publish(
+                SessionEventKind.TOOL_RESULT,
+                {
+                    "tool_use_id": data.get("tool_use_id"),
+                    "is_error": data.get("is_error", False),
+                    "output": data.get("content", ""),
+                    "content": data.get("content", ""),
+                },
+            )
+            continue
 
         kind, payload = _map_pipeline_event(event_type, data)
         if kind is None:
@@ -241,10 +256,13 @@ _STEP_EVENT_MAP: dict[str, str] = {
     "memory.updated": "memory",
     "task_registry.synced": "task_registry",
     "input.normalized": "input",
-    # `tool.invoke` is added by our executor_patches shim. It fires
-    # whenever the CLI runs a tool internally (Bash / Read / Edit /
-    # ...) — gives the user agentic-flow visibility.
+    # `tool.invoke` / `tool.result` are added by our executor_patches
+    # shim. They fire whenever the CLI runs a tool internally
+    # (Bash / Read / Edit / ...) — gives the user agentic-flow
+    # visibility AND lets the ToolCallCard flip from "running" to
+    # "complete" once the tool returns.
     "tool.invoke": "tool_invoke",
+    "tool.result": "tool_result",
     "thinking.delta": "thinking",
 }
 

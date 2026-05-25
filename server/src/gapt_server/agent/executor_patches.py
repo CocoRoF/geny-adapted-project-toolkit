@@ -20,9 +20,10 @@ Applied once at import time of `gapt_server.agent` (see __init__).
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from geny_executor.llm_client.base import BaseClient
+from geny_executor.llm_client.translators._cli import StreamJsonAccumulator
 from geny_executor.stages.s06_api.artifact.default.stage import (
     APIError,
     APIStage,
@@ -30,6 +31,58 @@ from geny_executor.stages.s06_api.artifact.default.stage import (
     ExecutorErrorCode,
     PipelineState,
 )
+
+
+_ORIGINAL_FEED = StreamJsonAccumulator.feed
+
+
+def _patched_feed(self: StreamJsonAccumulator, line: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Wraps the accumulator's `feed` so that `user` lines carrying
+    `tool_result` content blocks surface as `{"type":"tool_result",
+    "tool_use_id":..., "content":...}` events. The upstream `feed`
+    drops every `user` line as "echo of our input" — true for the
+    *original* user prompt, but false for the synthetic user-role
+    messages the CLI injects after each tool call to return the
+    tool's output to the assistant. Without this the ToolCallCard
+    stays in "running" forever even after the assistant's final
+    answer lands."""
+    if isinstance(line, dict) and str(line.get("type", "")) == "user":
+        msg = line.get("message") or {}
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, list):
+            events: List[Dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_result":
+                    continue
+                # `content` field can be a string or a list of
+                # text/image blocks. Flatten to a single string so
+                # the UI can render it in one row.
+                raw = block.get("content")
+                if isinstance(raw, list):
+                    parts: list[str] = []
+                    for c in raw:
+                        if isinstance(c, dict) and c.get("type") == "text":
+                            parts.append(str(c.get("text", "")))
+                        elif isinstance(c, str):
+                            parts.append(c)
+                    text = "".join(parts)
+                elif isinstance(raw, str):
+                    text = raw
+                else:
+                    text = ""
+                events.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.get("tool_use_id"),
+                        "is_error": bool(block.get("is_error")),
+                        "content": text,
+                    }
+                )
+            if events:
+                return events
+    return _ORIGINAL_FEED(self, line)
 
 
 async def _patched_call_streaming(
@@ -138,6 +191,18 @@ async def _patched_call_streaming(
                 },
             )
             continue
+        if chunk_type == "tool_result":
+            # Synthesised by `_patched_feed` for `user` lines that
+            # carry tool_result blocks (CLI-internal tool completions).
+            state.add_event(
+                "tool.result",
+                {
+                    "tool_use_id": chunk.get("tool_use_id"),
+                    "is_error": chunk.get("is_error", False),
+                    "content": chunk.get("content", ""),
+                },
+            )
+            continue
         # Unknown chunk types: keep silent. The upstream method does
         # the same; we don't want to drown the event bus.
 
@@ -159,4 +224,5 @@ def apply_executor_patches() -> None:
     if _APPLIED:
         return
     APIStage._call_streaming = _patched_call_streaming  # type: ignore[assignment]
+    StreamJsonAccumulator.feed = _patched_feed  # type: ignore[assignment]
     _APPLIED = True
