@@ -31,6 +31,7 @@ from gapt_server.container import (
     get_policy_engine,
 )
 from gapt_server.db import enums, models
+from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
 from gapt_server.domains.caddy.admin_api import CaddyAdminClient, CaddyHttpTransport
 from gapt_server.domains.caddy.subdomain import SubdomainManager
@@ -169,6 +170,52 @@ async def _resolve_env(
     return row
 
 
+async def _record_deploy_run(
+    db: AsyncSession,
+    *,
+    env_row: models.Environment,
+    version: str,
+    status_value: str,
+    bound_url: str | None,
+    exec_code: str | None,
+    log_tail: str,
+    actor_id: str | None,
+    trigger_kind: str,
+) -> models.DeployRun:
+    """Append a `DeployRun` row + (on success) update the env's
+    cached `last_run`. Both bits stay consistent because they live
+    in the same transaction.
+
+    `bound_url` is read off the `DeployResult` when the LocalCompose
+    target finishes its routing step. `log_tail` is whatever the
+    target captured up to the per-run limit (~2 KB).
+    """
+    run = models.DeployRun(
+        id=new_ulid(),
+        environment_id=env_row.id,
+        version=version,
+        status=status_value,
+        bound_url=bound_url,
+        exec_code=exec_code,
+        log_tail=log_tail or "",
+        finished_at=datetime.now(tz=UTC),
+        actor_id=actor_id,
+        trigger_kind=trigger_kind,
+    )
+    db.add(run)
+    if status_value == "success":
+        env_row.last_run = {
+            "run_id": run.id,
+            "status": status_value,
+            "bound_url": bound_url,
+            "version": version,
+            "deployed_at": run.finished_at.isoformat() if run.finished_at else None,
+            "trigger_kind": trigger_kind,
+        }
+    await db.flush()
+    return run
+
+
 @router.post(
     "/{env_id}/deploy",
     response_model=DeployResultResponse,
@@ -260,21 +307,22 @@ async def trigger_deploy(
         details={"run_id": result.run_id, "env_id": env_row.id},
     )
 
-    # Persist the last-run summary on the env row so the UI can show
-    # "last deployed X" + "current URL Y" without keeping a separate
-    # runs table around. Only writes on success — failed deploys
-    # leave the prior last_run intact so the UI keeps the last good
-    # state visible.
-    if is_success:
-        env_row.last_run = {
-            "run_id": result.run_id,
-            "status": result.status.value,
-            "bound_url": result.bound_url,
-            "version": payload.version,
-            "deployed_at": datetime.now(tz=UTC).isoformat(),
-        }
-        await db.flush()
-        await db.commit()
+    # Record an audit-grade `DeployRun` for every deploy attempt
+    # (success or failure). `env.last_run` is updated on success
+    # inside the helper so the UI's "current URL" reflects the
+    # latest good state.
+    await _record_deploy_run(
+        db,
+        env_row=env_row,
+        version=payload.version,
+        status_value=result.status.value,
+        bound_url=result.bound_url,
+        exec_code=result.exec_code,
+        log_tail=result.log,
+        actor_id=user.id,
+        trigger_kind="manual",
+    )
+    await db.commit()
 
     return DeployResultResponse(
         run_id=result.run_id,
@@ -350,6 +398,22 @@ async def trigger_rollback(
                 else status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"code": exc.code, "reason": str(exc)},
             ) from exc
+
+    # History entry — rollback success rewrites `last_run` to the
+    # restored version so the UI shows the post-rollback state as
+    # current. Failed rollbacks leave `last_run` alone.
+    await _record_deploy_run(
+        db,
+        env_row=env_row,
+        version=result.restored_version or payload.to_version,
+        status_value=result.status.value,
+        bound_url=None,  # rollback target's adapter doesn't always re-route
+        exec_code=result.exec_code,
+        log_tail=result.log,
+        actor_id=user.id,
+        trigger_kind="rollback",
+    )
+    await db.commit()
 
     return RollbackResultResponse(
         run_id=result.run_id,
@@ -481,19 +545,21 @@ async def trigger_deploy_stream(
                     ).encode()
                     return
 
-                # Persist last_run + notify (same logic as the sync
-                # POST /deploy endpoint).
+                # Persist history + notify (same shape as the sync
+                # POST /deploy endpoint via `_record_deploy_run`).
                 is_success = result.status == DeployStatusKind.SUCCESS
-                if is_success:
-                    env_row.last_run = {
-                        "run_id": result.run_id,
-                        "status": result.status.value,
-                        "bound_url": result.bound_url,
-                        "version": version,
-                        "deployed_at": datetime.now(tz=UTC).isoformat(),
-                    }
-                    await db.flush()
-                    await db.commit()
+                await _record_deploy_run(
+                    db,
+                    env_row=env_row,
+                    version=version,
+                    status_value=result.status.value,
+                    bound_url=result.bound_url,
+                    exec_code=result.exec_code,
+                    log_tail=result.log,
+                    actor_id=actor_id,
+                    trigger_kind="manual",
+                )
+                await db.commit()
                 await notifications.emit(
                     kind=NotificationKind.DEPLOY_SUCCESS
                     if is_success
@@ -517,6 +583,71 @@ async def trigger_deploy_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
+
+
+# ──────────────────────────────────────────────── run history ──
+
+
+class DeployRunResponse(BaseModel):
+    """One row in the env's deploy history. Mirrors `models.DeployRun`."""
+
+    id: str
+    environment_id: str
+    version: str
+    status: str
+    bound_url: str | None = None
+    exec_code: str | None = None
+    log_tail: str = ""
+    started_at: datetime
+    finished_at: datetime | None = None
+    actor_id: str | None = None
+    trigger_kind: str = "manual"
+
+
+@router.get(
+    "/{env_id}/runs",
+    response_model=list[DeployRunResponse],
+)
+async def list_deploy_runs(
+    env_id: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: models.User = Depends(get_current_user),  # noqa: B008
+) -> list[DeployRunResponse]:
+    """Return the env's deploy history, newest first. Caps at 20 by
+    default so the UI's list view doesn't pull a year of churn on
+    every render. Used by the Rollback picker too — clicking
+    "Rollback" picks a row from this list."""
+    env_row = await _resolve_env(db, env_id=env_id)
+    try:
+        await fetch_project_for(db, actor=user, project_id=env_row.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    limit = max(1, min(int(limit), 100))
+    rows = (
+        await db.execute(
+            select(models.DeployRun)
+            .where(models.DeployRun.environment_id == env_id)
+            .order_by(models.DeployRun.started_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [
+        DeployRunResponse(
+            id=r.id,
+            environment_id=r.environment_id,
+            version=r.version,
+            status=r.status,
+            bound_url=r.bound_url,
+            exec_code=r.exec_code,
+            log_tail=r.log_tail or "",
+            started_at=r.started_at,
+            finished_at=r.finished_at,
+            actor_id=r.actor_id,
+            trigger_kind=r.trigger_kind,
+        )
+        for r in rows
+    ]
 
 
 # Keep `datetime` / `DeployStatusKind` imports alive for pydantic's

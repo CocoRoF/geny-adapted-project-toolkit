@@ -189,6 +189,11 @@ class Project(Base):
     )
     compose_profile_dev: Mapped[str | None] = mapped_column(String(80))
     compose_profile_prod: Mapped[str | None] = mapped_column(String(80))
+    # HMAC secret for inbound GitHub-style push webhooks. None until
+    # the user mints one via `POST /webhooks/secret`. We never echo it
+    # back after creation — the user copies the response once and
+    # pastes into GitHub's webhook config.
+    webhook_secret: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -240,6 +245,57 @@ class Environment(Base):
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_environments_project_name"),)
+
+
+# ─────────────────────────────────────────────────────── deploy_runs ──
+
+
+class DeployRun(Base):
+    """Per-deploy audit-grade row. Recorded for every trigger
+    (manual / webhook / rollback). Replaces the old `Environment.
+    last_run` JSONB-only model — we keep `last_run` as a denormalised
+    "most recent success" cache but the source of truth lives here so
+    the UI can show history + offer rollback to N previous versions."""
+
+    __tablename__ = "deploy_runs"
+
+    id: Mapped[str] = _pk()
+    environment_id: Mapped[str] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("environments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Snapshot of the deploy intent. `version` is the
+    # `DeployRequest.version` (freeform — image tag, git sha, etc.).
+    version: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Terminal state. `pending`/`running` rows exist only while the
+    # task is in flight; the finalizer flips them to one of the
+    # terminal kinds.
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    bound_url: Mapped[str | None] = mapped_column(Text)
+    exec_code: Mapped[str | None] = mapped_column(String(80))
+    # Last ~2 KB of stdout+stderr. Full streams are firehose — we cap
+    # at the same tail the orchestrator keeps in memory.
+    log_tail: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The user who triggered it (None when the webhook handler is
+    # the trigger). `ON DELETE SET NULL` so deleting a user doesn't
+    # vaporise the deploy history.
+    actor_id: Mapped[str | None] = mapped_column(
+        String(ULID_LEN), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # `manual` | `webhook:<branch>` | `rollback` | `schedule`.
+    # Free-text so we don't need a new enum every time we add a
+    # trigger source.
+    trigger_kind: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default="manual"
+    )
+
+    __table_args__ = (
+        Index("ix_deploy_runs_environment_id", "environment_id"),
+        Index("ix_deploy_runs_started_at", "started_at"),
+    )
 
 
 # ─────────────────────────────────────────────────────────── workspaces ──

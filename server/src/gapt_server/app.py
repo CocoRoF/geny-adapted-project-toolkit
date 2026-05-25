@@ -32,6 +32,7 @@ from gapt_server.routers import (
     services,
     sessions,
     terminal,
+    webhooks,
     workspaces,
 )
 from gapt_server.settings import Settings, get_settings
@@ -129,6 +130,7 @@ def create_app(
     app.include_router(environments.by_project)
     app.include_router(environments.by_id)
     app.include_router(introspect.router)
+    app.include_router(webhooks.router)
     return app
 
 
