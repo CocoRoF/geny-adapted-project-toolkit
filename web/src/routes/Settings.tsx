@@ -440,8 +440,15 @@ function AgentPrefsCard() {
 
   const onField =
     (key: keyof AgentPrefsFormState) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setForm((prev) => ({ ...prev, [key]: e.currentTarget.value }));
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      // Capture the value *outside* the updater. React reuses the
+      // synthetic event object, so by the time the updater runs the
+      // `currentTarget` may be null — exactly the `Cannot read
+      // properties of null (reading 'value')` crash the user hit
+      // when picking a different model in the dropdown.
+      const value = e.target.value;
+      setForm((prev) => ({ ...prev, [key]: value }));
+    };
 
   if (loading) {
     return (
