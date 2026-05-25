@@ -17,7 +17,7 @@ function ev(
 
 describe("deriveCostSnapshot", () => {
   it("returns zeros when no cost event has arrived", () => {
-    const snapshot = deriveCostSnapshot([ev(1, "text", { chunk: "hi" })]);
+    const snapshot = deriveCostSnapshot([ev(1, "text", { text: "hi" })]);
     expect(snapshot).toEqual({
       cost_usd: 0,
       input_tokens: 0,

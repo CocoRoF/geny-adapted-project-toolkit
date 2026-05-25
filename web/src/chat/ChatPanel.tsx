@@ -40,8 +40,11 @@ interface Props {
  *   4. "Interrupt" cancels the running invoke; "End session" archives
  *      it server-side and resets the panel.
  *
- * Cycles 3.9 (Plan/Act) / 3.10 (cost panel) wire deeper UI on top —
- * this cycle ships the bone-stock chat loop. */
+ * User messages are echoed *locally* (synthetic `user` events with
+ * negative seqs) so the chat history doesn't go blank between
+ * "send" and "first server event". The negative-seq convention keeps
+ * them out of the server's seq space (always positive) — replay /
+ * reconnect won't duplicate them. */
 export function ChatPanel({ projectId, workspaceId }: Props) {
   const { t } = useI18n();
   const [session, setSession] = useState<SessionResponse | null>(null);
@@ -51,6 +54,10 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const [mode, setMode] = useState<ChatMode>("act");
   const [showCostModal, setShowCostModal] = useState(false);
   const [guardSeq, setGuardSeq] = useState<number | null>(null);
+  // Synthetic user-message events kept client-side. Negative seqs so
+  // they sort before any server event of the same wall-clock moment.
+  const [userEvents, setUserEvents] = useState<SessionStreamEvent[]>([]);
+  const userSeqRef = useRef(-1);
   const dismissedGuardSeq = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -69,11 +76,36 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
 
   const stream = useSessionStream(session?.id ?? null);
 
+  // Merge local user echoes with server events. Stable sort by seq —
+  // user events live in the negative space (-1, -2, ...) and server
+  // events in the positive (1, 2, ...). To get chronological order
+  // we use the `ts` field as the secondary key.
+  const allEvents = useMemo<SessionStreamEvent[]>(() => {
+    return [...userEvents, ...stream.events].sort((a, b) => a.ts.localeCompare(b.ts));
+  }, [userEvents, stream.events]);
+
   // Auto-scroll on new events.
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [stream.events.length]);
+  }, [allEvents.length]);
+
+  // Is the assistant currently producing output?  True after a user
+  // turn until a `done` event (or `error`) lands. Used to render the
+  // "typing…" indicator under the message list.
+  const isThinking = useMemo(() => {
+    if (userEvents.length === 0) return false;
+    const lastUser = userEvents[userEvents.length - 1]!;
+    // Any terminal server event with a timestamp newer than the last
+    // user message ends the "thinking" state.
+    for (let i = stream.events.length - 1; i >= 0; i -= 1) {
+      const ev = stream.events[i]!;
+      if (ev.kind !== "done" && ev.kind !== "error") continue;
+      if (ev.ts > lastUser.ts) return false;
+      break;
+    }
+    return true;
+  }, [stream.events, userEvents]);
 
   const start = useCallback(() => {
     setError(null);
@@ -110,6 +142,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       }
       if (nextMode) setMode(nextMode);
       const activeMode = nextMode ?? mode;
+      const display = outgoing;  // what we show locally — *before* prepending PLAN_PREFIX
       if (activeMode === "plan" && outgoing.length > 0) {
         outgoing = `${PLAN_PREFIX}\n\n${outgoing}`;
       }
@@ -119,6 +152,19 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         setPending(false);
         return;
       }
+      // Echo the user's message into the local list *before* the POST
+      // returns so the bubble appears immediately, even on a slow link.
+      const seq = userSeqRef.current;
+      userSeqRef.current -= 1;
+      setUserEvents((prev) => [
+        ...prev,
+        {
+          seq,
+          kind: "text" as SessionEventKind,
+          data: { text: display, role: "user" },
+          ts: new Date().toISOString(),
+        },
+      ]);
       void invokeSession(session.id, outgoing)
         .catch((err: unknown) => {
           setError(
@@ -187,6 +233,14 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [session, stream.events, pending, interrupt]);
+
+  // Reset the local user echoes when the session changes so a fresh
+  // chat doesn't inherit the previous session's bubbles. Also clear
+  // them when the user archives mid-conversation.
+  useEffect(() => {
+    setUserEvents([]);
+    userSeqRef.current = -1;
+  }, [session?.id]);
 
   // Tool pairs derived from the live event list — drives the
   // tool-call cards inline. We render them in the position of their
@@ -323,7 +377,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             data-testid="chat-events"
             className="flex-1 space-y-2 overflow-y-auto px-3 py-3"
           >
-            {stream.events.map((event) => {
+            {mergeAssistantText(allEvents).map((event) => {
               // The call event renders as a ToolCallCard (with its
               // matched outcome folded in). Result/error events that
               // belong to a paired call are suppressed — they live
@@ -351,6 +405,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               }
               return <EventRow key={event.seq} event={event} workspaceId={workspaceId} />;
             })}
+            {isThinking ? <TypingIndicator /> : null}
           </div>
 
           <form onSubmit={onSubmit} className="shrink-0 border-t border-border bg-bg-elevated p-3">
@@ -460,15 +515,84 @@ function maybeGaptEditPayload(data: Record<string, unknown>): GaptEditPayload | 
   };
 }
 
+function TypingIndicator() {
+  return (
+    <div
+      data-testid="chat-typing"
+      className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-fg-muted"
+    >
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent [animation-delay:120ms]" />
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent [animation-delay:240ms]" />
+      <span className="ml-1">…</span>
+    </div>
+  );
+}
+
+/** Collapse consecutive assistant `text` chunks into one merged bubble.
+ *
+ * The executor streams a `text.delta` per chunk (often per few
+ * characters); rendering each as its own row makes the assistant's
+ * answer look like a vertical column of single words. We group runs
+ * with the same `role` (anything other than `"user"` counts as
+ * assistant) into one synthetic event whose `data.text` is the
+ * concatenation. Non-text events break the run.
+ *
+ * The merged event keeps the *first* chunk's seq + ts (stable React
+ * key + sort position). User echoes (role="user") are never merged
+ * into assistant runs. */
+function mergeAssistantText(events: SessionStreamEvent[]): SessionStreamEvent[] {
+  const out: SessionStreamEvent[] = [];
+  let bufferText = "";
+  let bufferHead: SessionStreamEvent | null = null;
+
+  function flush() {
+    if (bufferHead) {
+      out.push({
+        ...bufferHead,
+        data: { ...bufferHead.data, text: bufferText },
+      });
+      bufferText = "";
+      bufferHead = null;
+    }
+  }
+
+  for (const ev of events) {
+    const isAssistantText =
+      ev.kind === "text" && asString(ev.data["role"]) !== "user";
+    if (isAssistantText) {
+      const chunk = asString(ev.data["text"]) || asString(ev.data["chunk"]);
+      if (!bufferHead) bufferHead = ev;
+      bufferText += chunk;
+      continue;
+    }
+    flush();
+    out.push(ev);
+  }
+  flush();
+  return out;
+}
+
 function EventRow({ event, workspaceId }: EventRowProps) {
   const { t } = useI18n();
   const kind: SessionEventKind = event.kind;
   if (kind === "text") {
-    const chunk = asString(event.data["chunk"]);
+    // Backend emits `{text: ...}`; legacy stubs / older providers
+    // used `{chunk: ...}`. Accept both.
+    const text = asString(event.data["text"]) || asString(event.data["chunk"]);
+    const isUser = asString(event.data["role"]) === "user";
     return (
-      <div data-event-kind="text" className="rounded-md bg-bg-elevated px-3 py-2">
+      <div
+        data-event-kind="text"
+        data-role={isUser ? "user" : "assistant"}
+        className={
+          isUser
+            ? "ml-auto max-w-[85%] rounded-md bg-accent/15 px-3 py-2"
+            : "max-w-[95%] rounded-md bg-bg-elevated px-3 py-2"
+        }
+      >
         <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
-          {chunk}
+          {text}
         </pre>
       </div>
     );

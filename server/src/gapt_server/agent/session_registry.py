@@ -177,10 +177,12 @@ async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
         # Feed them into the cost accumulator so the snapshot the lifecycle
         # wrapper emits in DONE has non-zero totals, and forward a COST
         # frame so the chat header updates live (not just at done).
+        # Payload shape is FLAT (`cost_usd`, `input_tokens`, ...) to match
+        # the UI's `deriveCostSnapshot` reader.
         if event_type == "token.tracked":
             _update_accumulator(runtime, data)
             await runtime.bus.publish(
-                SessionEventKind.COST, {"snapshot": runtime.accumulator.snapshot()}
+                SessionEventKind.COST, runtime.accumulator.snapshot()
             )
             continue
 

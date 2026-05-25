@@ -74,6 +74,10 @@ export function FileEditor({ workspaceId, openPath }: Props) {
   const [doc, setDoc] = useState<DocState | null>(null);
   const [loading, setLoading] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always-fresh ref to the current doc so the Monaco Ctrl+S command
+  // (registered once in onMount) can flush the *latest* buffer
+  // without re-binding.
+  const docRef = useRef<DocState | null>(null);
 
   // Load the file whenever `openPath` changes.
   useEffect(() => {
@@ -119,32 +123,45 @@ export function FileEditor({ workspaceId, openPath }: Props) {
   }, [workspaceId, openPath]);
 
   const flushSave = useCallback(
-    (state: DocState) => {
+    async (state: DocState) => {
       setDoc((prev) => (prev && prev.path === state.path ? { ...prev, status: "saving" } : prev));
-      void writeFile(workspaceId, state.path, {
-        content: state.text,
-        encoding: state.encoding,
-      })
-        .then(() => {
+      // One automatic retry covers the common "server restarted /
+      // tunnel hiccupped" failure mode. Transient "Failed to fetch"
+      // would otherwise leave the editor stuck on "error" forever.
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await writeFile(workspaceId, state.path, {
+            content: state.text,
+            encoding: state.encoding,
+          });
           setDoc((prev) =>
             prev && prev.path === state.path
               ? { ...prev, status: "saved", errorReason: null }
               : prev,
           );
-        })
-        .catch((err: unknown) => {
-          const reason =
-            err instanceof ApiError
-              ? `${err.code}: ${err.reason}`
-              : err instanceof Error
-                ? err.message
-                : String(err);
-          setDoc((prev) =>
-            prev && prev.path === state.path
-              ? { ...prev, status: "error", errorReason: reason }
-              : prev,
-          );
-        });
+          return;
+        } catch (err) {
+          lastErr = err;
+          // Don't retry an ApiError — the server responded with a real
+          // 4xx/5xx; retrying just spams it. Retry only on network /
+          // fetch failures (TypeError: Failed to fetch).
+          if (err instanceof ApiError) break;
+          // Tiny backoff before retrying transient network failures.
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+      const reason =
+        lastErr instanceof ApiError
+          ? `${lastErr.code}: ${lastErr.reason}`
+          : lastErr instanceof Error
+            ? lastErr.message
+            : String(lastErr);
+      setDoc((prev) =>
+        prev && prev.path === state.path
+          ? { ...prev, status: "error", errorReason: reason }
+          : prev,
+      );
     },
     [workspaceId],
   );
@@ -174,9 +191,55 @@ export function FileEditor({ workspaceId, openPath }: Props) {
     };
   }, []);
 
+  // Keep docRef in sync so the Monaco Ctrl+S command flushes the
+  // latest buffer regardless of how many re-renders happened since.
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
+
+  // Belt-and-braces: catch Ctrl+S / Cmd+S on *window* too. Monaco
+  // only swallows the shortcut while the editor has focus, but the
+  // user might Ctrl+S from the tree / chat / a tab. We always
+  // preventDefault when an editable doc is loaded, so the browser
+  // never opens its "Save Page" dialog inside the IDE.
+  useEffect(() => {
+    if (!openPath) return;
+    const handler = (e: KeyboardEvent) => {
+      const isSave = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && !e.shiftKey;
+      if (!isSave) return;
+      e.preventDefault();
+      const current = docRef.current;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (current && current.encoding === "utf-8") void flushSave(current);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [openPath, flushSave]);
+
   const language = useMemo(() => (doc ? languageFor(doc.path) : "plaintext"), [doc]);
 
-  const onMount: OnMount = () => undefined;
+  // Monaco swallows Ctrl+S (and most editor-targeted shortcuts) only
+  // *after* a command is bound to the chord. Without this binding the
+  // browser's "Save Page" dialog fires. The command also cancels any
+  // pending autosave timer so we don't issue a stale duplicate.
+  const onMount: OnMount = useCallback(
+    (editor, monaco) => {
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+        }
+        const current = docRef.current;
+        if (current && current.encoding === "utf-8") {
+          void flushSave(current);
+        }
+      });
+    },
+    [flushSave],
+  );
   const monacoTheme = themeResolved === "dark" ? "vs-dark" : "light";
 
   if (!openPath) {
