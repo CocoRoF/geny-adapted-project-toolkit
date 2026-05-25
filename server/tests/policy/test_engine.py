@@ -23,11 +23,16 @@ def _agent() -> Actor:
 
 
 @pytest.mark.asyncio
-async def test_deploy_prod_denied_for_anyone() -> None:
+async def test_deploy_prod_requires_2fa_for_user_denies_for_agent() -> None:
+    """User clicks of the deploy button are auth-gated (REQUIRE_2FA)
+    but not blanket-denied. Agent sessions still get a hard DENY
+    via `_AGENT_FORBIDDEN_ACTIONS` — the kind check upgrades the
+    decision before it reaches the caller."""
     engine = PolicyEngine()
-    for actor in (_user(), _agent()):
-        ev = await engine.evaluate(action="deploy.prod", actor=actor)
-        assert ev.decision is PolicyDecision.DENY
+    ev_user = await engine.evaluate(action="deploy.prod", actor=_user())
+    assert ev_user.decision is PolicyDecision.REQUIRE_2FA
+    ev_agent = await engine.evaluate(action="deploy.prod", actor=_agent())
+    assert ev_agent.decision is PolicyDecision.DENY
 
 
 @pytest.mark.asyncio

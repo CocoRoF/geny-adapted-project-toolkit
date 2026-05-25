@@ -77,8 +77,14 @@ class PolicyEvaluation:
 
 
 _DEFAULTS: dict[str, PolicyDecision] = {
-    # Deploy
-    "deploy.prod": PolicyDecision.DENY,
+    # Deploy. The blanket DENY on `deploy.prod` was unfair to *user*
+    # clicks — it lumped a manual deploy button-press in with the
+    # agent path. Agents are caught separately by
+    # `_AGENT_FORBIDDEN_ACTIONS` (see below), where the kind check
+    # upgrades any of these to DENY when the actor is an agent
+    # session. For users the floor is REQUIRE_2FA — they still have
+    # to authenticate, but the click itself isn't pre-rejected.
+    "deploy.prod": PolicyDecision.REQUIRE_2FA,
     "deploy.dev": PolicyDecision.REQUIRE_USER_APPROVAL,
     "deploy.staging": PolicyDecision.REQUIRE_USER_APPROVAL,
     # Secrets
