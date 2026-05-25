@@ -418,6 +418,24 @@ class SessionRegistry:
         async with self._lock:
             return self._entries.pop(session_id, None)
 
+    async def invalidate_user(self, user_id: str) -> int:
+        """Drop every cached runtime that belongs to `user_id` so the
+        next invoke / stream forces a fresh `rehydrate_session` —
+        picking up any prefs the user just saved (model, max_tokens,
+        permission_mode, ...). Returns the number of runtimes
+        evicted. The runtime's `aclose` is awaited *outside* the
+        registry lock to avoid holding it during the close hand-off.
+        """
+        async with self._lock:
+            to_drop = [
+                rt for rt in self._entries.values() if rt.user_id == user_id
+            ]
+            for rt in to_drop:
+                self._entries.pop(rt.session_id, None)
+        for rt in to_drop:
+            await rt.aclose()
+        return len(to_drop)
+
     async def aclose(self) -> None:
         async with self._lock:
             runtimes = list(self._entries.values())

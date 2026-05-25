@@ -23,7 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from gapt_server.container import get_db_session
+from gapt_server.agent.session_registry import SessionRegistry  # noqa: TC001
+from gapt_server.container import get_db_session, get_session_registry
 from gapt_server.db import models  # noqa: TC001 — runtime introspection
 from gapt_server.db.ulid import new_ulid
 from gapt_server.routers.auth import get_current_user
@@ -100,8 +101,18 @@ async def put_prefs(
     payload: AgentPrefsPayload,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: models.User = Depends(get_current_user),  # noqa: B008
+    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
 ) -> AgentPrefsResponse:
-    """Upsert — every field is optional; `null` clears that override."""
+    """Upsert — every field is optional; `null` clears that override.
+
+    Also evicts the user's cached session runtimes so the next
+    invoke / stream forces `rehydrate_session` to rebuild the pipeline
+    with the fresh prefs. Without this eviction a user who changes
+    model / permission_mode / etc. while a session is open would
+    keep talking to the *old* pipeline until they explicitly archive
+    + restart — confusing UX ("I picked Opus but it still uses
+    Sonnet").
+    """
     values = {
         "id": new_ulid(),
         "user_id": user.id,
@@ -126,5 +137,12 @@ async def put_prefs(
     )
     await db.execute(stmt)
     await db.commit()
+    # Evict cached runtimes so the next invoke rehydrates with the
+    # new prefs. Best-effort — if the registry is in a weird state
+    # we still want the PUT to succeed and return the saved row.
+    try:
+        await registry.invalidate_user(user.id)
+    except Exception:  # noqa: BLE001
+        pass
     row = await _fetch(db, user.id)
     return _row_to_response(row)
