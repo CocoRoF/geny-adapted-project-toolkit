@@ -12,22 +12,16 @@ import psycopg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,7 +51,6 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _ProjFixture:
     app: FastAPI
-    idp: MagicLinkIdp
     audit: InMemoryAuditSink
 
 
@@ -65,35 +58,16 @@ class _ProjFixture:
 async def proj_fx() -> AsyncIterator[_ProjFixture]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
+    # auth_enabled=False makes every request auto-authenticate as the
+    # admin; tests don't need to exercise the cookie dance.
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
     container = build_container(settings, audit_sink=audit)
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _ProjFixture(app=app, idp=idp, audit=audit)
+        yield _ProjFixture(app=app, audit=audit)
     finally:
         await container.aclose()
-
-
-async def _login_and_get_org(client: AsyncClient, idp: MagicLinkIdp, email: str) -> tuple[str, str]:
-    """Returns (user_id, org_id) for the just-logged-in user (their default org)."""
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(idp._tokens._items))
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    # Read the default org id directly from the DB via the same session
-    # factory the app uses.
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:  # type: ignore[union-attr]
-        row = (
-            await db.execute(
-                select(models.OrgMembership).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-    return user_id, row.org_id
 
 
 @pytest.mark.asyncio
@@ -101,12 +75,9 @@ async def test_project_lifecycle(proj_fx: _ProjFixture) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=proj_fx.app), base_url="http://test"
     ) as client:
-        _user_id, org_id = await _login_and_get_org(client, proj_fx.idp, "alice@example.com")
-
         created = await client.post(
             "/api/projects",
             json={
-                "org_id": org_id,
                 "slug": "demo",
                 "display_name": "Demo Project",
                 "git_remote_url": "https://github.com/CocoRoF/demo.git",
@@ -157,9 +128,7 @@ async def test_duplicate_slug_409(proj_fx: _ProjFixture) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=proj_fx.app), base_url="http://test"
     ) as client:
-        _user_id, org_id = await _login_and_get_org(client, proj_fx.idp, "alice@example.com")
         body = {
-            "org_id": org_id,
             "slug": "twin",
             "display_name": "Twin",
             "git_remote_url": "https://example.com/twin.git",
@@ -172,52 +141,13 @@ async def test_duplicate_slug_409(proj_fx: _ProjFixture) -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_member_is_forbidden(proj_fx: _ProjFixture) -> None:
-    # User A creates a project; user B logs in to a *different* org
-    # (because second user gets a new default org seeded — actually
-    # `_ensure_user` seeds default org once, so B joins the same org
-    # automatically only as a non-member by virtue of having no
-    # membership row). User B should not see / GET the project.
-    async with AsyncClient(
-        transport=ASGITransport(app=proj_fx.app), base_url="http://test"
-    ) as client:
-        _, org_id = await _login_and_get_org(client, proj_fx.idp, "alice@example.com")
-        created = await client.post(
-            "/api/projects",
-            json={
-                "org_id": org_id,
-                "slug": "private",
-                "display_name": "Private",
-                "git_remote_url": "https://example.com/private.git",
-            },
-        )
-        assert created.status_code == 201
-        project_id = created.json()["id"]
-
-        # Switch user.
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-        await _login_and_get_org(client, proj_fx.idp, "bob@example.com")
-
-        # Bob's list does not include alice's project; direct GET is 403.
-        bob_list = await client.get("/api/projects")
-        assert bob_list.status_code == 200
-        assert all(p["id"] != project_id for p in bob_list.json())
-        forbidden = await client.get(f"/api/projects/{project_id}")
-        assert forbidden.status_code == 403
-        assert forbidden.json()["detail"]["code"] == "project.forbidden"
-
-
-@pytest.mark.asyncio
 async def test_environment_crud(proj_fx: _ProjFixture) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=proj_fx.app), base_url="http://test"
     ) as client:
-        _, org_id = await _login_and_get_org(client, proj_fx.idp, "alice@example.com")
         created = await client.post(
             "/api/projects",
             json={
-                "org_id": org_id,
                 "slug": "envtest",
                 "display_name": "Env Test",
                 "git_remote_url": "https://example.com/envtest.git",

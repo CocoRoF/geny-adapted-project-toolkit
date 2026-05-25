@@ -228,7 +228,7 @@ class LocalComposeTarget:
         self,
         *,
         project: str,
-        request: "DeployRequest",
+        request: DeployRequest,
         env: dict[str, str],
     ) -> str | None:
         """Connect the primary service container to gapt-net and
@@ -416,7 +416,7 @@ class LocalComposeTarget:
                         state.log_tail
                         + f"\n[gapt] routed prod stack → {bound_url}\n"
                     )[-2000:]
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("deploy.routing_failed", exc_info=exc)
                 state.log_tail = (
                     state.log_tail + f"\n[gapt] routing step failed: {exc}\n"

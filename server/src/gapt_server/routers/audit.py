@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from gapt_server.container import get_db_session
 from gapt_server.db import enums, models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
@@ -61,7 +62,7 @@ async def list_project_audit(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[AuditEntry]:
     try:
         await fetch_project_for(db, actor=user, project_id=project_id)
@@ -128,7 +129,7 @@ async def export_project_audit(
     since: datetime | None = Query(default=None),  # noqa: B008
     until: datetime | None = Query(default=None),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Stream the filtered audit rows as CSV or JSONL.
 

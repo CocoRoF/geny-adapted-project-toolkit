@@ -6,7 +6,7 @@ import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { status, error } = useAuth();
+  const { status, me, error } = useAuth();
   const { t } = useI18n();
   const location = useLocation();
 
@@ -33,6 +33,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         </div>
       </div>
     );
+  }
+  // When the operator runs with `GAPT_AUTH_ENABLED=false` the server
+  // treats every request as the admin and `/me` returns 200 with
+  // `auth_enabled: false`. In that mode we let any route render even
+  // if our local status drifted to `signed_out` — there's no login
+  // screen to redirect to in a meaningful sense.
+  if (me?.auth_enabled === false) {
+    return <>{children}</>;
   }
   if (status === "signed_out") {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;

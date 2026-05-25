@@ -49,10 +49,10 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
           {signedIn ? (
             <div className="ml-1 flex items-center gap-2 border-l border-border pl-3">
               <span
-                title={me.email}
+                title={me.display_name ?? me.user_id}
                 className="hidden max-w-[180px] truncate text-[12px] text-fg-muted md:block"
               >
-                {me.email}
+                {me.display_name ?? me.user_id}
               </span>
               <Button
                 variant="ghost"

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from gapt_server.container import get_notifications
-from gapt_server.db import models  # noqa: TC001 — Depends introspection
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.notifications import NotificationKind, NotificationService
 from gapt_server.routers.auth import get_current_user
 
@@ -34,7 +34,7 @@ class TestNotificationRequest(BaseModel):
 async def list_notifications(
     limit: int = Query(default=50, ge=1, le=200),
     notifications: NotificationService = Depends(get_notifications),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[dict[str, Any]]:
     items = await notifications.list_for(user.id, limit=limit)
     return [n.to_wire() for n in items]
@@ -44,7 +44,7 @@ async def list_notifications(
 async def emit_test_notification(
     payload: TestNotificationRequest,
     notifications: NotificationService = Depends(get_notifications),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
     n = await notifications.emit(
         kind=payload.kind,

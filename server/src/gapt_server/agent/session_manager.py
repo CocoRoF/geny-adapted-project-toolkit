@@ -36,14 +36,14 @@ from gapt_server.agent.credentials import (
     build_for_session,
     claude_binary,
 )
-from gapt_server.agent.environment_service import (  # noqa: TC001  — dataclass field type
+from gapt_server.agent.environment_service import (
     GaptEnvironmentService,
     ManifestOverrides,
 )
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditEvent, AuditSink, NullAuditSink
-from gapt_server.domains.projects.service import ProjectError
+from gapt_server.domains.projects.service import fetch_project_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from geny_executor import Pipeline
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from gapt_server.domains.auth import AdminPrincipal
     from gapt_server.domains.secrets.vault import SecretVault
 
 logger = structlog.get_logger(__name__)
@@ -96,7 +97,7 @@ class ProjectAwareSessionManager:
         self,
         db: AsyncSession,
         *,
-        user: models.User,
+        user: AdminPrincipal,
         workspace_id: str,
         env_id: str | None = None,
         secret_refs: SecretRefMap | None = None,
@@ -105,14 +106,14 @@ class ProjectAwareSessionManager:
         mcp_config: dict[str, Any] | None = None,
         settings_path: str | None = None,
     ) -> AgentSessionHandle:
-        # 1) Authorise + locate the workspace.
+        # 1) Locate the workspace + verify the project exists.
         ws = await self._fetch_workspace(db, workspace_id)
-        await self._ensure_project_membership(db, user_id=user.id, project_id=ws.project_id)
+        await fetch_project_for(db, actor=user, project_id=ws.project_id)
 
         # 2) Build credentials. If the caller didn't supply a vault we
         #    still bootstrap claude_code_cli (host OAuth path); SDK
         #    provider keys are skipped.
-        prefs = await _load_user_prefs(db, user_id=user.id)
+        prefs = await _load_admin_prefs(db)
         permission_mode = (
             prefs.permission_mode if prefs and prefs.permission_mode else "bypassPermissions"
         )
@@ -163,7 +164,6 @@ class ProjectAwareSessionManager:
             id=session_id,
             project_id=ws.project_id,
             workspace_id=ws.id,
-            user_id=user.id,
             env_manifest_id=env_manifest_id,
             status=enums.AgentSessionStatus.ACTIVE,
         )
@@ -207,7 +207,7 @@ class ProjectAwareSessionManager:
         self,
         db: AsyncSession,
         *,
-        user: models.User,
+        user: AdminPrincipal,
         session_id: str,
         vault: SecretVault | None = None,
         mcp_config: dict[str, Any] | None = None,
@@ -224,7 +224,7 @@ class ProjectAwareSessionManager:
         that the session was originally bound to, and rebuilds the
         Pipeline from the same manifest. Status is unchanged."""
         row = await self._fetch_session(db, session_id)
-        await self._ensure_project_membership(db, user_id=user.id, project_id=row.project_id)
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
         if row.status == enums.AgentSessionStatus.ARCHIVED:
             raise SessionManagerError(
                 "session.archived",
@@ -232,7 +232,7 @@ class ProjectAwareSessionManager:
             )
         ws = await self._fetch_workspace(db, row.workspace_id)
 
-        prefs = await _load_user_prefs(db, user_id=user.id)
+        prefs = await _load_admin_prefs(db)
         permission_mode = (
             prefs.permission_mode if prefs and prefs.permission_mode else "bypassPermissions"
         )
@@ -281,7 +281,7 @@ class ProjectAwareSessionManager:
             session_id=session_id,
             project_id=row.project_id,
             workspace_id=row.workspace_id,
-            user_id=row.user_id,
+            user_id=user.id,
             env_manifest_id=row.env_manifest_id,
             pipeline=pipeline,
             worktree_path=ws.worktree_path,
@@ -294,11 +294,11 @@ class ProjectAwareSessionManager:
         self,
         db: AsyncSession,
         *,
-        user: models.User,
+        user: AdminPrincipal,
         session_id: str,
     ) -> None:
         row = await self._fetch_session(db, session_id)
-        await self._ensure_project_membership(db, user_id=user.id, project_id=row.project_id)
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
         row.status = enums.AgentSessionStatus.ARCHIVED
         await db.flush()
         await self.audit_sink.log(
@@ -343,29 +343,22 @@ class ProjectAwareSessionManager:
             )
         return row
 
-    @staticmethod
-    async def _ensure_project_membership(
-        db: AsyncSession, *, user_id: str, project_id: str
-    ) -> None:  # noqa: PLR0913
-        return await _ensure_project_membership_impl(db, user_id=user_id, project_id=project_id)
-
-
-async def _load_user_prefs(
-    db: AsyncSession, *, user_id: str
-) -> models.UserAgentPrefs | None:
-    """Fetch the user's `user_agent_prefs` row (or None when unset).
+async def _load_admin_prefs(
+    db: AsyncSession,
+) -> models.AdminAgentPrefs | None:
+    """Fetch the singleton admin agent prefs row (or None when unset).
     Used twice per session boot — once to feed `permission_mode`
     into `build_for_session` (creds layer), once to derive
     `ManifestOverrides` for the env_service (manifest layer)."""
     return (
         await db.execute(
-            select(models.UserAgentPrefs).where(models.UserAgentPrefs.user_id == user_id)
+            select(models.AdminAgentPrefs).where(models.AdminAgentPrefs.id == "admin")
         )
     ).scalar_one_or_none()
 
 
 def _prefs_to_overrides(
-    prefs: models.UserAgentPrefs | None,
+    prefs: models.AdminAgentPrefs | None,
 ) -> ManifestOverrides | None:
     """Project the prefs row onto the subset of fields that patch the
     manifest. `permission_mode` is *not* part of the manifest — it's
@@ -383,24 +376,6 @@ def _prefs_to_overrides(
 
 # Kept for back-compat with any external callers.
 async def _load_overrides(
-    db: AsyncSession, *, user_id: str
+    db: AsyncSession,
 ) -> ManifestOverrides | None:
-    return _prefs_to_overrides(await _load_user_prefs(db, user_id=user_id))
-
-
-async def _ensure_project_membership_impl(
-    db: AsyncSession, *, user_id: str, project_id: str
-) -> None:
-    row = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == project_id)
-                & (models.ProjectMembership.user_id == user_id)
-            )
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise ProjectError(
-            "project.forbidden",
-            f"user {user_id} has no membership on project {project_id}",
-        )
+    return _prefs_to_overrides(await _load_admin_prefs(db))

@@ -143,7 +143,7 @@ def _find_python_root(root: Path) -> tuple[Path, set[str], Path] | None:
 def _parse_pyproject(path: Path) -> set[str]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 — malformed pyproject; bail
+    except Exception:
         return set()
     names: set[str] = set()
     # PEP 621

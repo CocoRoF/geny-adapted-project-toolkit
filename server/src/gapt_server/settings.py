@@ -39,7 +39,18 @@ class Settings(BaseSettings):
     claude_binary_path: str = "/usr/local/bin/claude"
     default_manifest_id: str = "gapt_default"
 
-    # --- security ---
+    # --- security / admin auth ---
+    # MinIO/Jenkins-style single-admin auth. There is no multi-user
+    # account system — GAPT is a self-hosted solo tool. Set these env
+    # vars to lock the instance; defaults are admin/admin so a fresh
+    # boot is one click away.
+    admin_id: str = "admin"
+    admin_password: str = "admin"
+    # When false, every request is treated as the admin without
+    # requiring a login. Use for trusted localhost-only deployments
+    # where the cookie dance is just friction. Default true keeps the
+    # login screen in place.
+    auth_enabled: bool = True
     session_cookie_name: str = "gapt_session"
     session_secret: str = "dev-only-secret-change-me"
     daemon_jwt_secret: str = "dev-only-daemon-secret-change-me"

@@ -26,16 +26,14 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 
 EXPECTED_TABLES: frozenset[str] = frozenset(
     {
+        "admin_agent_prefs",
         "agent_sessions",
         "audit_events",
+        "deploy_runs",
         "environments",
-        "org_memberships",
-        "orgs",
-        "project_memberships",
         "projects",
         "sandboxes",
         "secrets",
-        "users",
         "workspaces",
     }
 )
@@ -47,7 +45,6 @@ EXPECTED_ENUMS: frozenset[str] = frozenset(
         "audit_outcome_enum",
         "deploy_target_kind_enum",
         "git_provider_enum",
-        "role_enum",
         "sandbox_status_enum",
         "secret_backend_enum",
         "secret_owner_scope_enum",
@@ -121,10 +118,10 @@ def test_upgrade_downgrade_clean() -> None:
 
     _alembic(["upgrade", "head"], dsn=dsn)
     assert _list_tables(sync_dsn) == EXPECTED_TABLES, (
-        "upgrade head did not produce the expected 11 control-plane tables"
+        "upgrade head did not produce the expected control-plane tables"
     )
     assert _list_enums(sync_dsn) == EXPECTED_ENUMS, (
-        "upgrade head did not produce the expected 10 enum types"
+        "upgrade head did not produce the expected enum types"
     )
 
     _alembic(["downgrade", "base"], dsn=dsn)

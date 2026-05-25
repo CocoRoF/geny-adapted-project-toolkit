@@ -62,7 +62,7 @@ async def reconcile_once() -> tuple[int, int]:
     rc, names_blob, err = await _run_docker(
         "ps",
         "--filter",
-        f"label=com.docker.compose.project",
+        "label=com.docker.compose.project",
         "--format",
         "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}",
     )
@@ -93,7 +93,7 @@ async def reconcile_once() -> tuple[int, int]:
                     name,
                     GAPT_NETWORK,
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("reconciler.iter_failed container=%s", name)
     return scanned, reconnected
 
@@ -150,7 +150,7 @@ async def reconcile_loop() -> None:
                     )
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("reconciler.sweep_failed")
             await asyncio.sleep(RECONCILE_INTERVAL_S)
     except asyncio.CancelledError:

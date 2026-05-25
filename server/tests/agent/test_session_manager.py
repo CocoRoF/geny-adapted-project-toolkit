@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,11 +22,9 @@ from gapt_server.agent import (
 from gapt_server.db import create_engine, create_session_factory, enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.projects.service import ProjectError
+from gapt_server.domains.auth import AdminPrincipal
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -59,36 +58,22 @@ class _SmFixture:
     factory: async_sessionmaker
     audit: InMemoryAuditSink
     manager: ProjectAwareSessionManager
-    user: models.User
+    admin: AdminPrincipal
     project: models.Project
     workspace: models.Workspace
 
 
 async def _seed(factory):  # type: ignore[no-untyped-def]
-    """Insert one user / org / project / workspace and return them."""
+    """Insert one project / workspace and return them."""
     async with factory() as db:
-        user = models.User(email="alice@example.com")
-        db.add(user)
-        await db.flush()
-
-        org = models.Org(slug="default", name="Default", owner_id=user.id)
-        db.add(org)
-        await db.flush()
-        db.add(models.OrgMembership(org_id=org.id, user_id=user.id, role=enums.Role.OWNER))
-
         project = models.Project(
             slug="demo",
-            org_id=org.id,
-            owner_id=user.id,
             display_name="demo",
             git_remote_url="https://example.com/demo.git",
             git_provider=enums.GitProvider.GITHUB,
         )
         db.add(project)
         await db.flush()
-        db.add(
-            models.ProjectMembership(project_id=project.id, user_id=user.id, role=enums.Role.OWNER)
-        )
 
         workspace = models.Workspace(
             id=new_ulid(),
@@ -99,7 +84,7 @@ async def _seed(factory):  # type: ignore[no-untyped-def]
         )
         db.add(workspace)
         await db.commit()
-        return user, project, workspace
+        return project, workspace
 
 
 @pytest_asyncio.fixture
@@ -114,15 +99,16 @@ async def sm_fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_SmFixture]:
     audit = InMemoryAuditSink()
     env_svc = GaptEnvironmentService()
     manager = ProjectAwareSessionManager(env_service=env_svc, audit_sink=audit)
+    admin = AdminPrincipal(id="admin", display_name="admin")
 
-    user, project, workspace = await _seed(factory)
+    project, workspace = await _seed(factory)
     try:
         yield _SmFixture(
             engine=engine,
             factory=factory,
             audit=audit,
             manager=manager,
-            user=user,
+            admin=admin,
             project=project,
             workspace=workspace,
         )
@@ -135,7 +121,7 @@ async def test_create_session_happy_path(sm_fx: _SmFixture) -> None:
     async with sm_fx.factory() as db:
         handle = await sm_fx.manager.create_session(
             db,
-            user=sm_fx.user,
+            user=sm_fx.admin,
             workspace_id=sm_fx.workspace.id,
         )
         await db.commit()
@@ -164,7 +150,7 @@ async def test_create_session_with_env_id(sm_fx: _SmFixture) -> None:
     async with sm_fx.factory() as db:
         handle = await sm_fx.manager.create_session(
             db,
-            user=sm_fx.user,
+            user=sm_fx.admin,
             workspace_id=sm_fx.workspace.id,
             env_id="gapt_review",
         )
@@ -178,28 +164,10 @@ async def test_create_session_unknown_workspace(sm_fx: _SmFixture) -> None:
         with pytest.raises(SessionManagerError) as exc:
             await sm_fx.manager.create_session(
                 db,
-                user=sm_fx.user,
+                user=sm_fx.admin,
                 workspace_id="01KS90000000000000000XXXXX",
             )
         assert exc.value.code == "workspace.not_found"
-
-
-@pytest.mark.asyncio
-async def test_create_session_no_membership(sm_fx: _SmFixture) -> None:
-    # Insert a *second* user with no membership row.
-    async with sm_fx.factory() as db:
-        intruder = models.User(email="mallory@example.com")
-        db.add(intruder)
-        await db.commit()
-
-    async with sm_fx.factory() as db:
-        with pytest.raises(ProjectError) as exc:
-            await sm_fx.manager.create_session(
-                db,
-                user=intruder,
-                workspace_id=sm_fx.workspace.id,
-            )
-        assert exc.value.code == "project.forbidden"
 
 
 @pytest.mark.asyncio
@@ -208,7 +176,7 @@ async def test_create_session_unknown_manifest(sm_fx: _SmFixture) -> None:
         with pytest.raises(SessionManagerError) as exc:
             await sm_fx.manager.create_session(
                 db,
-                user=sm_fx.user,
+                user=sm_fx.admin,
                 workspace_id=sm_fx.workspace.id,
                 env_id="does_not_exist",
             )
@@ -220,13 +188,13 @@ async def test_archive_session(sm_fx: _SmFixture) -> None:
     async with sm_fx.factory() as db:
         handle = await sm_fx.manager.create_session(
             db,
-            user=sm_fx.user,
+            user=sm_fx.admin,
             workspace_id=sm_fx.workspace.id,
         )
         await db.commit()
 
     async with sm_fx.factory() as db:
-        await sm_fx.manager.archive(db, user=sm_fx.user, session_id=handle.session_id)
+        await sm_fx.manager.archive(db, user=sm_fx.admin, session_id=handle.session_id)
         await db.commit()
 
         row = (
@@ -245,6 +213,6 @@ async def test_archive_unknown_session(sm_fx: _SmFixture) -> None:
     async with sm_fx.factory() as db:
         with pytest.raises(SessionManagerError) as exc:
             await sm_fx.manager.archive(
-                db, user=sm_fx.user, session_id="01KS90000000000000000XXXXX"
+                db, user=sm_fx.admin, session_id="01KS90000000000000000XXXXX"
             )
         assert exc.value.code == "session.not_found"

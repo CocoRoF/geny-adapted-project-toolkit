@@ -38,9 +38,10 @@ import contextvars
 import os
 import sys
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
-from geny_executor.llm_client._cli_runtime import CLIProcessRunner, scrub_env
+from geny_executor.llm_client._cli_runtime import CLIProcessRunner
 from geny_executor.llm_client.base import BaseClient
 from geny_executor.llm_client.translators._cli import StreamJsonAccumulator
 from geny_executor.stages.s06_api.artifact.default.stage import (
@@ -60,12 +61,12 @@ if TYPE_CHECKING:
 # sandbox's container. ContextVar (not module global) so two concurrent
 # session invocations in the same process can target different
 # containers.
-_CURRENT_SANDBOX: contextvars.ContextVar[Optional["WorkspaceSandbox"]] = (
+_CURRENT_SANDBOX: contextvars.ContextVar[WorkspaceSandbox | None] = (
     contextvars.ContextVar("gapt_current_sandbox", default=None)
 )
 
 
-def set_current_sandbox(sandbox: Optional["WorkspaceSandbox"]) -> contextvars.Token:
+def set_current_sandbox(sandbox: WorkspaceSandbox | None) -> contextvars.Token:
     """Set the sandbox the current async task should route CLI spawns
     into. Returns the token the caller should pass to
     `reset_current_sandbox` in a `finally` block."""
@@ -80,7 +81,7 @@ _ORIGINAL_FEED = StreamJsonAccumulator.feed
 _ORIGINAL_SPAWN = CLIProcessRunner._spawn  # type: ignore[attr-defined]
 
 
-def _patched_feed(self: StreamJsonAccumulator, line: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _patched_feed(self: StreamJsonAccumulator, line: dict[str, Any]) -> list[dict[str, Any]]:
     """Wraps the accumulator's `feed` so that `user` lines carrying
     `tool_result` content blocks surface as `{"type":"tool_result",
     "tool_use_id":..., "content":...}` events. The upstream `feed`
@@ -94,7 +95,7 @@ def _patched_feed(self: StreamJsonAccumulator, line: Dict[str, Any]) -> List[Dic
         msg = line.get("message") or {}
         content = msg.get("content") if isinstance(msg, dict) else None
         if isinstance(content, list):
-            events: List[Dict[str, Any]] = []
+            events: list[dict[str, Any]] = []
             for block in content:
                 if not isinstance(block, dict):
                     continue
@@ -148,10 +149,10 @@ async def _patched_call_streaming(
     Everything else is identical — `text_delta` still flows through,
     `message_complete` still wins.
     """
-    response: Optional[Any] = None
-    kwargs = self._call_kwargs(cfg, state)  # noqa: SLF001 — by-design override
+    response: Any | None = None
+    kwargs = self._call_kwargs(cfg, state)
 
-    stream: AsyncIterator[Dict[str, Any]] = client.create_message_stream(**kwargs)
+    stream: AsyncIterator[dict[str, Any]] = client.create_message_stream(**kwargs)
 
     # Per-index accumulators for tool_use blocks. Provider may emit
     # `tool_use` with the metadata then a sequence of `input_json_delta`
@@ -224,7 +225,7 @@ async def _patched_call_streaming(
                     import json as _json
 
                     input_payload = _json.loads(joined)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     input_payload = {"_raw": joined}
             state.add_event(
                 "tool.invoke",
@@ -295,7 +296,7 @@ async def _patched_spawn(
     # call after a server restart. ensure() is idempotent.
     try:
         await sandbox.ensure()
-    except Exception:  # noqa: BLE001 — let the spawn attempt fail loudly below
+    except Exception:
         pass
 
     docker_argv: list[str] = ["exec", "-i", "-w", "/workspace"]

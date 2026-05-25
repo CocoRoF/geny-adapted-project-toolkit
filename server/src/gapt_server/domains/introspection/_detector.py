@@ -48,7 +48,7 @@ def detect(worktree_path: str | Path) -> ProjectIntrospection:
     for fn in detectors:
         try:
             partial = fn(root)
-        except Exception as exc:  # noqa: BLE001 — each detector is best-effort
+        except Exception as exc:
             merged = merged.with_update(
                 notes=[*merged.notes, f"{fn.__name__} failed: {exc}"]
             )

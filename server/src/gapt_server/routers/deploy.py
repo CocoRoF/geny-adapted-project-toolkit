@@ -33,6 +33,7 @@ from gapt_server.container import (
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.caddy.admin_api import CaddyAdminClient, CaddyHttpTransport
 from gapt_server.domains.caddy.subdomain import SubdomainManager
 from gapt_server.domains.deploy import (
@@ -48,12 +49,12 @@ from gapt_server.domains.deploy import (
     TwoFactorVerifier,
     WebhookTarget,
 )
-from gapt_server.settings import Settings  # noqa: TC001
 from gapt_server.domains.notifications import NotificationKind, NotificationService
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.policy.engine import PolicyEngine  # noqa: TC001
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
+from gapt_server.settings import Settings  # noqa: TC001
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -225,7 +226,7 @@ async def trigger_deploy(
     env_id: str,
     payload: DeployRequestBody,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
@@ -342,7 +343,7 @@ async def trigger_rollback(
     env_id: str,
     payload: RollbackRequestBody,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
@@ -432,7 +433,7 @@ async def trigger_deploy_stream(
     env_id: str,
     payload: DeployRequestBody,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     two_factor: TwoFactorVerifier = Depends(get_two_factor_verifier),  # noqa: B008
@@ -506,8 +507,8 @@ async def trigger_deploy_stream(
                 # only — other targets don't surface in-progress state).
                 run_id: str | None = None
                 for _ in range(40):  # ~4s ceiling
-                    if isinstance(target, LocalComposeTarget) and target._runs:  # noqa: SLF001
-                        run_id = next(iter(target._runs.keys()))  # noqa: SLF001
+                    if isinstance(target, LocalComposeTarget) and target._runs:
+                        run_id = next(iter(target._runs.keys()))
                         break
                     if deploy_task.done():
                         break
@@ -517,9 +518,9 @@ async def trigger_deploy_stream(
                     if (
                         run_id is not None
                         and isinstance(target, LocalComposeTarget)
-                        and run_id in target._runs  # noqa: SLF001
+                        and run_id in target._runs
                     ):
-                        state = target._runs[run_id]  # noqa: SLF001
+                        state = target._runs[run_id]
                         if state.log_tail != last_log:
                             delta = state.log_tail[len(last_log):]
                             last_log = state.log_tail
@@ -612,7 +613,7 @@ async def list_deploy_runs(
     env_id: str,
     limit: int = 20,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[DeployRunResponse]:
     """Return the env's deploy history, newest first. Caps at 20 by
     default so the UI's list view doesn't pull a year of churn on

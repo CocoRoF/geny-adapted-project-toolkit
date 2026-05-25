@@ -46,6 +46,7 @@ from gapt_server.container import (
 )
 from gapt_server.db import models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001 — runtime Depends
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.projects.service import ProjectError
 from gapt_server.observability.instruments import (
     cost_counter,
@@ -101,7 +102,7 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> OneshotResponse:
     # 1) Create the session via the standard manager path. Membership
     #    is enforced inside `create_session`.

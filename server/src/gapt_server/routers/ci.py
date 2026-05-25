@@ -22,11 +22,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from gapt_server.container import get_app_settings, get_db_session
-from gapt_server.db import enums, models  # noqa: TC001 — pydantic + Depends runtime introspection
+from gapt_server.db import enums
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.git import GithubProvider, GitOperationError
 from gapt_server.domains.git.provider import WorkflowRunStatus  # noqa: TC001 — pydantic field type
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
-from gapt_server.domains.secrets.vault import SecretVault, SecretVaultError  # noqa: TC001
+from gapt_server.domains.secrets.vault import SecretVault, SecretVaultError
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
 from gapt_server.routers.secrets import get_vault
@@ -78,10 +79,10 @@ async def _resolve_github_token(
     actor_id: str,
     fallback: str | None,
 ) -> str | None:
-    """User-scoped vault first, then `GAPT_CI_GITHUB_TOKEN` fallback."""
+    """Admin-scoped vault first, then `GAPT_CI_GITHUB_TOKEN` fallback."""
     try:
         metadata = await vault.list(
-            db, scope=enums.SecretOwnerScope.USER, owner_id=actor_id
+            db, scope=enums.SecretOwnerScope.SYSTEM, owner_id=actor_id
         )
     except SecretVaultError:
         return fallback
@@ -106,7 +107,7 @@ async def list_ci_runs(
     branch: str | None = Query(default=None, max_length=255),
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> list[CiRunResponse]:
@@ -184,7 +185,7 @@ async def _provider_for_project(
     project_id: str,
     *,
     db: AsyncSession,
-    user: models.User,
+    user: AdminPrincipal,
     settings: Settings,
     vault: SecretVault,
 ):  # type: ignore[no-untyped-def]
@@ -227,7 +228,7 @@ async def get_ci_run_logs(
     project_id: str,
     run_id: int,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> CiLogResponse:
@@ -271,7 +272,7 @@ async def rerun_ci_run(
     run_id: int,
     failed_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> RerunResponse:

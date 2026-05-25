@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,8 +26,6 @@ from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import InMemoryAuditSink
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -150,24 +149,14 @@ class _FrFixture:
     engine: AsyncEngine
     factory: async_sessionmaker
     audit: InMemoryAuditSink
-    user: models.User
     project: models.Project
     workspace: models.Workspace
 
 
-async def _seed(factory) -> tuple[models.User, models.Project, models.Workspace]:  # type: ignore[no-untyped-def]
+async def _seed(factory) -> tuple[models.Project, models.Workspace]:  # type: ignore[no-untyped-def]
     async with factory() as db:
-        user = models.User(email="alice@example.com")
-        db.add(user)
-        await db.flush()
-        org = models.Org(slug="default", name="Default", owner_id=user.id)
-        db.add(org)
-        await db.flush()
-        db.add(models.OrgMembership(org_id=org.id, user_id=user.id, role=enums.Role.OWNER))
         project = models.Project(
             slug="demo",
-            org_id=org.id,
-            owner_id=user.id,
             display_name="demo",
             git_remote_url="https://example.com/demo.git",
             git_provider=enums.GitProvider.GITHUB,
@@ -183,7 +172,7 @@ async def _seed(factory) -> tuple[models.User, models.Project, models.Workspace]
         )
         db.add(ws)
         await db.commit()
-        return user, project, ws
+        return project, ws
 
 
 @pytest_asyncio.fixture
@@ -193,13 +182,12 @@ async def fr_fx() -> AsyncIterator[_FrFixture]:
     async_dsn = sync_dsn.replace("postgresql://", "postgresql+psycopg://", 1)
     engine = create_engine(async_dsn)
     factory = create_session_factory(engine)
-    user, project, ws = await _seed(factory)
+    project, ws = await _seed(factory)
     try:
         yield _FrFixture(
             engine=engine,
             factory=factory,
             audit=InMemoryAuditSink(),
-            user=user,
             project=project,
             workspace=ws,
         )
@@ -210,7 +198,6 @@ async def fr_fx() -> AsyncIterator[_FrFixture]:
 async def _add_session(
     factory,  # type: ignore[no-untyped-def]
     *,
-    user_id: str,
     project_id: str,
     workspace_id: str,
     last_active_at: datetime,
@@ -221,7 +208,6 @@ async def _add_session(
             id=new_ulid(),
             project_id=project_id,
             workspace_id=workspace_id,
-            user_id=user_id,
             env_manifest_id="gapt_default",
             status=status,
             last_active_at=last_active_at,
@@ -237,28 +223,24 @@ async def test_run_once_classifies_each_session(fr_fx: _FrFixture) -> None:
     # 1 active, 1 idle, 1 pause, 1 archive
     await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(minutes=1),
     )
     await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(hours=1),
     )
     await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(hours=7),
     )
     await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(hours=25),
@@ -298,7 +280,6 @@ async def test_runner_on_pause_callback_fires(fr_fx: _FrFixture) -> None:
     now = datetime.now(tz=UTC)
     session_id = await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(hours=7),
@@ -321,7 +302,6 @@ async def test_runner_on_archive_callback_fires(fr_fx: _FrFixture) -> None:
     now = datetime.now(tz=UTC)
     session_id = await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(hours=25),
@@ -344,7 +324,6 @@ async def test_runner_skips_already_archived(fr_fx: _FrFixture) -> None:
     now = datetime.now(tz=UTC)
     await _add_session(
         fr_fx.factory,
-        user_id=fr_fx.user.id,
         project_id=fr_fx.project.id,
         workspace_id=fr_fx.workspace.id,
         last_active_at=now - timedelta(days=30),

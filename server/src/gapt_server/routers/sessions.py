@@ -16,9 +16,9 @@ handled by the HookRunner attached at session create time — the bus
 gets a `cost` event whenever the accumulator's snapshot changes by
 more than the configured debounce window (handled inside the runtime).
 
-Permissions: every endpoint requires `get_current_user` and re-checks
-project membership via `ProjectAwareSessionManager._ensure_project_membership`
-(implicit on create / archive; explicit on read paths).
+Permissions: every endpoint requires `get_current_user`; project access
+is re-checked via `fetch_project_for` so we get a consistent 404 when
+the project_id is bogus.
 """
 
 from __future__ import annotations
@@ -57,7 +57,8 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001 — Depends inspects at runtime
-from gapt_server.domains.projects.service import ProjectError
+from gapt_server.domains.auth import AdminPrincipal
+from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.domains.secrets.vault import SecretVault  # noqa: TC001
 from gapt_server.observability.instruments import (
     cost_counter,
@@ -92,7 +93,6 @@ class SessionResponse(BaseModel):
     id: str
     project_id: str
     workspace_id: str
-    user_id: str
     env_manifest_id: str
     status: enums.AgentSessionStatus
     cost_usd: float = 0.0
@@ -107,7 +107,6 @@ class SessionResponse(BaseModel):
             id=row.id,
             project_id=row.project_id,
             workspace_id=row.workspace_id,
-            user_id=row.user_id,
             env_manifest_id=row.env_manifest_id,
             status=row.status,
             cost_usd=float(row.cost_usd),
@@ -165,9 +164,9 @@ def _http_from_session_error(exc: SessionManagerError) -> HTTPException:
 
 
 def _build_runtime_from_handle(
-    handle: Any,  # noqa: ANN401 — AgentSessionHandle, kept loose to avoid import cycle in TC003
+    handle: Any,
     *,
-    user: models.User,
+    user: AdminPrincipal,
     container: AppContainer,
     policy_engine: PolicyEngine,
     audit_sink: AuditSink,
@@ -244,7 +243,7 @@ async def _runtime_or_rehydrate(
     session_id: str,
     db: AsyncSession,
     manager: ProjectAwareSessionManager,
-    user: models.User,
+    user: AdminPrincipal,
     container: AppContainer,
     policy_engine: PolicyEngine,
     audit_sink: AuditSink,
@@ -319,7 +318,7 @@ async def create_session(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
     try:
         handle = await manager.create_session(
@@ -373,10 +372,10 @@ async def list_sessions(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[SessionResponse]:
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=project_id)
+        await fetch_project_for(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -402,7 +401,7 @@ async def get_session(
     session_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
     row = (
         await db.execute(select(models.AgentSession).where(models.AgentSession.id == session_id))
@@ -413,7 +412,7 @@ async def get_session(
             detail={"code": "session.not_found", "reason": session_id},
         )
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=row.project_id)
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return SessionResponse.from_row(row)
@@ -434,7 +433,7 @@ async def invoke_session(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> InvokeResponse:
     runtime = await _runtime_or_rehydrate(
         registry=registry, session_id=session_id, db=db, manager=manager,
@@ -443,7 +442,7 @@ async def invoke_session(
     )
     # Re-check membership using the runtime's project_id (in-memory).
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
+        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     try:
@@ -466,7 +465,7 @@ async def stream_session(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     since: int | None = Query(default=None, ge=0, description="replay events with seq > since"),
 ) -> StreamingResponse:
     runtime = await _runtime_or_rehydrate(
@@ -475,7 +474,7 @@ async def stream_session(
         audit_sink=audit_sink, vault=vault,
     )
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
+        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return StreamingResponse(
@@ -498,7 +497,7 @@ async def interrupt_session(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> InterruptResponse:
     runtime = await _runtime_or_rehydrate(
         registry=registry, session_id=session_id, db=db, manager=manager,
@@ -506,7 +505,7 @@ async def interrupt_session(
         audit_sink=audit_sink, vault=vault,
     )
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
+        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     cancelled = await runtime.interrupt()
@@ -523,7 +522,7 @@ async def replay_messages(
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     since: int = Query(default=0, ge=0, description="replay events with seq > since"),
 ) -> list[MessageReplayEntry]:
     runtime = await _runtime_or_rehydrate(
@@ -532,7 +531,7 @@ async def replay_messages(
         audit_sink=audit_sink, vault=vault,
     )
     try:
-        await manager._ensure_project_membership(db, user_id=user.id, project_id=runtime.project_id)
+        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     history = await runtime.bus.replay(since)
@@ -545,7 +544,7 @@ async def archive_session(
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
     try:
         await manager.archive(db, user=user, session_id=session_id)

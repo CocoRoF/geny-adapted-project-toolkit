@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,26 +13,19 @@ import psycopg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.db import enums, models
+from gapt_server.db import enums
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.caddy.share import parse_share_link
 from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.routers import preview as preview_router
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -62,7 +56,6 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
     caddy_calls: list[tuple[str, str, Any]]
 
 
@@ -75,6 +68,7 @@ async def fx() -> AsyncIterator[_Fx]:
         caddy_admin_url="http://caddy.test:2019",
         caddy_preview_domain="preview.gapt.example",
         share_link_secret="test-secret",
+        auth_enabled=False,
     )
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
@@ -98,34 +92,18 @@ async def fx() -> AsyncIterator[_Fx]:
     preview_router._build_manager = stub_factory  # type: ignore[assignment]
 
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp, caddy_calls=caddy_calls)
+        yield _Fx(app=app, caddy_calls=caddy_calls)
     finally:
         preview_router._build_manager = original_factory  # type: ignore[assignment]
         await container.aclose()
 
 
-async def _login_with_workspace(client: AsyncClient, fx: _Fx, email: str) -> str:
+async def _create_workspace(client: AsyncClient) -> str:
     """Returns workspace_id."""
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:
-        org_id = (
-            await db.execute(
-                select(models.OrgMembership.org_id).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-
     created = await client.post(
         "/api/projects",
         json={
-            "org_id": org_id,
             "slug": "demo",
             "display_name": "Demo",
             "git_remote_url": "https://example.com/demo.git",
@@ -143,7 +121,7 @@ async def _login_with_workspace(client: AsyncClient, fx: _Fx, email: str) -> str
 @pytest.mark.asyncio
 async def test_register_preview_posts_caddy_route(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        workspace_id = await _create_workspace(client)
         resp = await client.post(
             f"/api/workspaces/{workspace_id}/preview",
             json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
@@ -161,7 +139,7 @@ async def test_register_preview_posts_caddy_route(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_unregister_preview_deletes_by_id(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        workspace_id = await _create_workspace(client)
         resp = await client.delete(f"/api/workspaces/{workspace_id}/preview")
         assert resp.status_code == 204
         methods = [m for (m, _, _) in fx.caddy_calls]
@@ -173,18 +151,14 @@ async def test_preview_disabled_when_caddy_unset() -> None:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
     # No caddy_admin_url / preview_domain on this Settings.
-    settings = Settings(postgres_dsn=sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            workspace_id = await _login_with_workspace(
-                client, _Fx(app=app, idp=idp, caddy_calls=[]), "alice@example.com"
-            )
+            workspace_id = await _create_workspace(client)
             resp = await client.post(
                 f"/api/workspaces/{workspace_id}/preview",
                 json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
@@ -198,7 +172,7 @@ async def test_preview_disabled_when_caddy_unset() -> None:
 @pytest.mark.asyncio
 async def test_share_link_round_trip(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        workspace_id = await _create_workspace(client)
         resp = await client.post(f"/api/workspaces/{workspace_id}/share?ttl_s=600")
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -212,28 +186,12 @@ async def test_share_link_round_trip(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_share_link_ttl_cap(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        workspace_id = await _create_workspace(client)
         resp = await client.post(
             f"/api/workspaces/{workspace_id}/share?ttl_s=999999",
         )
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "share.ttl_too_long"
-
-
-@pytest.mark.asyncio
-async def test_preview_403_for_non_member(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-        await client.post("/api/auth/magic-link", json={"email": "mallory@example.com"})
-        token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-        await client.get(f"/api/auth/magic-link/callback?token={token}")
-        resp = await client.post(
-            f"/api/workspaces/{workspace_id}/preview",
-            json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
-        )
-        assert resp.status_code == 403
 
 
 _ = (new_ulid, enums)  # keep imports alive for future cycles
@@ -242,12 +200,10 @@ _ = (new_ulid, enums)  # keep imports alive for future cycles
 @pytest.mark.asyncio
 async def test_ask_approves_known_workspace_subdomain(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        workspace_id = await _login_with_workspace(client, fx, "alice@example.com")
+        workspace_id = await _create_workspace(client)
         domain = f"{workspace_id.lower()}.preview.gapt.example"
         # The ask endpoint must NOT require auth — Caddy calls it
         # unauthenticated.
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
         resp = await client.get(f"/api/preview/ask?domain={domain}")
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"domain": domain}

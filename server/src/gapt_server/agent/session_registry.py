@@ -146,14 +146,16 @@ async def _run_with_lifecycle(
         )
 
 
-async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:  # noqa: PLR0912, PLR0915
+async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
     # Bind the workspace sandbox to this task's ContextVar so the
     # patched `CLIProcessRunner._spawn` (see `executor_patches.py`)
     # re-routes every claude CLI invocation through `docker exec
     # <gapt-ws-…>`. The token-reset in the finally restores the
     # outer value so concurrent sessions can't bleed sandbox state
     # into one another.
-    from gapt_server.agent import executor_patches  # noqa: PLC0415 — avoid import cycle at module load
+    from gapt_server.agent import (
+        executor_patches,
+    )
 
     token = executor_patches.set_current_sandbox(runtime.sandbox)
     try:

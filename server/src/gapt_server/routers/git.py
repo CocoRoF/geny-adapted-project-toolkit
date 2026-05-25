@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import shlex
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -30,6 +30,7 @@ from gapt_server.container import (
     get_db_session,
 )
 from gapt_server.db import enums, models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.secrets.vault import SecretVault, SecretVaultError
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.secrets import get_vault
@@ -48,8 +49,11 @@ router = APIRouter(prefix="/api/workspaces", tags=["git"])
 
 
 async def _resolve_workspace(
-    db: AsyncSession, *, workspace_id: str, user: models.User
+    db: AsyncSession, *, workspace_id: str, user: AdminPrincipal
 ) -> models.Workspace:
+    # Single-admin model — no membership check; the Depends gate
+    # already authenticated the caller.
+    _ = user
     ws = (
         await db.execute(
             select(models.Workspace).where(models.Workspace.id == workspace_id)
@@ -59,19 +63,6 @@ async def _resolve_workspace(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
-        )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == ws.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
         )
     if ws.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
@@ -103,7 +94,7 @@ async def _read_github_token(
             purpose="workspace.git",
             actor_id=actor_id,
         )
-    except (SecretVaultError, Exception):  # noqa: BLE001 — bad ref → treat as missing
+    except (SecretVaultError, Exception):
         return None
 
 
@@ -164,7 +155,7 @@ class GitStatusResponse(BaseModel):
 async def git_status(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStatusResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
@@ -252,7 +243,7 @@ async def git_diff(
     path: str,
     staged: bool = False,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitDiffResponse:
     """Unified diff for one path. `staged=true` returns the index-vs-
@@ -298,7 +289,7 @@ async def git_commit(
     workspace_id: str,
     payload: GitCommitRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitCommitResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
@@ -321,10 +312,11 @@ async def git_commit(
             detail={"code": "git.add_failed", "reason": err.strip()[:400]},
         )
 
-    # Commit. Build trailer via the user's identity so the audit log
-    # can correlate this commit back to the GAPT user.
-    user_email = user.email or "gapt-user@local"
-    user_name = user.email.split("@")[0] if user.email else "gapt"
+    # Commit. Build trailer via the admin id so the audit log can
+    # correlate this commit back to the GAPT operator. Single-admin
+    # model — no email field on the principal.
+    user_name = user.id or "gapt"
+    user_email = f"{user_name}@gapt.local"
     commit_env = {
         "GIT_AUTHOR_NAME": user_name,
         "GIT_AUTHOR_EMAIL": user_email,
@@ -385,7 +377,7 @@ async def git_push(
     workspace_id: str,
     payload: GitPushRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> GitPushResponse:
@@ -465,7 +457,7 @@ async def create_pr(
     workspace_id: str,
     payload: CreatePrRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> CreatePrResponse:
@@ -540,7 +532,7 @@ async def create_pr(
                         number=int(parsed["number"]),
                         log="(PR already exists for this branch)",
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

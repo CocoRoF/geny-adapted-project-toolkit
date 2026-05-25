@@ -23,7 +23,6 @@ from gapt_server.domains.introspection._types import (
     ProjectKind,
 )
 
-
 # Framework signatures — first dep that matches wins.
 _FRAMEWORK_DEPS: list[tuple[str, ProjectKind, int]] = [
     # (dep_name, kind, default_dev_port)

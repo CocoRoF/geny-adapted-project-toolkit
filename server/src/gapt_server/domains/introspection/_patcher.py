@@ -22,7 +22,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # GAPT marker — every patch we write carries this so the patcher
 # can detect prior runs and skip cleanly. Also lets a future
 # `unpatch` operation find the right anchor.

@@ -1,12 +1,15 @@
 """Auth domain — D2.
 
+Single-admin auth (MinIO/Jenkins-style). The old multi-user magic-link
+IDP + role hierarchy is gone — see `routers/auth.py` for the actual
+endpoints and `principal.py` for the principal type.
+
 Exposes:
-- `AuthIdp` protocol — pluggable identity provider (M1-E1 ships
-  `MagicLinkIdp`; OIDC/SAML can land later without touching callers).
-- `SessionStore` / `TokenStore` protocols + in-memory implementations
-  (Redis-backed variants will land alongside the Redis dep wire-up).
-- `MagicLinkIdp` — token-by-email flow with console fallback delivery.
-- `get_current_user` dependency.
+- `AdminPrincipal` — what every authenticated request carries.
+- `SessionStore` / `Session` — the cookie-keyed in-memory session
+  store (Redis backend slot reserved for later).
+- GitHub Device Flow helpers — kept because they're used by the per-
+  project git push path, not by user login.
 """
 
 from gapt_server.domains.auth.github_oauth import (
@@ -16,26 +19,21 @@ from gapt_server.domains.auth.github_oauth import (
     IssuedToken,
     github_secret_key_name,
 )
-from gapt_server.domains.auth.idp import AuthIdp, MagicLinkIdp
+from gapt_server.domains.auth.principal import AdminPrincipal
 from gapt_server.domains.auth.session import (
     InMemorySessionStore,
-    InMemoryTokenStore,
     Session,
     SessionStore,
-    TokenStore,
 )
 
 __all__ = [
-    "AuthIdp",
+    "AdminPrincipal",
     "DeviceFlowSession",
     "GithubDeviceFlow",
     "GithubOAuthError",
     "InMemorySessionStore",
-    "InMemoryTokenStore",
     "IssuedToken",
-    "MagicLinkIdp",
     "Session",
     "SessionStore",
-    "TokenStore",
     "github_secret_key_name",
 ]

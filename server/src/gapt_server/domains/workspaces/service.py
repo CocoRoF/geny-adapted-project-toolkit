@@ -52,6 +52,8 @@ from gapt_server.domains.sandbox import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from gapt_server.domains.auth import AdminPrincipal
+
 
 CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
 """Signature: (git_remote_url, branch, dest_dir) → (exit_code, stdout, stderr).
@@ -360,7 +362,7 @@ class WorkspaceService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         project_id: str,
         branch: str,
         worktree_path: str | None = None,
@@ -676,7 +678,7 @@ class WorkspaceService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         project_id: str,
         include_archived: bool = False,
     ) -> list[WorkspaceView]:
@@ -696,7 +698,7 @@ class WorkspaceService:
         return [_view(r) for r in rows]
 
     async def get(
-        self, db: AsyncSession, *, actor: models.User, workspace_id: str
+        self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
     ) -> WorkspaceView:
         row = await self._fetch(db, actor=actor, workspace_id=workspace_id)
         return _view(row)
@@ -704,10 +706,10 @@ class WorkspaceService:
     # ──────────────────────────────────────────────────── mutate ──
 
     async def stop(
-        self, db: AsyncSession, *, actor: models.User, workspace_id: str
+        self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
     ) -> WorkspaceView:
         row = await self._fetch(
-            db, actor=actor, workspace_id=workspace_id, min_role=enums.Role.EDITOR
+            db, actor=actor, workspace_id=workspace_id
         )
         # Swallow "unknown sandbox" — the workspace row outlives the
         # in-memory mock sandbox across server restarts. Stopping a
@@ -729,10 +731,10 @@ class WorkspaceService:
         return _view(row)
 
     async def start(
-        self, db: AsyncSession, *, actor: models.User, workspace_id: str
+        self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
     ) -> WorkspaceView:
         row = await self._fetch(
-            db, actor=actor, workspace_id=workspace_id, min_role=enums.Role.EDITOR
+            db, actor=actor, workspace_id=workspace_id
         )
         # Same idempotency as stop — if the sandbox was swept, the
         # start request becomes a no-op + status flip. The next time
@@ -745,10 +747,10 @@ class WorkspaceService:
         return _view(row)
 
     async def delete(
-        self, db: AsyncSession, *, actor: models.User, workspace_id: str
+        self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
     ) -> WorkspaceView:
         row = await self._fetch(
-            db, actor=actor, workspace_id=workspace_id, min_role=enums.Role.ADMIN
+            db, actor=actor, workspace_id=workspace_id
         )
         await self._sandbox_for(row, action="destroy", swallow_missing=True)
         row.status = enums.WorkspaceStatus.ARCHIVED
@@ -808,9 +810,8 @@ class WorkspaceService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         workspace_id: str,
-        min_role: enums.Role = enums.Role.VIEWER,
     ) -> models.Workspace:
         row = (
             await db.execute(select(models.Workspace).where(models.Workspace.id == workspace_id))
@@ -819,7 +820,7 @@ class WorkspaceService:
             raise WorkspaceError("workspace.not_found", f"workspace_id={workspace_id}")
 
         # Reuse the project authorisation gate.
-        await fetch_project_for(db, actor=actor, project_id=row.project_id, min_role=min_role)
+        await fetch_project_for(db, actor=actor, project_id=row.project_id)
         return row
 
 

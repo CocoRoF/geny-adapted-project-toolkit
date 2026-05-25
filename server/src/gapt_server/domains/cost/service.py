@@ -33,7 +33,6 @@ class ProjectCostRow:
     project_id: str
     project_slug: str
     project_display_name: str
-    org_id: str
     cost_usd: float
     input_tokens: int
     output_tokens: int
@@ -73,7 +72,6 @@ async def aggregate_summary(
             models.AgentSession.project_id,
             models.Project.slug,
             models.Project.display_name,
-            models.Project.org_id,
             func.coalesce(func.sum(models.AgentSession.cost_usd), 0).label("cost_usd"),
             func.coalesce(func.sum(models.AgentSession.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(models.AgentSession.output_tokens), 0).label("output_tokens"),
@@ -85,7 +83,6 @@ async def aggregate_summary(
             models.AgentSession.project_id,
             models.Project.slug,
             models.Project.display_name,
-            models.Project.org_id,
         )
         .order_by(func.sum(models.AgentSession.cost_usd).desc())
     )
@@ -100,7 +97,6 @@ async def aggregate_summary(
             project_id=row.project_id,
             project_slug=row.slug,
             project_display_name=row.display_name,
-            org_id=row.org_id,
             cost_usd=float(row.cost_usd or 0),
             input_tokens=int(row.input_tokens or 0),
             output_tokens=int(row.output_tokens or 0),

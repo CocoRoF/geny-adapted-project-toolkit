@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from gapt_server.container import get_policy_engine
-from gapt_server.db import models  # noqa: TC001 — runtime Depends introspection
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.policy.config_loader import INVARIANT_FLOORS
 from gapt_server.routers.auth import get_current_user
 
@@ -44,7 +44,7 @@ class PolicyTableResponse(BaseModel):
 
 @router.get("", response_model=PolicyTableResponse)
 async def get_effective_policy(
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
 ) -> PolicyTableResponse:
     table = policy_engine.effective_table()

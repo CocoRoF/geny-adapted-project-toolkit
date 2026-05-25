@@ -1,8 +1,11 @@
 """SQLAlchemy ORM models — control-plane data model.
 
-Sources:
-- `docs/03_system_architecture.md` §3.3 — conceptual model
-- `docs/plan/m1/e1_backend_foundation.md` §1.1 — table-level decisions
+GAPT is a single-admin self-hosted tool. There is no User / Org /
+Membership table — auth is `settings.admin_id` + cookie, see
+`domains/auth/principal.py`. Anything that used to FK into `users`
+or `orgs` is either gone or carries a plain-text actor id (audit
+rows, deploy-run trigger source) so the audit log can still answer
+"who triggered this" without a table that has no rows besides admin.
 
 All primary keys are 26-character ULID strings. All timestamps are
 timezone-aware (`timestamptz`). Enums are native Postgres types — see
@@ -43,7 +46,6 @@ from gapt_server.db.enums import (
     AuditOutcome,
     DeployTargetKind,
     GitProvider,
-    Role,
     SandboxStatus,
     SecretBackend,
     SecretOwnerScope,
@@ -76,94 +78,6 @@ def _pg_enum(py_enum: type, name: str) -> Enum:
     )
 
 
-# ──────────────────────────────────────────────────────────────── users ──
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = _pk()
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
-    display_name: Mapped[str | None] = mapped_column(String(120))
-    created_at: Mapped[datetime] = _created_at()
-
-
-class UserAgentPrefs(Base):
-    """User-global Agent / manifest overrides.
-
-    Single row per user. Every field is optional — when null we fall
-    back to the manifest's bundled value. Wired into
-    `GaptEnvironmentService.instantiate_pipeline` via the optional
-    `overrides` parameter, which patches stage[6].api.config + the
-    top-level manifest fields before instantiating the Pipeline.
-
-    Scope is deliberately tiny — model / max_tokens / max_iterations /
-    cost_budget_usd / timeout_s. The full geny preset editor (21-stage
-    enable/disable graph) is out of scope for M1.5; this covers the
-    questions every new user asks ("which model? what's my budget?")
-    without dragging in the full pipeline composition UI.
-    """
-
-    __tablename__ = "user_agent_prefs"
-
-    id: Mapped[str] = _pk()
-    user_id: Mapped[str] = mapped_column(
-        String(ULID_LEN),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
-    # `model` accepts vendor-prefixed (claude-sonnet-4-6) and bare
-    # (sonnet / opus / haiku) forms — geny-executor's `_route_model`
-    # normalises both.
-    model: Mapped[str | None] = mapped_column(String(80))
-    max_tokens: Mapped[int | None] = mapped_column(Integer)
-    max_iterations: Mapped[int | None] = mapped_column(Integer)
-    cost_budget_usd: Mapped[float | None] = mapped_column(Numeric(10, 4))
-    timeout_s: Mapped[int | None] = mapped_column(Integer)
-    # CLI permission mode — controls whether spawned `claude_code_cli`
-    # auto-approves tool calls. Values: "bypassPermissions" (default —
-    # allow all), "acceptEdits" (allow file edits, prompt for risky),
-    # "default" (prompt for everything — almost certainly will hang in
-    # our non-interactive flow), "plan" (read-only). Null = server default.
-    permission_mode: Mapped[str | None] = mapped_column(String(40))
-    created_at: Mapped[datetime] = _created_at()
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
-# ───────────────────────────────────────────────────────────────── orgs ──
-
-
-class Org(Base):
-    __tablename__ = "orgs"
-
-    id: Mapped[str] = _pk()
-    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    owner_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
-    created_at: Mapped[datetime] = _created_at()
-
-
-class OrgMembership(Base):
-    __tablename__ = "org_memberships"
-
-    org_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    role: Mapped[Role] = mapped_column(_pg_enum(Role, "role_enum"), nullable=False)
-    created_at: Mapped[datetime] = _created_at()
-
-
 # ─────────────────────────────────────────────────────────── projects ──
 
 
@@ -171,13 +85,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = _pk()
-    slug: Mapped[str] = mapped_column(String(120), nullable=False)
-    org_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("orgs.id", ondelete="RESTRICT"), nullable=False
-    )
-    owner_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
+    slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     git_remote_url: Mapped[str] = mapped_column(Text, nullable=False)
     git_provider: Mapped[GitProvider] = mapped_column(
@@ -196,21 +104,6 @@ class Project(Base):
     webhook_secret: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    __table_args__ = (UniqueConstraint("org_id", "slug", name="uq_projects_org_slug"),)
-
-
-class ProjectMembership(Base):
-    __tablename__ = "project_memberships"
-
-    project_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    role: Mapped[Role] = mapped_column(_pg_enum(Role, "role_enum"), nullable=False)
-    created_at: Mapped[datetime] = _created_at()
 
 
 # ─────────────────────────────────────────────────────── environments ──
@@ -279,12 +172,11 @@ class DeployRun(Base):
     log_tail: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     started_at: Mapped[datetime] = _created_at()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # The user who triggered it (None when the webhook handler is
-    # the trigger). `ON DELETE SET NULL` so deleting a user doesn't
-    # vaporise the deploy history.
-    actor_id: Mapped[str | None] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    # Freeform actor label (`admin`, `webhook`, etc). No FK — single-
+    # admin model, plus we want webhook-triggered rows to record
+    # `webhook` directly. Nullable for the rare case of system-internal
+    # rollbacks.
+    actor_id: Mapped[str | None] = mapped_column(String(80))
     # `manual` | `webhook:<branch>` | `rollback` | `schedule`.
     # Free-text so we don't need a new enum every time we add a
     # trigger source.
@@ -371,9 +263,6 @@ class AgentSession(Base):
     workspace_id: Mapped[str] = mapped_column(
         String(ULID_LEN), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        String(ULID_LEN), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
     env_manifest_id: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[AgentSessionStatus] = mapped_column(
         _pg_enum(AgentSessionStatus, "agent_session_status_enum"),
@@ -412,6 +301,55 @@ class Secret(Base):
 
     __table_args__ = (
         UniqueConstraint("owner_scope", "owner_id", "key_name", name="uq_secrets_scope_owner_key"),
+    )
+
+
+# ─────────────────────────────────────────────── agent prefs (admin) ──
+
+
+class AdminAgentPrefs(Base):
+    """Admin-global Agent / manifest overrides.
+
+    Single row (the admin's). Every field is optional — when null we
+    fall back to the manifest's bundled value. Used by
+    `GaptEnvironmentService.instantiate_pipeline` via the optional
+    `overrides` parameter, which patches stage[6].api.config + the
+    top-level manifest fields before instantiating the Pipeline.
+
+    Scope is deliberately tiny — model / max_tokens / max_iterations /
+    cost_budget_usd / timeout_s / permission_mode. The full geny
+    preset editor (21-stage enable/disable graph) is out of scope for
+    M1.5; this covers the questions the operator asks ("which model?
+    what's my budget?") without dragging in the full pipeline
+    composition UI.
+    """
+
+    __tablename__ = "admin_agent_prefs"
+
+    # Singleton row — the literal string "admin" is the only key
+    # we ever read or write. Saves a join when the API just wants the
+    # one row that exists.
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default="admin")
+    # `model` accepts vendor-prefixed (claude-sonnet-4-6) and bare
+    # (sonnet / opus / haiku) forms — geny-executor's `_route_model`
+    # normalises both.
+    model: Mapped[str | None] = mapped_column(String(80))
+    max_tokens: Mapped[int | None] = mapped_column(Integer)
+    max_iterations: Mapped[int | None] = mapped_column(Integer)
+    cost_budget_usd: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    timeout_s: Mapped[int | None] = mapped_column(Integer)
+    # CLI permission mode — controls whether spawned `claude_code_cli`
+    # auto-approves tool calls. Values: "bypassPermissions" (default —
+    # allow all), "acceptEdits" (allow file edits, prompt for risky),
+    # "default" (prompt for everything — almost certainly will hang in
+    # our non-interactive flow), "plan" (read-only). Null = server default.
+    permission_mode: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 

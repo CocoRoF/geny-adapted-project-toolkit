@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import re
 import shlex
 import time
@@ -39,7 +38,6 @@ from pathlib import Path
 import structlog
 
 from gapt_server.domains.workspace_sandbox import (
-    WorkspaceSandbox,
     WorkspaceSandboxError,
     WorkspaceSandboxManager,
 )
@@ -335,7 +333,7 @@ class ServiceRegistry:
                         )
                     if svc.auto_port is None:
                         self._scan_port(svc)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("service.reaper_iteration_failed")
             await asyncio.sleep(_REAP_INTERVAL_S)
 
@@ -553,7 +551,7 @@ class ServiceRegistry:
         for ws, label in keys:
             try:
                 await self.stop(ws, label, timeout_s=1.0)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     async def aclose(self) -> None:

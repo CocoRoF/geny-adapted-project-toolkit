@@ -46,9 +46,9 @@ from gapt_server.container import (
     get_notifications,
     get_policy_engine,
 )
-from gapt_server.db import enums, models
-from gapt_server.db.ulid import new_ulid
+from gapt_server.db import models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.deploy import (
     AcceptAnyCodeVerifier,
     DeployOrchestrator,
@@ -56,7 +56,7 @@ from gapt_server.domains.deploy import (
     DeployTargetError,
     OrchestratorError,
 )
-from gapt_server.domains.notifications import (  # noqa: TC001
+from gapt_server.domains.notifications import (
     NotificationKind,
     NotificationService,
 )
@@ -98,14 +98,12 @@ class MintSecretResponse(BaseModel):
 async def mint_webhook_secret(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> MintSecretResponse:
     """Generate + store a fresh HMAC secret for this project's
-    webhook endpoint. Caller must have project access (EDITOR+)."""
+    webhook endpoint."""
     try:
-        await fetch_project_for(
-            db, actor=user, project_id=project_id, min_role=enums.Role.EDITOR
-        )
+        await fetch_project_for(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     project = (
@@ -239,7 +237,7 @@ async def github_push_webhook(
 
     try:
         payload = await request.json()
-    except Exception:  # noqa: BLE001 — malformed JSON shouldn't crash
+    except Exception:
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "webhook.bad_json", "reason": ""},
@@ -336,7 +334,7 @@ async def _run_webhook_deploy(
         log_tail = ""
         try:
             result = await orchestrator.deploy(
-                actor_id=new_ulid(),  # synthetic actor — webhook trigger
+                actor_id="webhook",  # literal actor for push-triggered deploys
                 project_id=project_id,
                 environment_id=env_id,
                 environment_name=env_name,
@@ -353,7 +351,7 @@ async def _run_webhook_deploy(
         except (OrchestratorError, DeployTargetError) as exc:
             exec_code = exc.code
             log_tail = str(exc)[:2000]
-        except Exception as exc:  # noqa: BLE001 — catch-all for the background task
+        except Exception as exc:
             exec_code = "webhook.deploy.crashed"
             log_tail = f"{type(exc).__name__}: {exc}"[:2000]
         finally:

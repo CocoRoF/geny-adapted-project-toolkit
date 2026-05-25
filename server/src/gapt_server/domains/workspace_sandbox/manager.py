@@ -512,5 +512,5 @@ class WorkspaceSandboxManager:
         for sandbox in entries:
             try:
                 await sandbox.stop()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass

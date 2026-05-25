@@ -13,24 +13,18 @@ import psycopg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.routers import ci as ci_router
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -72,44 +66,31 @@ def test_parse_github_repo_variants() -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
 
 
 @pytest_asyncio.fixture
 async def fx() -> AsyncIterator[_Fx]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn, ci_github_token="ghp_testtoken")
+    settings = Settings(
+        postgres_dsn=sync_dsn,
+        ci_github_token="ghp_testtoken",
+        auth_enabled=False,
+    )
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp)
+        yield _Fx(app=app)
     finally:
         await container.aclose()
 
 
-async def _login_and_create_project(client: AsyncClient, fx: _Fx, email: str) -> str:
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:
-        org_id = (
-            await db.execute(
-                select(models.OrgMembership.org_id).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-
+async def _create_project(client: AsyncClient) -> str:
     created = await client.post(
         "/api/projects",
         json={
-            "org_id": org_id,
             "slug": "demo",
             "display_name": "Demo",
             "git_remote_url": "https://github.com/owner/repo.git",
@@ -159,7 +140,7 @@ async def test_list_ci_runs_happy_path(fx: _Fx) -> None:
     ci_router._build_provider = build_with_stub  # type: ignore[assignment]
     try:
         async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-            project_id = await _login_and_create_project(client, fx, "alice@example.com")
+            project_id = await _create_project(client)
             resp = await client.get(f"/api/projects/{project_id}/ci/runs?limit=5")
             assert resp.status_code == 200, resp.text
             rows = resp.json()
@@ -174,16 +155,15 @@ async def test_list_ci_runs_happy_path(fx: _Fx) -> None:
 async def test_ci_runs_412_when_token_missing() -> None:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)  # ci_github_token omitted
+    # ci_github_token omitted
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            project_id = await _login_and_create_project(client, _Fx(app=app, idp=idp), "a@b.com")
+            project_id = await _create_project(client)
             resp = await client.get(f"/api/projects/{project_id}/ci/runs")
             assert resp.status_code == 412
             assert resp.json()["detail"]["code"] == "ci.no_token"
@@ -192,10 +172,10 @@ async def test_ci_runs_412_when_token_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ci_runs_uses_user_scoped_vault_token(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """When `GAPT_CI_GITHUB_TOKEN` is unset but the user has saved a
-    `github_token` in Settings (Vault, USER scope), the CI surface
-    must pick it up and audit the read."""
+async def test_ci_runs_uses_system_scoped_vault_token(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """When `GAPT_CI_GITHUB_TOKEN` is unset but a `github_token` is
+    saved in Settings (Vault, SYSTEM scope), the CI surface must pick
+    it up and audit the read."""
     from gapt_server.db import enums as db_enums
     from gapt_server.domains.git import GithubProvider
     from gapt_server.domains.secrets.backend import EncryptedSqliteBackend
@@ -207,13 +187,12 @@ async def test_ci_runs_uses_user_scoped_vault_token(tmp_path) -> None:  # type: 
     settings = Settings(
         postgres_dsn=sync_dsn,
         vault_sqlite_path=str(tmp_path / "vault.sqlite"),
+        auth_enabled=False,
     )  # NO ci_github_token
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     # The vault is a module-level singleton; pin ours so the test
     # doesn't reuse a sibling test's vault/audit-sink.
     backend = EncryptedSqliteBackend(
@@ -238,34 +217,26 @@ async def test_ci_runs_uses_user_scoped_vault_token(tmp_path) -> None:  # type: 
     ci_router._build_provider = build_with_stub  # type: ignore[assignment]
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            project_id = await _login_and_create_project(
-                client, _Fx(app=app, idp=idp), "vaulted@example.com"
-            )
+            project_id = await _create_project(client)
 
-            # Store the user's github_token via the Settings API path.
+            # Store the system-scoped github_token directly via the vault.
             container_state = app.state.container  # type: ignore[attr-defined]
-            async with container_state.session_factory() as db:
-                user = (
-                    await db.execute(
-                        select(models.User).where(models.User.email == "vaulted@example.com")
-                    )
-                ).scalar_one()
             async with container_state.session_factory() as db:
                 await vault.store(
                     db,
-                    scope=db_enums.SecretOwnerScope.USER,
-                    owner_id=user.id,
+                    scope=db_enums.SecretOwnerScope.SYSTEM,
+                    owner_id=settings.admin_id,
                     key_name="github_token",
-                    value="ghp_user_scoped_secret",
+                    value="ghp_admin_scoped_secret",
                 )
                 await db.commit()
 
             resp = await client.get(f"/api/projects/{project_id}/ci/runs")
             assert resp.status_code == 200, resp.text
 
-        # The provider received the user-scoped token, not the empty
+        # The provider received the system-scoped token, not the empty
         # settings fallback.
-        assert captured_tokens == ["ghp_user_scoped_secret"]
+        assert captured_tokens == ["ghp_admin_scoped_secret"]
         # And the read was audited.
         reads = [e for e in audit.events if e.action == "secret.read"]
         assert any(e.payload.get("purpose") == "ci.list_runs" for e in reads)
@@ -273,17 +244,3 @@ async def test_ci_runs_uses_user_scoped_vault_token(tmp_path) -> None:  # type: 
         ci_router._build_provider = original  # type: ignore[assignment]
         secrets_router.set_vault(None)  # type: ignore[arg-type]
         await container_state.aclose()
-
-
-@pytest.mark.asyncio
-async def test_ci_runs_403_for_non_member(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        project_id = await _login_and_create_project(client, fx, "alice@example.com")
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-        await client.post("/api/auth/magic-link", json={"email": "mallory@example.com"})
-        token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-        await client.get(f"/api/auth/magic-link/callback?token={token}")
-        resp = await client.get(f"/api/projects/{project_id}/ci/runs")
-        assert resp.status_code == 403
-        assert resp.json()["detail"]["code"] == "project.forbidden"

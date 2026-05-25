@@ -26,7 +26,6 @@ import yaml
 
 from gapt_server.domains.introspection._types import ProjectIntrospection
 
-
 _COMPOSE_NAMES = (
     # In priority order; first match wins for prod_compose_path.
     "docker-compose.prod.yml",
@@ -65,7 +64,7 @@ def detect_compose(root: Path) -> ProjectIntrospection:
 
     try:
         doc = _safe_load(primary_file)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return ProjectIntrospection(
             notes=[f"compose: failed to parse {primary_file.name}: {exc}"]
         )

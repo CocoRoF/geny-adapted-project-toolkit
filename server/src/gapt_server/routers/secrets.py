@@ -20,8 +20,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from gapt_server.container import get_app_settings, get_audit_sink, get_db_session
-from gapt_server.db import enums, models  # noqa: TC001  — pydantic + FastAPI runtime introspection
+from gapt_server.db import enums  # noqa: TC001  — pydantic + FastAPI runtime introspection
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.secrets.backend import EncryptedSqliteBackend
 from gapt_server.domains.secrets.vault import (
     SecretMetadata,
@@ -109,7 +110,7 @@ async def store_secret(
     payload: StoreSecretRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    _user: models.User = Depends(get_current_user),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SecretView:
     try:
         md = await vault.store(
@@ -134,7 +135,7 @@ async def list_secrets(
     owner_id: str | None = None,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    _user: models.User = Depends(get_current_user),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[SecretView]:
     items = await vault.list(db, scope=scope, owner_id=owner_id)
     return [SecretView.from_metadata(md) for md in items]
@@ -145,7 +146,7 @@ async def get_secret_metadata(
     secret_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    _user: models.User = Depends(get_current_user),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SecretView:
     try:
         md = await vault.get_metadata(db, secret_id=secret_id)
@@ -163,7 +164,7 @@ async def rotate_secret(
     payload: RotateSecretRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    _user: models.User = Depends(get_current_user),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SecretView:
     try:
         md = await vault.rotate(db, secret_id=secret_id, new_value=payload.value)
@@ -181,7 +182,7 @@ async def delete_secret(
     secret_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
-    _user: models.User = Depends(get_current_user),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> None:
     try:
         await vault.delete(db, secret_id=secret_id)

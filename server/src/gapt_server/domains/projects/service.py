@@ -1,9 +1,11 @@
-"""Project service — CRUD + Environment CRUD + ownership checks.
+"""Project service — CRUD + Environment CRUD.
 
-The actor calling this service must already be authenticated (the
-router takes care of that). Authorisation is verified inside each
-method: a project membership row needs to exist with at least the
-required role, or the caller must be project / org owner.
+GAPT is a single-admin self-hosted tool, so there is no membership /
+role check here — anyone who reached this layer is already the
+admin. The `actor: AdminPrincipal` parameter is kept on every method
+purely so the audit row can attribute who triggered the action (it's
+always `settings.admin_id`, but operators can override that env var
+to e.g. `alice` so the audit log tells them apart from a webhook).
 
 Clone / checkout / sandbox boot stay out of scope for M1-E1 — they
 land in M1-E2 (the agent + git cycle).
@@ -25,6 +27,8 @@ from gapt_server.domains.audit.sink import AuditAction, AuditEvent, AuditSink, N
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from gapt_server.domains.auth import AdminPrincipal
+
 
 class ProjectError(RuntimeError):
     """Domain error — carries a stable code suffix for the API layer."""
@@ -37,8 +41,6 @@ class ProjectError(RuntimeError):
 @dataclass(frozen=True)
 class ProjectView:
     id: str
-    org_id: str
-    owner_id: str
     slug: str
     display_name: str
     git_remote_url: str
@@ -67,8 +69,6 @@ class EnvironmentView:
 def _project_view(row: models.Project) -> ProjectView:
     return ProjectView(
         id=row.id,
-        org_id=row.org_id,
-        owner_id=row.owner_id,
         slug=row.slug,
         display_name=row.display_name,
         git_remote_url=row.git_remote_url,
@@ -97,7 +97,7 @@ def _env_view(row: models.Environment) -> EnvironmentView:
 
 
 class ProjectService:
-    """Encapsulates project + environment CRUD with audit + auth checks."""
+    """Encapsulates project + environment CRUD with audit."""
 
     def __init__(self, audit_sink: AuditSink | None = None) -> None:
         self._audit: AuditSink = audit_sink or NullAuditSink()
@@ -108,8 +108,7 @@ class ProjectService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
-        org_id: str,
+        actor: AdminPrincipal,
         slug: str,
         display_name: str,
         git_remote_url: str,
@@ -119,13 +118,9 @@ class ProjectService:
         compose_profile_prod: str | None = None,
         git_auth_secret_ref: str | None = None,
     ) -> ProjectView:
-        await _ensure_org_member(db, actor=actor, org_id=org_id)
-
         project = models.Project(
             id=new_ulid(),
             slug=slug,
-            org_id=org_id,
-            owner_id=actor.id,
             display_name=display_name,
             git_remote_url=git_remote_url,
             git_provider=git_provider,
@@ -140,18 +135,8 @@ class ProjectService:
         except IntegrityError as exc:
             raise ProjectError(
                 "project.slug_taken",
-                f"slug={slug!r} already exists in org={org_id}",
+                f"slug={slug!r} already exists",
             ) from exc
-
-        # Creator gets a project-level OWNER membership automatically.
-        db.add(
-            models.ProjectMembership(
-                project_id=project.id,
-                user_id=actor.id,
-                role=enums.Role.OWNER,
-            )
-        )
-        await db.flush()
 
         view = _project_view(project)
         await self._audit.log(
@@ -160,7 +145,7 @@ class ProjectService:
                 actor_type=enums.AuditActorType.USER,
                 actor_id=actor.id,
                 outcome=enums.AuditOutcome.OK,
-                scope={"org_id": org_id, "project_id": project.id},
+                scope={"project_id": project.id},
                 subject={"slug": slug, "display_name": display_name},
                 payload={
                     "git_remote_url": git_remote_url,
@@ -174,27 +159,18 @@ class ProjectService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
-        org_id: str | None = None,
+        actor: AdminPrincipal,
         include_archived: bool = False,
     ) -> list[ProjectView]:
-        stmt = (
-            select(models.Project)
-            .join(
-                models.ProjectMembership,
-                models.ProjectMembership.project_id == models.Project.id,
-            )
-            .where(models.ProjectMembership.user_id == actor.id)
-            .order_by(models.Project.created_at.desc())
-        )
-        if org_id is not None:
-            stmt = stmt.where(models.Project.org_id == org_id)
+        stmt = select(models.Project).order_by(models.Project.created_at.desc())
         if not include_archived:
             stmt = stmt.where(models.Project.archived_at.is_(None))
         rows = (await db.execute(stmt)).scalars().all()
         return [_project_view(r) for r in rows]
 
-    async def get(self, db: AsyncSession, *, actor: models.User, project_id: str) -> ProjectView:
+    async def get(
+        self, db: AsyncSession, *, actor: AdminPrincipal, project_id: str
+    ) -> ProjectView:
         row = await fetch_project_for(db, actor=actor, project_id=project_id)
         return _project_view(row)
 
@@ -202,16 +178,14 @@ class ProjectService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         project_id: str,
         display_name: str | None = None,
         default_compose_paths: list[str] | None = None,
         compose_profile_dev: str | None = None,
         compose_profile_prod: str | None = None,
     ) -> ProjectView:
-        row = await fetch_project_for(
-            db, actor=actor, project_id=project_id, min_role=enums.Role.EDITOR
-        )
+        row = await fetch_project_for(db, actor=actor, project_id=project_id)
         if display_name is not None:
             row.display_name = display_name
         if default_compose_paths is not None:
@@ -238,12 +212,10 @@ class ProjectService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         project_id: str,
     ) -> ProjectView:
-        row = await fetch_project_for(
-            db, actor=actor, project_id=project_id, min_role=enums.Role.ADMIN
-        )
+        row = await fetch_project_for(db, actor=actor, project_id=project_id)
         row.archived_at = datetime.now(tz=UTC)
         await db.flush()
         view = _project_view(row)
@@ -264,7 +236,7 @@ class ProjectService:
         self,
         db: AsyncSession,
         *,
-        actor: models.User,
+        actor: AdminPrincipal,
         project_id: str,
         name: str,
         deploy_target_kind: enums.DeployTargetKind,
@@ -274,7 +246,7 @@ class ProjectService:
         cost_multiplier: float = 1.0,
         hooks: dict[str, Any] | None = None,
     ) -> EnvironmentView:
-        await fetch_project_for(db, actor=actor, project_id=project_id, min_role=enums.Role.ADMIN)
+        await fetch_project_for(db, actor=actor, project_id=project_id)
         env = models.Environment(
             id=new_ulid(),
             project_id=project_id,
@@ -297,7 +269,7 @@ class ProjectService:
         return _env_view(env)
 
     async def list_environments(
-        self, db: AsyncSession, *, actor: models.User, project_id: str
+        self, db: AsyncSession, *, actor: AdminPrincipal, project_id: str
     ) -> list[EnvironmentView]:
         await fetch_project_for(db, actor=actor, project_id=project_id)
         rows = (
@@ -317,59 +289,18 @@ class ProjectService:
 # ─────────────────────────────────────────────────────────── helpers ──
 
 
-_ROLE_ORDER: dict[enums.Role, int] = {
-    enums.Role.VIEWER: 0,
-    enums.Role.EDITOR: 1,
-    enums.Role.ADMIN: 2,
-    enums.Role.OWNER: 3,
-}
-
-
-async def _ensure_org_member(db: AsyncSession, *, actor: models.User, org_id: str) -> None:
-    row = (
-        await db.execute(
-            select(models.OrgMembership).where(
-                (models.OrgMembership.org_id == org_id) & (models.OrgMembership.user_id == actor.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise ProjectError(
-            "org.forbidden",
-            f"user {actor.id} is not a member of org {org_id}",
-        )
-
-
 async def fetch_project_for(
     db: AsyncSession,
     *,
-    actor: models.User,
+    actor: AdminPrincipal,
     project_id: str,
-    min_role: enums.Role = enums.Role.VIEWER,
 ) -> models.Project:
+    """Look up the project. No membership check — single-admin model.
+    Raises `project.not_found` so existing API error codes stay
+    stable."""
     project = (
         await db.execute(select(models.Project).where(models.Project.id == project_id))
     ).scalar_one_or_none()
     if project is None:
         raise ProjectError("project.not_found", f"project_id={project_id}")
-
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == project_id)
-                & (models.ProjectMembership.user_id == actor.id)
-            )
-        )
-    ).scalar_one_or_none()
-
-    if membership is None:
-        raise ProjectError(
-            "project.forbidden",
-            f"user {actor.id} has no membership on project {project_id}",
-        )
-    if _ROLE_ORDER[membership.role] < _ROLE_ORDER[min_role]:
-        raise ProjectError(
-            "project.role_insufficient",
-            f"user {actor.id} role={membership.role.value} < required {min_role.value}",
-        )
     return project

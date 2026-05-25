@@ -39,17 +39,17 @@ from sqlalchemy import select
 
 from gapt_server.container import get_db_session
 from gapt_server.db import enums, models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.terminal import PtyClosed, PtyHandle
 from gapt_server.domains.workspace_sandbox import (
     WorkspaceSandboxError,
     WorkspaceSandboxUnavailable,
 )
-from gapt_server.routers.auth import get_auth_idp, get_current_user
+from gapt_server.routers.auth import get_current_user, get_session_store
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from gapt_server.domains.auth.idp import MagicLinkIdp
     from gapt_server.settings import Settings
 
 
@@ -62,8 +62,12 @@ def _default_shell() -> list[str]:
 
 
 async def _workspace_or_404(
-    db: AsyncSession, user: models.User, workspace_id: str
+    db: AsyncSession, user: AdminPrincipal, workspace_id: str
 ) -> models.Workspace:
+    # Single-admin model: any authenticated request can touch any
+    # workspace. We still bounce non-running rows with 409 so the
+    # caller doesn't get a confusing failure deep in the PTY layer.
+    _ = user
     row = (
         await db.execute(
             select(models.Workspace).where(models.Workspace.id == workspace_id)
@@ -73,21 +77,6 @@ async def _workspace_or_404(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
-        )
-    # Membership check — `fetch_project_for` would loop us through the
-    # project lookup. Cheaper: reuse the workspace's project_id.
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == row.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
         )
     if row.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
@@ -114,29 +103,27 @@ async def terminal_ws(
     # client can distinguish auth vs server errors.
     settings: Settings = websocket.app.state.settings
     container = websocket.app.state.container
-    idp: MagicLinkIdp = get_auth_idp()
-    cookie = websocket.cookies.get(settings.session_cookie_name)
-    if not cookie:
-        await websocket.close(code=4401, reason="auth.session.missing")
-        return
-    session = await idp._sessions.get(cookie)  # noqa: SLF001 — same path as REST
-    if session is None:
-        await websocket.close(code=4401, reason="auth.session.expired")
-        return
+    if settings.auth_enabled:
+        store = get_session_store()
+        cookie = websocket.cookies.get(settings.session_cookie_name)
+        if not cookie:
+            await websocket.close(code=4401, reason="auth.session.missing")
+            return
+        session = await store.get(cookie)
+        if session is None:
+            await websocket.close(code=4401, reason="auth.session.expired")
+            return
+        principal = AdminPrincipal(id=session.user_id, display_name=session.user_id)
+    else:
+        principal = AdminPrincipal(id=settings.admin_id, display_name=settings.admin_id)
 
     if container.session_factory is None:
         await websocket.close(code=1011, reason="db not configured")
         return
 
     async with container.session_factory() as db:
-        user_row = (
-            await db.execute(select(models.User).where(models.User.id == session.user_id))
-        ).scalar_one_or_none()
-        if user_row is None:
-            await websocket.close(code=4401, reason="auth.user.not_found")
-            return
         try:
-            workspace = await _workspace_or_404(db, user_row, workspace_id)
+            workspace = await _workspace_or_404(db, principal, workspace_id)
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {"code": "error"}
             code = 4404 if exc.status_code == 404 else 4403 if exc.status_code == 403 else 4409
@@ -250,7 +237,7 @@ async def file_tail(
     path: str = Query(..., min_length=1, max_length=4096),
     since_byte: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """SSE tail of `<worktree>/<path>` — emits one `data:` frame per
     new chunk. Polling-based (no inotify) so it works through every

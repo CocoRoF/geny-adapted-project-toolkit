@@ -145,7 +145,7 @@ def build_container(
             workspace_sandbox=ws_sandbox_noop,
         )
 
-    engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))  # noqa: E501
+    engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
     factory = create_session_factory(engine)
     sink: AuditSink
     if audit_sink is not None:

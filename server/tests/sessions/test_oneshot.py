@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,17 +20,13 @@ from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
+from gapt_server.domains.auth.session import InMemorySessionStore
 from gapt_server.domains.sandbox import MockSandboxBackend
-from gapt_server.routers.auth import set_auth_idp
+from gapt_server.routers.auth import set_session_store
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -95,7 +92,7 @@ async def _stub_instantiate_pipeline(*_args: Any, **_kwargs: Any) -> _ScriptedPi
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
+    auth_enabled: bool
 
 
 @pytest_asyncio.fixture
@@ -103,41 +100,25 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     container.env_service.instantiate_pipeline = _stub_instantiate_pipeline  # type: ignore[assignment]
 
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp)
+        yield _Fx(app=app, auth_enabled=False)
     finally:
         await container.aclose()
         _PIPELINE_SCRIPTS.clear()
 
 
-async def _login_and_workspace(client: AsyncClient, fx: _Fx, email: str) -> tuple[str, str]:
-    """Login + create project + workspace. Returns (project_id, workspace_id)."""
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:
-        row = (
-            await db.execute(
-                select(models.OrgMembership).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-
+async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]:
+    """Creates project + workspace. Returns (project_id, workspace_id)."""
     created = await client.post(
         "/api/projects",
         json={
-            "org_id": row.org_id,
             "slug": "demo",
             "display_name": "Demo",
             "git_remote_url": "https://example.com/demo.git",
@@ -164,7 +145,7 @@ async def test_oneshot_aggregates_text_chunks(fx: _Fx) -> None:
         ],
     )
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, workspace_id = await _login_and_workspace(client, fx, "alice@example.com")
+        _, workspace_id = await _create_project_with_workspace(client)
 
         resp = await client.post(
             "/api/sessions/oneshot",
@@ -191,7 +172,7 @@ async def test_oneshot_captures_tool_calls(fx: _Fx) -> None:
         ],
     )
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, workspace_id = await _login_and_workspace(client, fx, "alice@example.com")
+        _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "edit a.py"},
@@ -216,7 +197,7 @@ async def test_oneshot_surfaces_pipeline_error(fx: _Fx) -> None:
         ],
     )
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, workspace_id = await _login_and_workspace(client, fx, "alice@example.com")
+        _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "x"},
@@ -231,7 +212,7 @@ async def test_oneshot_surfaces_pipeline_error(fx: _Fx) -> None:
 async def test_oneshot_archives_session_on_completion(fx: _Fx) -> None:
     _set_script("brief", [_StubEvent(type="text", data={"text": "ok"})])
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, workspace_id = await _login_and_workspace(client, fx, "alice@example.com")
+        _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "hi"},
@@ -251,7 +232,7 @@ async def test_oneshot_archives_session_on_completion(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_oneshot_workspace_not_found(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login_and_workspace(client, fx, "alice@example.com")
+        await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/oneshot",
             json={"workspace_id": "01KS90000000000000000XXXXX", "message": "hi"},
@@ -261,13 +242,27 @@ async def test_oneshot_workspace_not_found(fx: _Fx) -> None:
 
 
 @pytest.mark.asyncio
-async def test_oneshot_requires_auth(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        resp = await client.post(
-            "/api/sessions/oneshot",
-            json={"workspace_id": "01KS90000000000000000XXXXX", "message": "hi"},
-        )
-        assert resp.status_code == 401
+async def test_oneshot_requires_auth() -> None:
+    """A separate app instance with auth_enabled=True is used here so
+    the oneshot 401 path stays covered."""
+    sync_dsn = _require_dsn()
+    _reset_and_upgrade(sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn)  # auth_enabled defaults to True
+    audit = InMemoryAuditSink()
+    sandbox = MockSandboxBackend()
+    container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+    container.env_service.instantiate_pipeline = _stub_instantiate_pipeline  # type: ignore[assignment]
+    set_session_store(InMemorySessionStore())
+    app = create_app(settings=settings, container=container)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/sessions/oneshot",
+                json={"workspace_id": "01KS90000000000000000XXXXX", "message": "hi"},
+            )
+            assert resp.status_code == 401
+    finally:
+        await container.aclose()
 
 
 @pytest.mark.asyncio
@@ -294,7 +289,7 @@ async def test_oneshot_timeout_returns_status_timeout(fx: _Fx) -> None:
     fx.app.state.container.env_service.instantiate_pipeline = _hang_factory  # type: ignore[assignment]
 
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, workspace_id = await _login_and_workspace(client, fx, "alice@example.com")
+        _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "hi", "timeout_s": 1},

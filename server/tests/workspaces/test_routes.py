@@ -22,17 +22,13 @@ from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.sandbox import MockSandboxBackend, SandboxBackendError
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,7 +58,6 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
     audit: InMemoryAuditSink
     sandbox: MockSandboxBackend
 
@@ -71,7 +66,7 @@ class _Fx:
 async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
@@ -89,47 +84,31 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     monkeypatch.setattr(ws_service, "_default_clone_runner", _noop_clone)
 
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp, audit=audit, sandbox=sandbox)
+        yield _Fx(app=app, audit=audit, sandbox=sandbox)
     finally:
         await container.aclose()
 
 
-async def _login_and_create_project(client: AsyncClient, fx: _Fx, email: str) -> tuple[str, str]:
-    """Logs in `email`, returns (user_id, project_id)."""
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:  # type: ignore[union-attr]
-        row = (
-            await db.execute(
-                select(models.OrgMembership).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-    org_id = row.org_id
-
+async def _create_project(client: AsyncClient) -> str:
+    """Creates one project and returns its id. Auth is disabled in the
+    fixture, so every request is already authenticated as admin."""
     created = await client.post(
         "/api/projects",
         json={
-            "org_id": org_id,
             "slug": "demo",
             "display_name": "Demo",
             "git_remote_url": "https://example.com/demo.git",
         },
     )
     assert created.status_code == 201, created.text
-    return user_id, created.json()["id"]
+    return created.json()["id"]
 
 
 @pytest.mark.asyncio
 async def test_workspace_full_lifecycle(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id = await _login_and_create_project(client, fx, "alice@example.com")
+        project_id = await _create_project(client)
 
         created = await client.post(
             f"/api/projects/{project_id}/workspaces",
@@ -180,26 +159,6 @@ async def test_workspace_full_lifecycle(fx: _Fx) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_workspace_requires_project_member(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id = await _login_and_create_project(client, fx, "alice@example.com")
-        # Switch to a different user with no project membership.
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-
-        await client.post("/api/auth/magic-link", json={"email": "bob@example.com"})
-        token = next(iter(fx.idp._tokens._items))
-        await client.get(f"/api/auth/magic-link/callback?token={token}")
-
-        forbidden = await client.post(
-            f"/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
-        )
-        assert forbidden.status_code == 403
-        assert forbidden.json()["detail"]["code"] == "project.forbidden"
-
-
-@pytest.mark.asyncio
 async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
     # Sabotage the mock backend so create() raises.
     original_create = fx.sandbox.create
@@ -213,7 +172,7 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
         async with AsyncClient(
             transport=ASGITransport(app=fx.app), base_url="http://test"
         ) as client:
-            _, project_id = await _login_and_create_project(client, fx, "alice@example.com")
+            project_id = await _create_project(client)
             resp = await client.post(
                 f"/api/projects/{project_id}/workspaces",
                 json={"branch": "main"},
@@ -242,7 +201,7 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_workspace_not_found_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login_and_create_project(client, fx, "alice@example.com")
+        await _create_project(client)
         resp = await client.get("/api/workspaces/01KSXXXXXXXXXXXXXXXXXXXXXX")
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "workspace.not_found"

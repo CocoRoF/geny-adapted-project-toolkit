@@ -32,8 +32,8 @@ import pty
 import signal
 import struct
 import termios
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 
 class PtyClosed(Exception):

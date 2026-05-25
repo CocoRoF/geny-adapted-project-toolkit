@@ -30,6 +30,7 @@ from gapt_server.container import (
     get_db_session,
 )
 from gapt_server.db import enums, models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.introspection import detect
 from gapt_server.routers.auth import get_current_user
 
@@ -52,8 +53,11 @@ class TestRunRequest(BaseModel):
 
 
 async def _resolve_workspace(
-    db: AsyncSession, *, workspace_id: str, user: models.User
+    db: AsyncSession, *, workspace_id: str, user: AdminPrincipal
 ) -> models.Workspace:
+    # Single-admin model — no membership check; we still validate the
+    # row exists + is in `running` state.
+    _ = user
     ws = (
         await db.execute(
             select(models.Workspace).where(models.Workspace.id == workspace_id)
@@ -63,19 +67,6 @@ async def _resolve_workspace(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
-        )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == ws.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
         )
     if ws.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
@@ -90,7 +81,7 @@ async def run_tests(
     workspace_id: str,
     payload: TestRunRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> StreamingResponse:
     """SSE: stream the test runner's output line by line.

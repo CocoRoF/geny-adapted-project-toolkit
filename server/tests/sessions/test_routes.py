@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,25 +14,18 @@ import psycopg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from gapt_server.agent.session_registry import SessionNotFound
 from gapt_server.agent.streaming import SessionEventKind
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.db import enums, models
+from gapt_server.db import enums
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.sandbox import MockSandboxBackend
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,7 +55,6 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
     audit: InMemoryAuditSink
 
 
@@ -92,7 +85,7 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
@@ -101,37 +94,17 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     container.env_service.instantiate_pipeline = _stub_instantiate_pipeline  # type: ignore[assignment]
 
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp, audit=audit)
+        yield _Fx(app=app, audit=audit)
     finally:
         await container.aclose()
 
 
-async def _login_and_create_project_with_workspace(
-    client: AsyncClient, fx: _Fx, email: str
-) -> tuple[str, str, str]:
-    """Logs in `email`, creates a project + workspace, returns
-    `(user_id, project_id, workspace_id)`."""
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    user_id = cb.json()["user_id"]
-
-    container = client._transport.app.state.container  # type: ignore[attr-defined]
-    async with container.session_factory() as db:
-        row = (
-            await db.execute(
-                select(models.OrgMembership).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-    org_id = row.org_id
-
+async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]:
+    """Creates a project + workspace, returns `(project_id, workspace_id)`."""
     created = await client.post(
         "/api/projects",
         json={
-            "org_id": org_id,
             "slug": "demo",
             "display_name": "Demo",
             "git_remote_url": "https://example.com/demo.git",
@@ -145,7 +118,7 @@ async def _login_and_create_project_with_workspace(
         json={"branch": "main"},
     )
     assert wks.status_code == 201, wks.text
-    return user_id, project_id, wks.json()["id"]
+    return project_id, wks.json()["id"]
 
 
 # ──────────────────────────────────────────────────── create ──
@@ -154,9 +127,7 @@ async def _login_and_create_project_with_workspace(
 @pytest.mark.asyncio
 async def test_create_session_happy_path(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
 
         resp = await client.post(
             f"/api/projects/{project_id}/sessions",
@@ -179,9 +150,7 @@ async def test_create_session_happy_path(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_create_session_unknown_workspace_returns_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, _ = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, _ = await _create_project_with_workspace(client)
         resp = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": "01KS90000000000000000XXXXX"},
@@ -190,37 +159,13 @@ async def test_create_session_unknown_workspace_returns_404(fx: _Fx) -> None:
         assert resp.json()["detail"]["code"] == "workspace.not_found"
 
 
-@pytest.mark.asyncio
-async def test_create_session_requires_membership(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
-
-        # Switch to a stranger.
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-        await client.post("/api/auth/magic-link", json={"email": "mallory@example.com"})
-        token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-        await client.get(f"/api/auth/magic-link/callback?token={token}")
-
-        resp = await client.post(
-            f"/api/projects/{project_id}/sessions",
-            json={"workspace_id": workspace_id},
-        )
-        assert resp.status_code == 403
-        assert resp.json()["detail"]["code"] == "project.forbidden"
-
-
 # ────────────────────────────────────────────────── list / get ──
 
 
 @pytest.mark.asyncio
 async def test_list_and_fetch_session(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
@@ -240,7 +185,7 @@ async def test_list_and_fetch_session(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_fetch_session_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login_and_create_project_with_workspace(client, fx, "alice@example.com")
+        await _create_project_with_workspace(client)
         resp = await client.get("/api/sessions/01KS90000000000000000XXXXX")
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "session.not_found"
@@ -256,9 +201,7 @@ async def _scripted_runner(runtime: Any, message: str) -> None:
 @pytest.mark.asyncio
 async def test_invoke_and_replay_messages(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
@@ -283,9 +226,7 @@ async def test_invoke_and_replay_messages(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
@@ -315,9 +256,7 @@ async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_interrupt_endpoint(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
@@ -346,7 +285,7 @@ async def test_interrupt_endpoint(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_invoke_404_when_runtime_missing(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login_and_create_project_with_workspace(client, fx, "alice@example.com")
+        await _create_project_with_workspace(client)
         resp = await client.post(
             "/api/sessions/01KS90000000000000000XXXXX/invoke",
             json={"message": "x"},
@@ -361,9 +300,7 @@ async def test_invoke_404_when_runtime_missing(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_archive_session(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
@@ -390,9 +327,7 @@ async def test_archive_session(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_stream_emits_text_and_done(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        _, project_id, workspace_id = await _login_and_create_project_with_workspace(
-            client, fx, "alice@example.com"
-        )
+        project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
             f"/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},

@@ -32,6 +32,7 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.domains.sandbox import (
     SandboxBackend,
@@ -65,9 +66,10 @@ def get_workspace_service(
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> WorkspaceService:
     session_factory = container.session_factory
+    admin_id = settings.admin_id
 
     async def resolve_credentials(actor_id: str, _project_id: str) -> dict[str, str]:
-        """Read all user-scoped secrets and surface them to the service
+        """Read all admin-scoped secrets and surface them to the service
         as a flat `{key_name: plaintext}` map. The service then mirrors
         the map into sandbox env + the host-side clone runner."""
         if session_factory is None:
@@ -75,7 +77,7 @@ def get_workspace_service(
         async with session_factory() as db:
             try:
                 metadata = await vault.list(
-                    db, scope=enums.SecretOwnerScope.USER, owner_id=actor_id
+                    db, scope=enums.SecretOwnerScope.SYSTEM, owner_id=admin_id
                 )
             except SecretVaultError:
                 return {}
@@ -162,7 +164,7 @@ async def create_workspace(
     payload: CreateWorkspaceRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
         view = await svc.create(
@@ -190,7 +192,7 @@ async def list_workspaces(
     include_archived: bool = False,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[WorkspaceResponse]:
     try:
         views = await svc.list_for_project(
@@ -209,7 +211,7 @@ async def get_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
         view = await svc.get(db, actor=user, workspace_id=workspace_id)
@@ -225,7 +227,7 @@ async def get_workspace_clone_log(
     workspace_id: str,
     tail_bytes: int = 16384,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> PlainTextResponse:
     """Return the live `git clone` log for a workspace.
 
@@ -282,7 +284,7 @@ async def stop_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
         view = await svc.stop(db, actor=user, workspace_id=workspace_id)
@@ -299,7 +301,7 @@ async def start_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
         view = await svc.start(db, actor=user, workspace_id=workspace_id)
@@ -316,7 +318,7 @@ async def delete_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
@@ -332,7 +334,7 @@ async def delete_workspace(
     # hanging.
     try:
         await container.workspace_sandbox.stop(workspace_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Best-effort — the workspace row is already archived; a
         # dangling container can be cleaned up via `docker rm`.
         pass
@@ -386,7 +388,7 @@ def _http_from_fs_error(exc: fs.WorkspaceFileError) -> HTTPException:
 async def _workspace_for_fs(
     db: AsyncSession,
     *,
-    user: models.User,
+    user: AdminPrincipal,
     workspace_id: str,
 ) -> tuple[models.Workspace, SandboxRef]:
     row = (
@@ -419,7 +421,7 @@ async def tree(
     path: str = "/",
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[TreeEntryResponse]:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
@@ -435,7 +437,7 @@ async def read_workspace_file(
     path: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> FileContentResponse:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
@@ -452,7 +454,7 @@ async def write_workspace_file(
     payload: WriteFileRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> FileContentResponse:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
@@ -478,7 +480,7 @@ async def delete_workspace_path(
     path: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> None:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
@@ -508,7 +510,7 @@ async def workspace_diff(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> DiffResponse:
     """Working-tree-vs-HEAD diff for the workspace. Empty payload when
     the worktree is not a git repo (or HEAD has not been set yet)."""

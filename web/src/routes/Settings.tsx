@@ -117,12 +117,12 @@ export function Settings() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Profile</CardTitle>
-          <CardDescription>Identity from the magic-link login.</CardDescription>
+          <CardDescription>Identity from the single-admin login.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-[13px]">
           <div className="flex justify-between gap-3">
-            <span className="text-fg-muted">Email</span>
-            <span className="font-mono text-fg">{me?.email ?? "—"}</span>
+            <span className="text-fg-muted">Display name</span>
+            <span className="font-mono text-fg">{me?.display_name ?? me?.user_id ?? "—"}</span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-fg-muted">User ID</span>

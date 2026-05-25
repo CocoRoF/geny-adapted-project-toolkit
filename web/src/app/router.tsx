@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShellLayout } from "@/app/layouts/AppShellLayout";
 import { RequireAuth } from "@/app/RequireAuth";
-import { AuthCallback } from "@/routes/AuthCallback";
 import { Cost } from "@/routes/Cost";
 import { Environments } from "@/routes/Environments";
 import { Login } from "@/routes/Login";
@@ -11,9 +10,9 @@ import { ProjectsIndex } from "@/routes/ProjectsIndex";
 import { Settings } from "@/routes/Settings";
 import { WorkspaceIde } from "@/routes/WorkspaceIde";
 
-/** Single source of truth for paths. Keep `/login`, `/auth/callback`
- * outside the auth-gated shell so an unauthenticated session can still
- * complete sign-in without redirect loops. */
+/** Single source of truth for paths. `/login` is the only unauth
+ * route — there's no magic-link callback anymore; login is a single
+ * POST that sets the session cookie. */
 export function AppRouter() {
   return (
     <Routes>
@@ -23,14 +22,6 @@ export function AppRouter() {
         element={
           <AppShellLayout>
             <Login />
-          </AppShellLayout>
-        }
-      />
-      <Route
-        path="/auth/callback"
-        element={
-          <AppShellLayout>
-            <AuthCallback />
           </AppShellLayout>
         }
       />

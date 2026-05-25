@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,19 +16,13 @@ from httpx import ASGITransport, AsyncClient
 
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.secrets.backend import EncryptedSqliteBackend
 from gapt_server.domains.secrets.vault import SecretVault
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.routers.secrets import set_vault
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,21 +52,18 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _RoutesFixture:
     app: FastAPI
-    idp: MagicLinkIdp
     vault: SecretVault
     sqlite_path: Path
+    admin_id: str
 
 
 @pytest_asyncio.fixture
 async def routes_fx(tmp_path: Path) -> AsyncIterator[_RoutesFixture]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)  # type: ignore[arg-type]
     container = build_container(settings)
     app = create_app(settings=settings, container=container)
-
-    idp = build_memory_idp()
-    set_auth_idp(idp)
 
     sqlite_path = tmp_path / "vault.sqlite3"
     backend = EncryptedSqliteBackend(db_path=sqlite_path, master_key="test")
@@ -79,26 +71,30 @@ async def routes_fx(tmp_path: Path) -> AsyncIterator[_RoutesFixture]:
     set_vault(vault)
 
     try:
-        yield _RoutesFixture(app=app, idp=idp, vault=vault, sqlite_path=sqlite_path)
+        yield _RoutesFixture(
+            app=app, vault=vault, sqlite_path=sqlite_path, admin_id=settings.admin_id
+        )
     finally:
+        set_vault(None)  # type: ignore[arg-type]
         await container.aclose()
 
 
-async def _login(client: AsyncClient, idp: MagicLinkIdp, email: str) -> str:
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(idp._tokens._items))
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    assert cb.status_code == 200
-    return cb.json()["user_id"]
-
-
 @pytest.mark.asyncio
-async def test_secrets_require_auth(routes_fx: _RoutesFixture) -> None:
-    async with AsyncClient(
-        transport=ASGITransport(app=routes_fx.app), base_url="http://test"
-    ) as client:
-        unauth = await client.get("/api/secrets")
-        assert unauth.status_code == 401
+async def test_secrets_require_auth() -> None:
+    """A separate auth_enabled=True app makes sure /api/secrets is gated."""
+    sync_dsn = _require_dsn()
+    _reset_and_upgrade(sync_dsn)
+    settings = Settings(postgres_dsn=sync_dsn)
+    container = build_container(settings)
+    app = create_app(settings=settings, container=container)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            unauth = await client.get("/api/secrets")
+            assert unauth.status_code == 401
+    finally:
+        await container.aclose()
 
 
 @pytest.mark.asyncio
@@ -106,13 +102,11 @@ async def test_full_secret_lifecycle_via_http(routes_fx: _RoutesFixture) -> None
     async with AsyncClient(
         transport=ASGITransport(app=routes_fx.app), base_url="http://test"
     ) as client:
-        user_id = await _login(client, routes_fx.idp, "alice@example.com")
-
         created = await client.post(
             "/api/secrets",
             json={
-                "scope": "user",
-                "owner_id": user_id,
+                "scope": "system",
+                "owner_id": routes_fx.admin_id,
                 "key_name": "anthropic",
                 "value": "sk-LIVE-DO-NOT-LEAK",
             },
@@ -154,10 +148,9 @@ async def test_duplicate_secret_returns_409(routes_fx: _RoutesFixture) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=routes_fx.app), base_url="http://test"
     ) as client:
-        user_id = await _login(client, routes_fx.idp, "alice@example.com")
         payload = {
-            "scope": "user",
-            "owner_id": user_id,
+            "scope": "system",
+            "owner_id": routes_fx.admin_id,
             "key_name": "dup",
             "value": "v1",
         }

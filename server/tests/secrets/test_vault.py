@@ -129,8 +129,8 @@ async def test_vault_store_read_delete(vault_fx: _VaultFixture) -> None:
     async with vault_fx.factory() as db:
         md = await vault_fx.vault.store(
             db,
-            scope=enums.SecretOwnerScope.USER,
-            owner_id="01KS90000000000000000000US",
+            scope=enums.SecretOwnerScope.SYSTEM,
+            owner_id="admin",
             key_name="anthropic_api_key",
             value="sk-test-abc",
         )
@@ -153,7 +153,7 @@ async def test_vault_store_read_delete(vault_fx: _VaultFixture) -> None:
             db,
             secret_id=md.id,
             purpose="unit-test",
-            actor_id="01KS90000000000000000000US",
+            actor_id="admin",
         )
         assert plaintext == "sk-test-abc"
 
@@ -165,7 +165,7 @@ async def test_vault_store_read_delete(vault_fx: _VaultFixture) -> None:
                 db,
                 secret_id=md.id,
                 purpose="unit-test",
-                actor_id="01KS90000000000000000000US",
+                actor_id="admin",
             )
         assert exc_info.value.code == "secret.not_found"
 
@@ -200,8 +200,8 @@ async def test_vault_rotate_replaces_blob(vault_fx: _VaultFixture) -> None:
     async with vault_fx.factory() as db:
         md = await vault_fx.vault.store(
             db,
-            scope=enums.SecretOwnerScope.USER,
-            owner_id="01KS90000000000000000000US",
+            scope=enums.SecretOwnerScope.SYSTEM,
+            owner_id="admin",
             key_name="vault_rotate_target",
             value="initial",
         )
@@ -218,7 +218,7 @@ async def test_vault_rotate_replaces_blob(vault_fx: _VaultFixture) -> None:
                 db,
                 secret_id=md.id,
                 purpose="unit-test",
-                actor_id="01KS90000000000000000000US",
+                actor_id="admin",
             )
             == "updated"
         )

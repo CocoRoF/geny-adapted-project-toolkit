@@ -4,8 +4,6 @@ export type GitProvider = "github" | "gitlab" | "bitbucket" | "other";
 
 export interface ProjectResponse {
   id: string;
-  org_id: string;
-  owner_id: string;
   slug: string;
   display_name: string;
   git_remote_url: string;
@@ -19,7 +17,6 @@ export interface ProjectResponse {
 }
 
 export interface CreateProjectInput {
-  org_id: string;
   slug: string;
   display_name: string;
   git_remote_url: string;
@@ -30,10 +27,8 @@ export interface CreateProjectInput {
   compose_profile_prod?: string;
 }
 
-export const listProjects = (orgId?: string): Promise<ProjectResponse[]> => {
-  const q = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
-  return apiGet<ProjectResponse[]>(`/api/projects${q}`);
-};
+export const listProjects = (): Promise<ProjectResponse[]> =>
+  apiGet<ProjectResponse[]>("/api/projects");
 
 export const createProject = (input: CreateProjectInput): Promise<ProjectResponse> =>
   apiPost<ProjectResponse>("/api/projects", input);

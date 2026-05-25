@@ -226,10 +226,10 @@ class GithubDeviceFlow:
 
 
 def github_secret_key_name(user_id: str) -> str:
-    """Stable key name used for storing a user's GitHub token in
-    `SecretVault` (scope=USER)."""
+    """Stable key name used for storing the admin's GitHub token in
+    `SecretVault` (scope=SYSTEM)."""
     return f"github_oauth_token::{user_id}"
 
 
 def secret_owner_scope() -> enums.SecretOwnerScope:
-    return enums.SecretOwnerScope.USER
+    return enums.SecretOwnerScope.SYSTEM

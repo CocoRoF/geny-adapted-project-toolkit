@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from gapt_server.container import get_db_session
 from gapt_server.db import models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.cost.service import (
     aggregate_daily_for_project,
     aggregate_summary,
@@ -43,7 +44,6 @@ class CostSummaryRow(BaseModel):
     project_id: str
     project_slug: str
     project_display_name: str
-    org_id: str
     cost_usd: float
     input_tokens: int
     output_tokens: int
@@ -70,16 +70,13 @@ async def get_cost_summary(
     since: datetime | None = Query(default=None),  # noqa: B008
     until: datetime | None = Query(default=None),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> CostSummary:
-    # Authorize: only projects the actor has a membership on.
+    # Single-admin model — cost is global across every project.
     project_ids = (
-        await db.execute(
-            select(models.ProjectMembership.project_id).where(
-                models.ProjectMembership.user_id == user.id
-            )
-        )
+        await db.execute(select(models.Project.id))
     ).scalars().all()
+    _ = user
 
     rows = await aggregate_summary(db, project_ids=project_ids, since=since, until=until)
     out_rows = [
@@ -87,7 +84,6 @@ async def get_cost_summary(
             project_id=r.project_id,
             project_slug=r.project_slug,
             project_display_name=r.project_display_name,
-            org_id=r.org_id,
             cost_usd=round(r.cost_usd, 6),
             input_tokens=r.input_tokens,
             output_tokens=r.output_tokens,
@@ -109,7 +105,7 @@ async def get_project_cost_daily(
     since: datetime | None = Query(default=None),  # noqa: B008
     until: datetime | None = Query(default=None),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[DailyCostRow]:
     try:
         await fetch_project_for(db, actor=user, project_id=project_id)

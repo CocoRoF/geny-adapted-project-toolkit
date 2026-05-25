@@ -4,7 +4,6 @@ export interface CostSummaryRow {
   project_id: string;
   project_slug: string;
   project_display_name: string;
-  org_id: string;
   cost_usd: number;
   input_tokens: number;
   output_tokens: number;

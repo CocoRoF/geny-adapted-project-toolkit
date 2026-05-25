@@ -17,6 +17,7 @@ suggestion. Subsequent calls are upsert-safe.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -30,14 +31,13 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
-from pathlib import Path
-
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.introspection import (
     ProjectIntrospection,
     detect,
     patch_nextjs_basepath,
 )
-from gapt_server.domains.services import ServiceRegistry, ServiceAlreadyExists
+from gapt_server.domains.services import ServiceAlreadyExists, ServiceRegistry
 from gapt_server.routers.auth import get_current_user
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ class IntrospectResponse(BaseModel):
 async def introspect_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> IntrospectResponse:
     """Run detectors against the workspace's worktree.
 
@@ -100,19 +100,9 @@ async def introspect_workspace(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
         )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == ws.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
-        )
+    # Single-admin model — no membership check, but reference `user`
+    # so the Depends() gate still runs.
+    _ = user
     if ws.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -206,7 +196,7 @@ async def apply_introspection(
     workspace_id: str,
     payload: ApplyIntrospectionRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> ApplyIntrospectionResponse:
@@ -228,19 +218,9 @@ async def apply_introspection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
         )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == ws.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
-        )
+    # Single-admin model — no membership check, but reference `user`
+    # so the Depends() gate still runs.
+    _ = user
     if ws.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -293,7 +273,7 @@ async def apply_introspection(
                     actions.append(
                         f"dev service {payload.dev_label!r} already running — kept"
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             except RuntimeError as exc:
                 actions.append(f"dev service spawn failed: {exc}")
@@ -416,7 +396,7 @@ class AutoPatchResponse(BaseModel):
 async def auto_patch_nextjs_basepath(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> AutoPatchResponse:
     """Patch the workspace clone's Next.js config + Dockerfile so
     the app builds with the right `basePath`. Only touches files
@@ -435,19 +415,9 @@ async def auto_patch_nextjs_basepath(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
         )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == ws.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
-        )
+    # Single-admin model — no membership check, but reference `user`
+    # so the Depends() gate still runs.
+    _ = user
     if ws.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

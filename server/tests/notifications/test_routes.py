@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,17 +17,13 @@ from httpx import ASGITransport, AsyncClient
 from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
+from gapt_server.domains.auth.session import InMemorySessionStore
 from gapt_server.domains.sandbox import MockSandboxBackend
-from gapt_server.routers.auth import set_auth_idp
+from gapt_server.routers.auth import set_session_store
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,37 +53,37 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
 
 
 @pytest_asyncio.fixture
 async def fx() -> AsyncIterator[_Fx]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
+    # auth_enabled=True so we can exercise the 401-without-cookie path.
     settings = Settings(postgres_dsn=sync_dsn)
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+    # Pin a fresh session store so sibling tests don't carry cookies in.
+    set_session_store(InMemorySessionStore())
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp)
+        yield _Fx(app=app)
     finally:
         await container.aclose()
 
 
-async def _login(client: AsyncClient, fx: _Fx, email: str) -> str:
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    return cb.json()["user_id"]
+async def _login_as_admin(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/login", json={"id": "admin", "password": "admin"}
+    )
+    assert resp.status_code == 204, resp.text
 
 
 @pytest.mark.asyncio
 async def test_test_endpoint_appends_to_feed(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login(client, fx, "alice@example.com")
+        await _login_as_admin(client)
 
         resp = await client.post(
             "/api/notifications/test",
@@ -101,23 +98,6 @@ async def test_test_endpoint_appends_to_feed(fx: _Fx) -> None:
         assert len(body) == 1
         assert body[0]["severity"] == "warn"
         assert body[0]["title"] == "hello"
-
-
-@pytest.mark.asyncio
-async def test_feed_is_per_user(fx: _Fx) -> None:
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login(client, fx, "alice@example.com")
-        await client.post("/api/notifications/test", json={"title": "alice-only"})
-
-        # Switch to a fresh user.
-        await client.post("/api/auth/logout")
-        client.cookies.clear()
-        await _login(client, fx, "mallory@example.com")
-
-        feed = await client.get("/api/notifications")
-        assert feed.status_code == 200
-        # Mallory's bell is empty — alice's note isn't broadcast.
-        assert feed.json() == []
 
 
 @pytest.mark.asyncio

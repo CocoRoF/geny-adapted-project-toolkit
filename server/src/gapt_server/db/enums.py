@@ -10,19 +10,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class Role(StrEnum):
-    """Generic membership role. Used by both `org_memberships` and
-    `project_memberships`.
-
-    Order is meaningful: `OWNER > ADMIN > EDITOR > VIEWER`.
-    """
-
-    VIEWER = "viewer"
-    EDITOR = "editor"
-    ADMIN = "admin"
-    OWNER = "owner"
-
-
 class GitProvider(StrEnum):
     GITHUB = "github"
     GITLAB = "gitlab"
@@ -62,10 +49,12 @@ class AgentSessionStatus(StrEnum):
 
 
 class SecretOwnerScope(StrEnum):
-    USER = "user"
+    # Single-admin model: there is no user/org tier. SYSTEM is the
+    # admin-global scope (most secrets); PROJECT / ENVIRONMENT remain
+    # for per-project / per-env overrides.
+    SYSTEM = "system"
     PROJECT = "project"
     ENVIRONMENT = "environment"
-    ORG = "org"
 
 
 class SecretBackend(StrEnum):

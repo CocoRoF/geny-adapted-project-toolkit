@@ -92,10 +92,11 @@ _DEFAULTS: dict[str, PolicyDecision] = {
     "secret.update": PolicyDecision.DENY,
     "secret.delete": PolicyDecision.DENY,
     "secret.read": PolicyDecision.ALLOW,
-    # Membership / authz
-    "member.invite": PolicyDecision.DENY,
-    "member.remove": PolicyDecision.DENY,
-    "role.change": PolicyDecision.DENY,
+    # Membership / role actions used to live here. Removed with the
+    # multi-user system — GAPT is single-admin now. Agent paths that
+    # try to invoke them are still caught by `_AGENT_FORBIDDEN_ACTIONS`
+    # as defence-in-depth even though there's no UI surface that
+    # emits them.
     # Git
     "git.push.protected": PolicyDecision.REQUIRE_USER_APPROVAL,
     "git.push.force": PolicyDecision.DENY,
@@ -243,9 +244,6 @@ _DEFAULT_REASONS: dict[str, str] = {
     "secret.update": "secret mutations are user/UI only",
     "secret.delete": "secret mutations are user/UI only",
     "secret.read": "secret read allowed at session boot — audited per read",
-    "member.invite": "membership changes are user-only",
-    "member.remove": "membership changes are user-only",
-    "role.change": "role changes are user-only",
     "git.push.protected": "pushes to protected branches need user approval",
     "git.push.force": "force-push is not safe without lease semantics",
     "tool.bash.danger": "dangerous shell patterns need user approval",

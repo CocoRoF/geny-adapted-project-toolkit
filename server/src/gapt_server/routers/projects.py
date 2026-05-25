@@ -1,10 +1,10 @@
 """Project + Environment routes.
 
 - `POST   /api/projects`                              — create
-- `GET    /api/projects`                              — list (member only)
+- `GET    /api/projects`                              — list
 - `GET    /api/projects/{pid}`                        — fetch
-- `PATCH  /api/projects/{pid}`                        — update (≥ editor)
-- `DELETE /api/projects/{pid}`                        — archive (≥ admin)
+- `PATCH  /api/projects/{pid}`                        — update
+- `DELETE /api/projects/{pid}`                        — archive
 - `POST   /api/projects/{pid}/environments`           — create env
 - `GET    /api/projects/{pid}/environments`           — list envs
 """
@@ -18,8 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from gapt_server.container import get_audit_sink, get_db_session
-from gapt_server.db import enums, models
+from gapt_server.db import enums
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.projects.service import (
     EnvironmentView,
     ProjectError,
@@ -47,7 +48,6 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
 class CreateProjectRequest(BaseModel):
-    org_id: str = Field(min_length=26, max_length=26)
     slug: str = Field(min_length=1, max_length=120, pattern=_SLUG_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
     git_remote_url: str = Field(min_length=4, max_length=2048)
@@ -67,8 +67,6 @@ class UpdateProjectRequest(BaseModel):
 
 class ProjectResponse(BaseModel):
     id: str
-    org_id: str
-    owner_id: str
     slug: str
     display_name: str
     git_remote_url: str
@@ -120,7 +118,7 @@ def http_from_project_error(exc: ProjectError) -> HTTPException:
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": exc.code, "reason": str(exc)},
         )
-    if exc.code in {"project.forbidden", "project.role_insufficient", "org.forbidden"}:
+    if exc.code in {"project.forbidden", "project.role_insufficient"}:
         return HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": exc.code, "reason": str(exc)},
@@ -144,13 +142,12 @@ async def create_project(
     payload: CreateProjectRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> ProjectResponse:
     try:
         view = await svc.create(
             db,
             actor=user,
-            org_id=payload.org_id,
             slug=payload.slug,
             display_name=payload.display_name,
             git_remote_url=payload.git_remote_url,
@@ -168,14 +165,13 @@ async def create_project(
 
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
-    org_id: str | None = None,
     include_archived: bool = False,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[ProjectResponse]:
     views = await svc.list_for_user(
-        db, actor=user, org_id=org_id, include_archived=include_archived
+        db, actor=user, include_archived=include_archived
     )
     return [ProjectResponse.from_view(v) for v in views]
 
@@ -185,7 +181,7 @@ async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> ProjectResponse:
     try:
         view = await svc.get(db, actor=user, project_id=project_id)
@@ -200,7 +196,7 @@ async def update_project(
     payload: UpdateProjectRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> ProjectResponse:
     try:
         view = await svc.update(
@@ -223,7 +219,7 @@ async def archive_project(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> ProjectResponse:
     try:
         view = await svc.archive(db, actor=user, project_id=project_id)
@@ -243,7 +239,7 @@ async def create_environment(
     payload: CreateEnvironmentRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> EnvironmentResponse:
     try:
         view = await svc.create_environment(
@@ -269,7 +265,7 @@ async def list_environments(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     svc: ProjectService = Depends(get_project_service),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[EnvironmentResponse]:
     try:
         views = await svc.list_environments(db, actor=user, project_id=project_id)

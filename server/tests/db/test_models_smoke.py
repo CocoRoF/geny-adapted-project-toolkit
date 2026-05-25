@@ -57,18 +57,9 @@ async def _exercise(async_dsn: str) -> None:
     try:
         async with factory() as session:
             assert isinstance(session, AsyncSession)
-            user = models.User(email="alice@example.com", display_name="Alice")
-            org = models.Org(slug="default", name="Default Org", owner_id="placeholder")
-            session.add(user)
-            await session.flush()  # user.id populated
-            org.owner_id = user.id
-            session.add(org)
-            await session.flush()
 
             project = models.Project(
                 slug="demo",
-                org_id=org.id,
-                owner_id=user.id,
                 display_name="Demo project",
                 git_remote_url="https://github.com/CocoRoF/demo.git",
                 git_provider=enums.GitProvider.GITHUB,
@@ -79,7 +70,7 @@ async def _exercise(async_dsn: str) -> None:
 
             audit = models.AuditEvent(
                 actor_type=enums.AuditActorType.USER,
-                actor_id=user.id,
+                actor_id="admin",
                 scope={"project_id": project.id},
                 action="project.create",
                 subject={"display_name": project.display_name},

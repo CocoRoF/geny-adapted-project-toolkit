@@ -15,27 +15,26 @@ Endpoints (project-scoped):
 - `PUT    /api/environments/{eid}`
 - `DELETE /api/environments/{eid}`
 
-Authorization piggybacks the existing project membership gate so
-*any* member with project access can list; create / update / delete
-additionally require ≥ EDITOR role (M3 promotes this to ADMIN-only
-once RBAC ships).
+Single-admin model — every authenticated request goes through
+`fetch_project_for` purely to surface a clean 404 on bogus
+project_ids; there is no role hierarchy.
 """
 
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 — pydantic at runtime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from gapt_server.container import get_db_session
+from gapt_server.container import get_audit_sink, get_db_session
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
-from gapt_server.domains.audit.sink import AuditEvent, AuditSink  # noqa: TC001
+from gapt_server.domains.audit.sink import AuditEvent, AuditSink
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
-from gapt_server.container import get_audit_sink
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
 
@@ -105,7 +104,7 @@ async def _row_or_404(db: AsyncSession, env_id: str) -> models.Environment:
 async def list_environments(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[EnvironmentResponse]:
     try:
         await fetch_project_for(db, actor=user, project_id=project_id)
@@ -130,13 +129,11 @@ async def create_environment(
     project_id: str,
     payload: EnvironmentPayload,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
 ) -> EnvironmentResponse:
     try:
-        await fetch_project_for(
-            db, actor=user, project_id=project_id, min_role=enums.Role.EDITOR
-        )
+        await fetch_project_for(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -193,7 +190,7 @@ async def create_environment(
 async def get_environment(
     env_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> EnvironmentResponse:
     row = await _row_or_404(db, env_id)
     try:
@@ -208,14 +205,12 @@ async def update_environment(
     env_id: str,
     payload: EnvironmentPayload,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
 ) -> EnvironmentResponse:
     row = await _row_or_404(db, env_id)
     try:
-        await fetch_project_for(
-            db, actor=user, project_id=row.project_id, min_role=enums.Role.EDITOR
-        )
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -266,14 +261,12 @@ async def update_environment(
 async def delete_environment(
     env_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
 ) -> None:
     row = await _row_or_404(db, env_id)
     try:
-        await fetch_project_for(
-            db, actor=user, project_id=row.project_id, min_role=enums.Role.ADMIN
-        )
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import textwrap
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,17 +18,13 @@ from httpx import ASGITransport, AsyncClient
 from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
+from gapt_server.domains.auth.session import InMemorySessionStore
 from gapt_server.domains.sandbox import MockSandboxBackend
-from gapt_server.routers.auth import set_auth_idp
+from gapt_server.routers.auth import set_session_store
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +55,6 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _Fx:
     app: FastAPI
-    idp: MagicLinkIdp
 
 
 @pytest_asyncio.fixture
@@ -86,25 +82,25 @@ async def fx(tmp_path: Path) -> AsyncIterator[_Fx]:
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
+    set_session_store(InMemorySessionStore())
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _Fx(app=app, idp=idp)
+        yield _Fx(app=app)
     finally:
         await container.aclose()
 
 
-async def _login(client: AsyncClient, fx: _Fx, email: str) -> None:
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(fx.idp._tokens._items))  # type: ignore[attr-defined]
-    await client.get(f"/api/auth/magic-link/callback?token={token}")
+async def _login_as_admin(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/auth/login", json={"id": "admin", "password": "admin"}
+    )
+    assert resp.status_code == 204, resp.text
 
 
 @pytest.mark.asyncio
 async def test_get_policies_returns_merged_table_with_source_layers(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        await _login(client, fx, "alice@example.com")
+        await _login_as_admin(client)
         resp = await client.get("/api/policies")
         assert resp.status_code == 200, resp.text
         body = resp.json()

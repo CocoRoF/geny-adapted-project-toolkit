@@ -4,7 +4,6 @@ import { Archive, FolderGit2, GitBranch, Plus, RefreshCw, Trash2 } from "lucide-
 
 import { ApiError } from "@/api/client";
 import { type ProjectResponse, archiveProject, listProjects } from "@/api/projects";
-import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { NewProjectModal } from "@/routes/NewProjectModal";
 import { Badge } from "@/ui/Badge";
@@ -16,7 +15,6 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 /** `/projects` — card grid backed by `GET /api/projects`. */
 export function ProjectsIndex() {
   const { t } = useI18n();
-  const { me } = useAuth();
   const [state, setState] = useState<LoadState>("idle");
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -70,8 +68,6 @@ export function ProjectsIndex() {
       .finally(() => setArchiving(false));
   }
 
-  const orgs = me?.orgs ?? [];
-
   return (
     <div className="mx-auto max-w-[1080px] px-6 py-8">
       <header className="mb-6 flex items-end justify-between gap-4">
@@ -97,11 +93,7 @@ export function ProjectsIndex() {
             />
             <span>{t("projects.refresh")}</span>
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => setShowCreate(true)}
-            disabled={orgs.length === 0}
-          >
+          <Button variant="primary" onClick={() => setShowCreate(true)}>
             <Plus className="h-3.5 w-3.5" />
             {t("projects.new")}
           </Button>
@@ -180,7 +172,6 @@ export function ProjectsIndex() {
 
       <NewProjectModal
         open={showCreate}
-        orgs={orgs}
         onClose={() => setShowCreate(false)}
         onCreated={(project) => {
           setProjects((prev) => [project, ...prev]);

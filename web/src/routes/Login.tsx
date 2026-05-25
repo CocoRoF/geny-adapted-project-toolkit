@@ -1,8 +1,9 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Loader2, LogIn, Mail } from "lucide-react";
+import { LogIn } from "lucide-react";
 
-import { completeMagicLink, requestMagicLink } from "@/api/auth";
+import { ApiError } from "@/api/client";
+import { login as apiLogin } from "@/api/auth";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Button } from "@/ui/Button";
@@ -20,24 +21,21 @@ function resolveFromLocation(state: unknown): string {
   return "/projects";
 }
 
-/** `/login` — single-step sign-in for dev/staging environments.
+/** `/login` — MinIO/Jenkins-style single-admin sign-in.
  *
- * Backend mints a magic-link token and (when not in prod) returns it
- * in the response. The SPA immediately consumes the token to set the
- * session cookie, then redirects to `/projects` — effectively a
- * password-less signup + login in one click.
- *
- * In prod the server hides the token and the user has to consume
- * the emailed link manually (SMTP wiring lands in M2). */
+ * The server validates against `GAPT_ADMIN_ID` / `GAPT_ADMIN_PASSWORD`
+ * (defaults `admin`/`admin`) and sets a session cookie on success.
+ * When the operator sets `GAPT_AUTH_ENABLED=false` the AuthProvider
+ * skips this screen entirely — see `RequireAuth`. */
 export function Login() {
   const { status, refresh } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [email, setEmail] = useState("");
+  const [id, setId] = useState("admin");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "completing" | "emailed">("idle");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,21 +52,14 @@ export function Login() {
     setSubmitting(true);
     void (async () => {
       try {
-        const resp = await requestMagicLink(email);
-        const devToken = resp.dev_token ?? resp.token;
-        if (devToken) {
-          // Dev path: consume the token immediately. AuthProvider
-          // then flips to signed_in via the /me poll and the useEffect
-          // above navigates to /projects.
-          setPhase("completing");
-          await completeMagicLink(devToken);
-          await refresh();
-        } else {
-          setPhase("emailed");
-        }
+        await apiLogin({ id, password });
+        await refresh();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err));
-        setPhase("idle");
+        if (err instanceof ApiError && err.status === 401) {
+          setError(t("auth.login.invalid"));
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
       } finally {
         setSubmitting(false);
       }
@@ -90,17 +81,26 @@ export function Login() {
 
         <div className="rounded-lg border border-border bg-bg-elevated p-5 shadow-sm">
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
-            <Field
-              label={t("auth.login.email.label")}
-              hint={t("auth.login.email.hint")}
-            >
+            <Field label={t("auth.login.id.label")} hint={t("auth.login.id.hint")}>
               <Input
-                id="auth-email"
-                type="email"
-                autoComplete="email"
-                placeholder={t("auth.login.email.placeholder")}
-                value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)}
+                id="auth-id"
+                autoComplete="username"
+                placeholder="admin"
+                value={id}
+                onChange={(e) => setId(e.currentTarget.value)}
+                required
+                disabled={submitting}
+                className="h-9"
+              />
+            </Field>
+            <Field label={t("auth.login.password.label")}>
+              <Input
+                id="auth-password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.currentTarget.value)}
                 required
                 disabled={submitting}
                 className="h-9"
@@ -110,28 +110,12 @@ export function Login() {
               type="submit"
               variant="primary"
               size="lg"
-              disabled={submitting || email.length === 0}
+              disabled={submitting || id.length === 0 || password.length === 0}
             >
-              {phase === "completing" ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("auth.login.completing")}
-                </>
-              ) : (
-                <>
-                  <LogIn className="h-4 w-4" />
-                  {t("auth.login.continue")}
-                </>
-              )}
+              <LogIn className="h-4 w-4" />
+              {submitting ? t("auth.login.completing") : t("auth.login.continue")}
             </Button>
           </form>
-
-          {phase === "emailed" ? (
-            <div className="mt-4 flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2.5">
-              <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
-              <p className="text-[12px] text-success">{t("auth.login.sent")}</p>
-            </div>
-          ) : null}
 
           {error ? (
             <p
@@ -143,7 +127,7 @@ export function Login() {
           ) : null}
 
           <p className="mt-4 text-center text-[11px] text-fg-subtle">
-            {t("auth.login.passwordless_note")}
+            {t("auth.login.admin_note")}
           </p>
         </div>
       </div>

@@ -36,6 +36,7 @@ from gapt_server.container import (
     get_service_registry,
 )
 from gapt_server.db import enums, models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.caddy import (
     CaddyAdminClient,
     CaddyAdminError,
@@ -110,8 +111,11 @@ class ServiceResponse(BaseModel):
 
 
 async def _workspace_or_404(
-    db: AsyncSession, user: models.User, workspace_id: str
+    db: AsyncSession, user: AdminPrincipal, workspace_id: str
 ) -> models.Workspace:
+    # Single-admin model — no membership check; we still bounce non-
+    # running rows with 409 so the service spawn path fails early.
+    _ = user
     row = (
         await db.execute(
             select(models.Workspace).where(models.Workspace.id == workspace_id)
@@ -121,19 +125,6 @@ async def _workspace_or_404(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "workspace.not_found", "reason": workspace_id},
-        )
-    membership = (
-        await db.execute(
-            select(models.ProjectMembership).where(
-                (models.ProjectMembership.project_id == row.project_id)
-                & (models.ProjectMembership.user_id == user.id)
-            )
-        )
-    ).scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "workspace.forbidden", "reason": workspace_id},
         )
     if row.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
@@ -158,7 +149,7 @@ def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
 async def list_services(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
 ) -> list[ServiceResponse]:
     await _workspace_or_404(db, user, workspace_id)
@@ -175,7 +166,7 @@ async def start_service(
     workspace_id: str,
     payload: StartServiceRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
 ) -> ServiceResponse:
     workspace = await _workspace_or_404(db, user, workspace_id)
@@ -209,7 +200,7 @@ async def stop_service(
     workspace_id: str,
     label: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
 ) -> ServiceResponse:
     await _workspace_or_404(db, user, workspace_id)
@@ -231,7 +222,7 @@ async def delete_service(
     workspace_id: str,
     label: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> None:
@@ -272,7 +263,7 @@ async def restart_service(
     workspace_id: str,
     label: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
 ) -> ServiceResponse:
     workspace = await _workspace_or_404(db, user, workspace_id)
@@ -339,7 +330,7 @@ async def expose_service(
     label: str,
     payload: ExposeRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -432,7 +423,7 @@ async def unexpose_service(
     workspace_id: str,
     label: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: ServiceRegistry = Depends(get_service_registry),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> None:

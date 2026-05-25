@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             restored = await container.services.recover_from_containers(workspaces)
             if restored:
                 logger.info("services.recovered", count=restored)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("services.recover_failed")
     try:
         yield
@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reconciler_task.cancel()
         try:
             await reconciler_task
-        except (BaseException,):  # noqa: BLE001 — cancellation is expected
+        except BaseException:
             pass
         await container.aclose()
         logger.info("gapt.server.shutdown")

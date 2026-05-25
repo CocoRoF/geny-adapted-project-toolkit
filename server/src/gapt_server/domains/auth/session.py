@@ -1,10 +1,11 @@
-"""Session + token storage abstractions.
+"""Session storage abstraction.
 
-`TokenStore` is the short-lived (15 min) store for magic-link tokens.
 `SessionStore` is the post-login session table keyed by an opaque
-session-id cookie value. Both have an in-memory implementation for
-tests / single-process dev runs; Redis-backed versions plug in later
-without touching call sites.
+session-id cookie value. The in-memory implementation is the only
+thing M1 ships — a solo self-hosted tool doesn't justify Redis. If
+the server restarts, the operator re-logs in. The protocol is here
+so a Redis-backed implementation can plug in later without touching
+call sites.
 """
 
 from __future__ import annotations
@@ -23,13 +24,6 @@ class Session:
     expires_at: float
 
 
-class TokenStore(Protocol):
-    async def put(self, token: str, payload: str, ttl_s: float) -> None: ...
-
-    async def take(self, token: str) -> str | None:
-        """Atomic consume — returns None if absent/expired."""
-
-
 class SessionStore(Protocol):
     async def create(self, session_id: str, user_id: str, ttl_s: float) -> Session: ...
 
@@ -38,27 +32,7 @@ class SessionStore(Protocol):
     async def delete(self, session_id: str) -> None: ...
 
 
-# ─────────────────────────────────────────────────────── in-memory backends ──
-
-
-class InMemoryTokenStore:
-    def __init__(self) -> None:
-        self._items: dict[str, tuple[str, float]] = {}
-        self._lock = asyncio.Lock()
-
-    async def put(self, token: str, payload: str, ttl_s: float) -> None:
-        async with self._lock:
-            self._items[token] = (payload, time.time() + ttl_s)
-
-    async def take(self, token: str) -> str | None:
-        async with self._lock:
-            entry = self._items.pop(token, None)
-            if entry is None:
-                return None
-            payload, expires_at = entry
-            if expires_at < time.time():
-                return None
-            return payload
+# ─────────────────────────────────────────────────────── in-memory backend ──
 
 
 class InMemorySessionStore:

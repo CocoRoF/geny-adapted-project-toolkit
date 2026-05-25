@@ -194,10 +194,10 @@ async def test_bundle_includes_sdk_creds_when_mapped(
 
 
 @pytest.mark.asyncio
-async def test_user_scoped_anthropic_key_flows_into_claude_cli(
+async def test_system_scoped_anthropic_key_flows_into_claude_cli(
     creds_fx: _CredsFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the project doesn't supply secret_refs, a user-scoped
+    """When the project doesn't supply secret_refs, a system-scoped
     `anthropic_api_key` should fall through to both the SDK provider
     *and* the spawned claude_code_cli (overriding any host env)."""
     monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
@@ -207,15 +207,15 @@ async def test_user_scoped_anthropic_key_flows_into_claude_cli(
     async with factory() as db:
         await creds_fx.vault.store(
             db,
-            scope=enums.SecretOwnerScope.USER,
-            owner_id="01KS90000000000000000USER",
+            scope=enums.SecretOwnerScope.SYSTEM,
+            owner_id="admin",
             key_name="anthropic_api_key",
-            value="sk-from-user-vault",
+            value="sk-from-admin-vault",
         )
         await creds_fx.vault.store(
             db,
-            scope=enums.SecretOwnerScope.USER,
-            owner_id="01KS90000000000000000USER",
+            scope=enums.SecretOwnerScope.SYSTEM,
+            owner_id="admin",
             key_name="openai_api_key",
             value="sk-openai-from-vault",
         )
@@ -225,43 +225,34 @@ async def test_user_scoped_anthropic_key_flows_into_claude_cli(
         bundle = await build_for_session(
             db=db,
             vault=creds_fx.vault,
-            actor_id="01KS90000000000000000USER",
+            actor_id="admin",
         )
 
     # claude_code_cli prefers the vault key over the host env.
-    assert bundle.by_provider["claude_code_cli"].api_key == "sk-from-user-vault"
+    assert bundle.by_provider["claude_code_cli"].api_key == "sk-from-admin-vault"
     # SDK anthropic + openai providers are auto-included from the
-    # user-scoped vault keys.
-    assert bundle.by_provider["anthropic"].api_key == "sk-from-user-vault"
+    # system-scoped vault keys.
+    assert bundle.by_provider["anthropic"].api_key == "sk-from-admin-vault"
     assert bundle.by_provider["openai"].api_key == "sk-openai-from-vault"
 
 
 @pytest.mark.asyncio
-async def test_other_user_secrets_do_not_leak(
+async def test_missing_admin_secret_falls_back_to_empty_key(
     creds_fx: _CredsFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """User A's anthropic key must not appear in user B's bundle."""
+    """No system-scoped secret means claude_code_cli has no API key
+    and the SDK anthropic provider stays out of the bundle entirely."""
     monkeypatch.setenv("CLAUDE_BIN", "/usr/local/bin/claude")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     factory = create_session_factory(creds_fx.engine)
 
     async with factory() as db:
-        await creds_fx.vault.store(
-            db,
-            scope=enums.SecretOwnerScope.USER,
-            owner_id="01KS90000000000000000AAAA",
-            key_name="anthropic_api_key",
-            value="sk-user-A-only",
-        )
-        await db.commit()
-
-    async with factory() as db:
         bundle = await build_for_session(
             db=db,
             vault=creds_fx.vault,
-            actor_id="01KS90000000000000000BBBB",
+            actor_id="admin",
         )
 
-    # User B has no secret stored. claude_code_cli falls back to "".
+    # No secret stored — claude_code_cli falls back to "".
     assert bundle.by_provider["claude_code_cli"].api_key == ""
     assert "anthropic" not in bundle.by_provider

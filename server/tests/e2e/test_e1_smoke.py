@@ -1,21 +1,19 @@
 """End-to-end smoke for M1-E1 — proves the control plane can take a
-user from "first login" to a running workspace and back without any
-of the cycle-specific test seams leaking through.
+single admin from "first login" to a running workspace and back without
+any of the cycle-specific test seams leaking through.
 
 Coverage in one test:
-1. magic-link login → first user becomes OWNER of the default org.
-2. project create (auto OWNER membership).
-3. environment create.
-4. secret store (plaintext never on the wire).
-5. workspace create — `WorkspaceService` boots the (mock) sandbox.
-6. workspace stop + start exercises the SandboxBackend state machine.
-7. workspace delete tears the sandbox down.
-8. project archive ends the lifecycle.
+1. project create.
+2. environment create.
+3. secret store (plaintext never on the wire).
+4. workspace create — `WorkspaceService` boots the (mock) sandbox.
+5. workspace stop + start exercises the SandboxBackend state machine.
+6. workspace delete tears the sandbox down.
+7. project archive ends the lifecycle.
 
 The fixture is hermetic: real Postgres for the schema, `MockSandboxBackend`
 for the sandbox (so no docker is required in CI), `InMemoryAuditSink`
-so every state transition is asserted, `InMemoryVolumeManager` if and
-when workspaces ask for a volume.
+so every state transition is asserted.
 """
 
 from __future__ import annotations
@@ -23,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,23 +30,15 @@ import psycopg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from gapt_server.app import create_app
 from gapt_server.container import build_container
-from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.auth.idp import build_memory_idp
 from gapt_server.domains.sandbox import MockSandboxBackend
-from gapt_server.routers.auth import set_auth_idp
 from gapt_server.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
-
     from fastapi import FastAPI
-
-    from gapt_server.domains.auth.idp import MagicLinkIdp
 
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -78,16 +69,16 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 @dataclass
 class _E2EFixture:
     app: FastAPI
-    idp: MagicLinkIdp
     audit: InMemoryAuditSink
     sandbox: MockSandboxBackend
+    admin_id: str
 
 
 @pytest_asyncio.fixture
 async def e2e_fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_E2EFixture]:
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
-    settings = Settings(postgres_dsn=sync_dsn)  # type: ignore[arg-type]
+    settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
     sandbox = MockSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
@@ -101,30 +92,12 @@ async def e2e_fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_E2EFixture]:
     monkeypatch.setattr(ws_service, "_default_clone_runner", _noop_clone)
 
     app = create_app(settings=settings, container=container)
-    idp = build_memory_idp()
-    set_auth_idp(idp)
     try:
-        yield _E2EFixture(app=app, idp=idp, audit=audit, sandbox=sandbox)
+        yield _E2EFixture(
+            app=app, audit=audit, sandbox=sandbox, admin_id=settings.admin_id
+        )
     finally:
         await container.aclose()
-
-
-async def _login(client: AsyncClient, idp: MagicLinkIdp, email: str) -> str:
-    await client.post("/api/auth/magic-link", json={"email": email})
-    token = next(iter(idp._tokens._items))
-    cb = await client.get(f"/api/auth/magic-link/callback?token={token}")
-    return cb.json()["user_id"]
-
-
-async def _default_org(app: FastAPI, user_id: str) -> str:
-    container = app.state.container
-    async with container.session_factory() as db:
-        row = (
-            await db.execute(
-                select(models.OrgMembership).where(models.OrgMembership.user_id == user_id)
-            )
-        ).scalar_one()
-    return row.org_id
 
 
 def _actions(audit: InMemoryAuditSink) -> Iterable[str]:
@@ -132,21 +105,14 @@ def _actions(audit: InMemoryAuditSink) -> Iterable[str]:
 
 
 @pytest.mark.asyncio
-async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
+async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=e2e_fx.app), base_url="http://test"
     ) as client:
-        # Step 1 — magic-link login.
-        user_id = await _login(client, e2e_fx.idp, "alice@example.com")
-        assert user_id
-
-        org_id = await _default_org(e2e_fx.app, user_id)
-
-        # Step 2 — project create.
+        # Step 1 — project create (auth disabled in fixture).
         proj = await client.post(
             "/api/projects",
             json={
-                "org_id": org_id,
                 "slug": "e1-smoke",
                 "display_name": "E1 Smoke",
                 "git_remote_url": "https://example.com/e1-smoke.git",
@@ -157,7 +123,7 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
         assert proj.status_code == 201, proj.text
         project_id = proj.json()["id"]
 
-        # Step 3 — environment create.
+        # Step 2 — environment create.
         env = await client.post(
             f"/api/projects/{project_id}/environments",
             json={
@@ -168,12 +134,12 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
         )
         assert env.status_code == 201, env.text
 
-        # Step 4 — secret store (response carries metadata only).
+        # Step 3 — secret store (response carries metadata only).
         secret = await client.post(
             "/api/secrets",
             json={
-                "scope": "user",
-                "owner_id": user_id,
+                "scope": "system",
+                "owner_id": e2e_fx.admin_id,
                 "key_name": "e1_smoke_anthropic",
                 "value": "sk-LIVE-DO-NOT-LEAK-e1-smoke",
             },
@@ -183,7 +149,7 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
         listing = await client.get("/api/secrets")
         assert "sk-LIVE-DO-NOT-LEAK-e1-smoke" not in listing.text
 
-        # Step 5 — workspace create. Boots a MockSandbox + kicks off
+        # Step 4 — workspace create. Boots a MockSandbox + kicks off
         # the host-side clone in a background task. Status flips from
         # `creating` to `running` once the clone settles.
         ws = await client.post(
@@ -205,7 +171,7 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
                 break
             await asyncio.sleep(0.1)
 
-        # Step 6 — workspace stop + start.
+        # Step 5 — workspace stop + start.
         stopped = await client.post(f"/api/workspaces/{workspace_id}/stop")
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["status"] == "stopped"
@@ -213,12 +179,12 @@ async def test_e1_full_user_journey(e2e_fx: _E2EFixture) -> None:
         assert started.status_code == 200
         assert started.json()["status"] == "running"
 
-        # Step 7 — workspace delete (sandbox torn down).
+        # Step 6 — workspace delete (sandbox torn down).
         deleted = await client.delete(f"/api/workspaces/{workspace_id}")
         assert deleted.status_code == 200
         assert deleted.json()["status"] == "archived"
 
-        # Step 8 — project archive.
+        # Step 7 — project archive.
         archived = await client.delete(f"/api/projects/{project_id}")
         assert archived.status_code == 200
         assert archived.json()["archived_at"] is not None

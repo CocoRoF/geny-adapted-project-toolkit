@@ -1,6 +1,6 @@
-"""User-global Agent / manifest preferences.
+"""Admin-global Agent / manifest preferences.
 
-- `GET  /api/agent-prefs`  — current user's prefs (empty record if unset)
+- `GET  /api/agent-prefs`  — current admin prefs (empty record if unset)
 - `PUT  /api/agent-prefs`  — upsert; every field optional, null = clear
 
 These overrides are read by `ProjectAwareSessionManager.create_session`
@@ -8,9 +8,8 @@ and `rehydrate_session` and patched into the loaded manifest via
 `apply_overrides` before `Pipeline.from_manifest_async`. The on-disk
 `gapt_default.json` is never modified — overrides are dynamic.
 
-Scope: deliberately a single row per user, not per project. Per-
-project overrides (and the full stage-graph editor) would land later
-when the surface area justifies the UX cost.
+Scope: deliberately a single global row (single-admin model). The full
+stage-graph editor lives in a future cycle.
 """
 
 from __future__ import annotations
@@ -21,16 +20,19 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from gapt_server.agent.session_registry import SessionRegistry  # noqa: TC001
 from gapt_server.container import get_db_session, get_session_registry
-from gapt_server.db import models  # noqa: TC001 — runtime introspection
-from gapt_server.db.ulid import new_ulid
+from gapt_server.db import models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.routers.auth import get_current_user
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# Singleton row id — every admin-scoped read/write targets this literal.
+_ADMIN_PREFS_ID = "admin"
 
 
 router = APIRouter(prefix="/api/agent-prefs", tags=["agent-prefs"])
@@ -52,7 +54,7 @@ class AgentPrefsPayload(BaseModel):
     timeout_s: int | None = Field(default=None, ge=1, le=600)
     permission_mode: str | None = Field(default=None, max_length=40)
 
-    def model_post_init(self, _: object) -> None:  # noqa: D401 — pydantic hook
+    def model_post_init(self, _: object) -> None:
         if self.permission_mode is not None and self.permission_mode not in _PERMISSION_MODES:
             raise ValueError(
                 f"permission_mode must be one of {sorted(_PERMISSION_MODES)}; got {self.permission_mode!r}"
@@ -64,7 +66,7 @@ class AgentPrefsResponse(AgentPrefsPayload):
     updated_at: datetime | None = None
 
 
-def _row_to_response(row: models.UserAgentPrefs | None) -> AgentPrefsResponse:
+def _row_to_response(row: models.AdminAgentPrefs | None) -> AgentPrefsResponse:
     if row is None:
         return AgentPrefsResponse()
     return AgentPrefsResponse(
@@ -79,10 +81,10 @@ def _row_to_response(row: models.UserAgentPrefs | None) -> AgentPrefsResponse:
     )
 
 
-async def _fetch(db: AsyncSession, user_id: str) -> models.UserAgentPrefs | None:
+async def _fetch(db: AsyncSession) -> models.AdminAgentPrefs | None:
     return (
         await db.execute(
-            select(models.UserAgentPrefs).where(models.UserAgentPrefs.user_id == user_id)
+            select(models.AdminAgentPrefs).where(models.AdminAgentPrefs.id == _ADMIN_PREFS_ID)
         )
     ).scalar_one_or_none()
 
@@ -90,9 +92,10 @@ async def _fetch(db: AsyncSession, user_id: str) -> models.UserAgentPrefs | None
 @router.get("", response_model=AgentPrefsResponse)
 async def get_prefs(
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> AgentPrefsResponse:
-    row = await _fetch(db, user.id)
+    _ = user
+    row = await _fetch(db)
     return _row_to_response(row)
 
 
@@ -100,49 +103,47 @@ async def get_prefs(
 async def put_prefs(
     payload: AgentPrefsPayload,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
 ) -> AgentPrefsResponse:
     """Upsert — every field is optional; `null` clears that override.
 
-    Also evicts the user's cached session runtimes so the next
-    invoke / stream forces `rehydrate_session` to rebuild the pipeline
-    with the fresh prefs. Without this eviction a user who changes
-    model / permission_mode / etc. while a session is open would
-    keep talking to the *old* pipeline until they explicitly archive
-    + restart — confusing UX ("I picked Opus but it still uses
-    Sonnet").
+    Also evicts any cached session runtimes so the next invoke / stream
+    forces `rehydrate_session` to rebuild the pipeline with the fresh
+    prefs. Without this eviction an operator who changes
+    model / permission_mode / etc. while a session is open would keep
+    talking to the *old* pipeline until they explicitly archive +
+    restart — confusing UX ("I picked Opus but it still uses Sonnet").
     """
-    values = {
-        "id": new_ulid(),
-        "user_id": user.id,
-        "model": payload.model,
-        "max_tokens": payload.max_tokens,
-        "max_iterations": payload.max_iterations,
-        "cost_budget_usd": payload.cost_budget_usd,
-        "timeout_s": payload.timeout_s,
-        "permission_mode": payload.permission_mode,
-    }
-    stmt = pg_insert(models.UserAgentPrefs).values(**values)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[models.UserAgentPrefs.user_id],
-        set_={
-            "model": payload.model,
-            "max_tokens": payload.max_tokens,
-            "max_iterations": payload.max_iterations,
-            "cost_budget_usd": payload.cost_budget_usd,
-            "timeout_s": payload.timeout_s,
-            "permission_mode": payload.permission_mode,
-        },
-    )
-    await db.execute(stmt)
+    # Single-row upsert keyed on the literal id="admin". SELECT-then-
+    # INSERT/UPDATE keeps us off `ON CONFLICT` so the same code path
+    # works on SQLite (test/dev) and Postgres (prod).
+    row = await _fetch(db)
+    if row is None:
+        row = models.AdminAgentPrefs(
+            id=_ADMIN_PREFS_ID,
+            model=payload.model,
+            max_tokens=payload.max_tokens,
+            max_iterations=payload.max_iterations,
+            cost_budget_usd=payload.cost_budget_usd,
+            timeout_s=payload.timeout_s,
+            permission_mode=payload.permission_mode,
+        )
+        db.add(row)
+    else:
+        row.model = payload.model
+        row.max_tokens = payload.max_tokens
+        row.max_iterations = payload.max_iterations
+        row.cost_budget_usd = payload.cost_budget_usd
+        row.timeout_s = payload.timeout_s
+        row.permission_mode = payload.permission_mode
     await db.commit()
     # Evict cached runtimes so the next invoke rehydrates with the
     # new prefs. Best-effort — if the registry is in a weird state
     # we still want the PUT to succeed and return the saved row.
     try:
         await registry.invalidate_user(user.id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-    row = await _fetch(db, user.id)
+    row = await _fetch(db)
     return _row_to_response(row)

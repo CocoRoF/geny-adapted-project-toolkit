@@ -37,9 +37,9 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-# User-scoped secret keys (matches the Settings UI). Resolved from
-# `SecretVault` scoped to the acting user when the project doesn't
-# carry an explicit `secret_ref`. Each entry: {vault_key_name: env_alias}.
+# Admin-scoped secret keys (matches the Settings UI). Resolved from
+# `SecretVault` scoped to the admin id when the project doesn't carry
+# an explicit `secret_ref`. Each entry: {vault_key_name: env_alias}.
 _USER_SECRET_KEYS: dict[str, str] = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
     "openai_api_key": "OPENAI_API_KEY",
@@ -55,15 +55,15 @@ async def _resolve_user_secret(
     key_name: str,
     purpose: str,
 ) -> str | None:
-    """Look up a user-scoped secret by key_name. Returns plaintext or
+    """Look up an admin-scoped secret by key_name. Returns plaintext or
     None when the secret isn't stored. Errors are swallowed because a
     missing secret is the normal case — the caller falls back to the
     process env (host-OAuth path)."""
     try:
         metadata = await vault.list(
-            db, scope=enums.SecretOwnerScope.USER, owner_id=actor_id
+            db, scope=enums.SecretOwnerScope.SYSTEM, owner_id=actor_id
         )
-    except Exception:  # noqa: BLE001 — best-effort fallback
+    except Exception:
         return None
     for md in metadata:
         if md.key_name != key_name:
@@ -72,7 +72,7 @@ async def _resolve_user_secret(
             return await vault.read(
                 db, secret_id=md.id, purpose=purpose, actor_id=actor_id
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
     return None
 

@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from gapt_server.container import get_app_settings, get_db_session
 from gapt_server.db import models
+from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.caddy import (
     CaddyAdminClient,
     CaddyAdminError,
@@ -145,7 +146,7 @@ async def register_preview(
     workspace_id: str,
     payload: RegisterPreviewBody,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> PreviewResponse:
     workspace = await _workspace_or_404(db, wid=workspace_id)
@@ -189,7 +190,7 @@ async def register_preview(
 async def unregister_preview(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> None:
     workspace = await _workspace_or_404(db, wid=workspace_id)
@@ -221,7 +222,7 @@ async def mint_share_link(
     workspace_id: str,
     ttl_s: int = Query(default=3600, ge=60),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    user: models.User = Depends(get_current_user),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> ShareLinkResponse:
     workspace = await _workspace_or_404(db, wid=workspace_id)
