@@ -410,9 +410,58 @@ async def expose_service(
         ) from exc
     url = f"https://{host}"
     await registry.set_bound(workspace_id, label, host, url)
+
+    # Warm the upstream so the user's first browser hit doesn't
+    # cross Cloudflare's edge timeout while Next.js / Vite / etc.
+    # compiles the first page. Dev servers do lazy first-page
+    # compilation that routinely takes 5-15s on a fresh container;
+    # if the iframe fires before that finishes we get a CF 502.
+    # We hit `gapt-ws-<wid>:<port>` directly from the workspace
+    # network (Caddy is on the same network, so we use docker DNS
+    # from the host via the container itself). Fire-and-forget —
+    # any failure here just means the user's browser pays the
+    # cold-start latency instead of us.
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    _asyncio.create_task(
+        _warm_upstream(workspace_id=workspace_id, port=port),
+        name=f"warm-{workspace_id}-{label}",
+    )
+
     return ExposeResponse(
         workspace_id=workspace_id, label=label, host=host, url=url, port=port
     )
+
+
+async def _warm_upstream(*, workspace_id: str, port: int) -> None:
+    """Best-effort GET against the workspace container so the dev
+    server compiles the first page before the user clicks. Runs
+    `curl` *inside* the gapt-ws container so we don't need to
+    publish a host port. Tolerates any failure silently."""
+    import asyncio  # noqa: PLC0415
+
+    container_name = f"gapt-ws-{workspace_id.lower()}"
+    cmd = [
+        "docker",
+        "exec",
+        container_name,
+        "curl",
+        "-s",
+        "-o",
+        "/dev/null",
+        "--max-time",
+        "60",
+        f"http://localhost:{port}/",
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=70.0)
+    except (asyncio.TimeoutError, FileNotFoundError, OSError):
+        return
 
 
 @router.delete(

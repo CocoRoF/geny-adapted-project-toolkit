@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import { PreviewPanel } from "@/ide/PreviewPanel";
 import { ServicesPanel } from "@/ide/ServicesPanel";
 
@@ -13,25 +11,21 @@ interface Props {
  * preset-switching as friction, and this view's job is just "tell me
  * what's running and let me look at it."
  *
- * The `previewNonce` is bumped whenever the user does something in
- * ServicesPanel that should make the preview re-load (Expose,
- * Restart, Unexpose). PreviewPanel watches the nonce and bumps its
- * iframe `key` — so the iframe alone refreshes, NOT the whole tab.
- * Without this hook, clicking Expose only refreshed the services
- * list, and the user had to manually hit the preview's Refresh
- * button to see the new upstream. */
+ * The two panels are loosely coupled: ServicesPanel polls the
+ * services API, PreviewPanel polls it too. When a user clicks
+ * Expose, the polling cycle picks up the new `bound_url` within a
+ * few seconds and PreviewPanel's auto-select effect points the
+ * iframe at it. We deliberately avoid pushing a "reload now" signal
+ * from sibling to sibling — the iframe is large, re-mounting it on
+ * every action made the whole tab look like it refreshed. */
 export function ServiceWorkspace({ workspaceId }: Props) {
-  const [previewNonce, setPreviewNonce] = useState(0);
   return (
     <div className="grid h-full flex-1 grid-cols-[minmax(360px,_440px)_1fr] overflow-hidden">
       <aside className="overflow-y-auto border-r border-border bg-bg-elevated">
-        <ServicesPanel
-          workspaceId={workspaceId}
-          onServicesMutated={() => setPreviewNonce((n) => n + 1)}
-        />
+        <ServicesPanel workspaceId={workspaceId} />
       </aside>
       <main className="overflow-hidden bg-bg-elevated">
-        <PreviewPanel workspaceId={workspaceId} reloadNonce={previewNonce} />
+        <PreviewPanel workspaceId={workspaceId} />
       </main>
     </div>
   );

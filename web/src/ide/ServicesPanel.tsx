@@ -32,11 +32,6 @@ import { Field, Input } from "@/ui/Input";
 
 interface Props {
   workspaceId: string;
-  /** Fired whenever a service action (start/stop/restart/expose/
-   * unexpose/delete) completes. ServiceWorkspace uses this to nudge
-   * the sibling PreviewPanel into refreshing its iframe — so the
-   * preview reflects the new upstream WITHOUT a full-page reload. */
-  onServicesMutated?: () => void;
 }
 
 const POLL_MS = 2000;
@@ -50,7 +45,7 @@ const POLL_MS = 2000;
  * the registry; this poll is the cheapest way to surface auto_port
  * + exit-code transitions without piling another SSE channel onto
  * the connection budget. */
-export function ServicesPanel({ workspaceId, onServicesMutated }: Props) {
+export function ServicesPanel({ workspaceId }: Props) {
   const [services, setServices] = useState<WorkspaceService[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -68,15 +63,6 @@ export function ServicesPanel({ workspaceId, onServicesMutated }: Props) {
       setLoading(false);
     }
   }, [workspaceId]);
-
-  // After a user-triggered action lands, the polling refresh + the
-  // immediate refresh inside `run()` already update this panel's
-  // state. Forward that signal to the sibling preview so its iframe
-  // can reload too — without touching anything else on the page.
-  const refreshAndNotify = useCallback(async () => {
-    await refresh();
-    onServicesMutated?.();
-  }, [refresh, onServicesMutated]);
 
   useEffect(() => {
     void refresh();
@@ -119,7 +105,7 @@ export function ServicesPanel({ workspaceId, onServicesMutated }: Props) {
               try {
                 await startService(workspaceId, input);
                 setShowForm(false);
-                await refreshAndNotify();
+                await refresh();
               } catch (e) {
                 setErr(
                   e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
@@ -143,7 +129,7 @@ export function ServicesPanel({ workspaceId, onServicesMutated }: Props) {
               key={svc.label}
               service={svc}
               workspaceId={workspaceId}
-              onChanged={refreshAndNotify}
+              onChanged={refresh}
               tailing={tailLabel === svc.label}
               onToggleTail={() => setTailLabel((c) => (c === svc.label ? null : svc.label))}
             />

@@ -31,11 +31,6 @@ function writeStored(workspaceId: string, url: string): void {
 
 interface Props {
   workspaceId: string;
-  /** Optional bump-counter driven by sibling ServicesPanel actions
-   * (expose/restart/etc.) — when it changes, we reload the iframe
-   * WITHOUT touching its URL. Lets the user "click Expose → see the
-   * preview update" without manually hitting Refresh. */
-  reloadNonce?: number;
 }
 
 /** Preview panel — embeds an iframe pointed at a workspace dev server.
@@ -43,12 +38,17 @@ interface Props {
  * Two ways to populate the URL:
  *   1. **Exposed-service dropdown** — picks from services the user
  *      already hit "Expose" on in the Service tab. The selected
- *      service's `bound_url` becomes the iframe src. Refreshed
- *      every few seconds so newly-exposed services appear without
- *      a manual reload.
+ *      service's `bound_url` becomes the iframe src. The first
+ *      exposed service auto-selects so the user sees the preview
+ *      without an extra click.
  *   2. **Manual entry** — for arbitrary URLs (e.g. a remote staging
- *      env, or a public site you're integrating with). */
-export function PreviewPanel({ workspaceId, reloadNonce }: Props) {
+ *      env, or a public site you're integrating with).
+ *
+ * The iframe never re-mounts on sibling-panel actions (the previous
+ * `reloadNonce` mechanism caused a visible blank flash on Expose
+ * because the iframe is the size of the screen). The user reloads
+ * the preview explicitly via the Refresh button in this header. */
+export function PreviewPanel({ workspaceId }: Props) {
   const { t } = useI18n();
   const [url, setUrl] = useState(() => readStored(workspaceId));
   const [device, setDevice] = useState<Device>("desktop");
@@ -59,16 +59,6 @@ export function PreviewPanel({ workspaceId, reloadNonce }: Props) {
   useEffect(() => {
     writeStored(workspaceId, url);
   }, [workspaceId, url]);
-
-  // Sibling-driven reload (Expose/Restart in ServicesPanel). The
-  // initial mount fires once with reloadNonce=0 which is a no-op the
-  // first iframe render already covers, so the guard skips it.
-  const firstReloadNonce = useRef(reloadNonce);
-  useEffect(() => {
-    if (reloadNonce === undefined) return;
-    if (reloadNonce === firstReloadNonce.current) return;
-    setReloadKey((k) => k + 1);
-  }, [reloadNonce]);
 
   // Poll the services list so the dropdown picks up newly exposed
   // services without forcing the user to reload the page.
@@ -97,6 +87,17 @@ export function PreviewPanel({ workspaceId, reloadNonce }: Props) {
       ),
     [services],
   );
+
+  // Auto-select the first exposed service ONCE — when the iframe is
+  // empty (no stored URL) and at least one service just became
+  // exposed, point the iframe at it. The user clicked Expose; this
+  // is what they want to see. Doesn't reset their URL if they later
+  // pick a different service or type a custom one.
+  useEffect(() => {
+    if (url.length > 0) return;
+    if (exposed.length === 0) return;
+    setUrl(exposed[0].bound_url);
+  }, [exposed, url]);
 
   const refresh = useCallback(() => {
     setReloadKey((k) => k + 1);
