@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from gapt_server.container import AppContainer, get_container
+from gapt_server.container import AppContainer, get_app_settings, get_container
 from gapt_server.db import models
 from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.performance import (
@@ -46,9 +46,17 @@ from gapt_server.domains.performance import (
     GpuSample,
     sample_gpu,
 )
+from gapt_server.domains.caddy.admin_api import CaddyAdminClient
+from gapt_server.domains.caddy.subdomain import SubdomainManager
 from gapt_server.domains.performance.broadcaster import PerformanceBroadcaster
+from gapt_server.domains.performance.cleanup import (
+    OrphanPlan,
+    build_plan as build_orphan_plan,
+    execute_cleanup,
+)
 from gapt_server.domains.sandbox import make_default_client
 from gapt_server.routers.auth import get_current_user
+from gapt_server.settings import Settings  # noqa: TC001
 
 router = APIRouter(prefix="/api/performance", tags=["performance"])
 
@@ -243,6 +251,44 @@ class ActionResponse(BaseModel):
     container_id: str
     action: str
     ok: bool = True
+
+
+class OrphanTargetDto(BaseModel):
+    container_id: str
+    container_name: str
+    category: str
+    workspace_id: str | None
+    environment_id: str | None
+    worktree_path: str | None
+    status: str
+
+
+class OrphanPlanResponse(BaseModel):
+    containers: list[OrphanTargetDto]
+    caddy_route_ids: list[str]
+    worktree_paths: list[str]
+
+
+class CleanupOutcomeDto(BaseModel):
+    container_id: str
+    container_name: str
+    ok: bool
+    error: str | None = None
+
+
+class CleanupReportResponse(BaseModel):
+    containers: list[CleanupOutcomeDto]
+    caddy_routes_removed: list[str]
+    worktrees_removed: list[str]
+    worktree_errors: list[dict[str, str]]
+
+
+class CleanupRequest(BaseModel):
+    """Body for `POST /cleanup/orphans`. The server always recomputes
+    the orphan set itself — `remove_worktrees` is the only knob
+    available to the client (filesystem deletion is destructive)."""
+
+    remove_worktrees: bool = False
 
 
 # ─────────────────────────────────────────────── DB enrichment ──
@@ -620,6 +666,121 @@ def _parse_sse_frame(frame: bytes) -> dict:
         elif line.startswith("data: "):
             data = line[len("data: ") :]
     return {"event": event, "data": data}
+
+
+def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
+    """Same shape as the service router's helper. Returns None when
+    Caddy admin isn't configured — cleanup then just skips the
+    Caddy step."""
+    if not settings.caddy_admin_url or not settings.caddy_preview_domain:
+        return None
+    return SubdomainManager(
+        client=CaddyAdminClient(settings.caddy_admin_url),
+        preview_domain=settings.caddy_preview_domain,
+    )
+
+
+async def _orphan_db_context(
+    container: AppContainer,
+) -> tuple[dict[str, models.Workspace], dict[str, models.Environment]]:
+    if container.session_factory is None:
+        return ({}, {})
+    async with container.session_factory() as db:
+        ws_rows = (await db.execute(select(models.Workspace))).scalars().all()
+        env_rows = (await db.execute(select(models.Environment))).scalars().all()
+    return ({w.id: w for w in ws_rows}, {e.id: e for e in env_rows})
+
+
+def _target_dto(t) -> OrphanTargetDto:  # type: ignore[no-untyped-def]
+    return OrphanTargetDto(
+        container_id=t.container_id,
+        container_name=t.container_name,
+        category=t.category.value,
+        workspace_id=t.workspace_id,
+        environment_id=t.environment_id,
+        worktree_path=t.worktree_path,
+        status=t.status,
+    )
+
+
+def _plan_dto(plan: OrphanPlan) -> OrphanPlanResponse:
+    return OrphanPlanResponse(
+        containers=[_target_dto(t) for t in plan.containers],
+        caddy_route_ids=plan.caddy_route_ids,
+        worktree_paths=plan.worktree_paths,
+    )
+
+
+@router.get("/orphans", response_model=OrphanPlanResponse)
+async def preview_orphan_cleanup(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> OrphanPlanResponse:
+    """Dry-run preview of what `POST /cleanup/orphans` would
+    delete — surfaced in the confirmation modal so the operator
+    can see the blast radius before clicking the destructive
+    button."""
+    sampler = _get_sampler()
+    workspaces, environments = await _orphan_db_context(container)
+    caddy_manager = _build_subdomain_manager(settings)
+    plan = await build_orphan_plan(
+        sampler,
+        workspaces_by_id=workspaces,
+        environments_by_id=environments,
+        caddy_manager=caddy_manager,
+    )
+    return _plan_dto(plan)
+
+
+@router.post("/cleanup/orphans", response_model=CleanupReportResponse)
+async def cleanup_orphans(
+    body: CleanupRequest,
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> CleanupReportResponse:
+    """Stop + remove every orphan container, drop stale Caddy
+    preview routes, optionally `rm -rf` the bind-mounted worktree
+    directories. The set of orphans is recomputed server-side from
+    the live container list + DB rows — the client cannot trick
+    this into deleting a live workspace."""
+    sampler = _get_sampler()
+    workspaces, environments = await _orphan_db_context(container)
+    caddy_manager = _build_subdomain_manager(settings)
+    plan = await build_orphan_plan(
+        sampler,
+        workspaces_by_id=workspaces,
+        environments_by_id=environments,
+        caddy_manager=caddy_manager,
+    )
+    report = await execute_cleanup(
+        plan,
+        sampler=sampler,
+        caddy_manager=caddy_manager,
+        remove_worktrees=body.remove_worktrees,
+    )
+    # Bust the broadcaster's replay cache so the next stream tick
+    # reflects the smaller container set without a 2 s stale frame.
+    global _BROADCASTER  # noqa: PLW0603
+    if _BROADCASTER is not None:
+        _BROADCASTER._latest = None  # noqa: SLF001
+    # Also invalidate the sampler TTL cache for the same reason.
+    sampler._sample_cache = None  # noqa: SLF001
+    return CleanupReportResponse(
+        containers=[
+            CleanupOutcomeDto(
+                container_id=o.container_id,
+                container_name=o.container_name,
+                ok=o.ok,
+                error=o.error,
+            )
+            for o in report.containers
+        ],
+        caddy_routes_removed=report.caddy_routes_removed,
+        worktrees_removed=report.worktrees_removed,
+        worktree_errors=report.worktree_errors,
+    )
 
 
 @router.get("/host", response_model=HostInfoResponse)

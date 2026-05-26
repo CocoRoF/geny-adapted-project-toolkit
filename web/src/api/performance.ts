@@ -144,3 +144,43 @@ export const fetchContainerLogs = (id: string, tail = 500) =>
     `/api/performance/containers/${id}/logs?tail=${tail}`,
     { method: "GET" },
   );
+
+// ───────────────────────────────────── orphan cleanup ──
+
+export interface OrphanTarget {
+  container_id: string;
+  container_name: string;
+  category: ContainerCategory;
+  workspace_id: string | null;
+  environment_id: string | null;
+  worktree_path: string | null;
+  status: string;
+}
+
+export interface OrphanPlan {
+  containers: OrphanTarget[];
+  caddy_route_ids: string[];
+  worktree_paths: string[];
+}
+
+export interface CleanupOutcome {
+  container_id: string;
+  container_name: string;
+  ok: boolean;
+  error: string | null;
+}
+
+export interface CleanupReport {
+  containers: CleanupOutcome[];
+  caddy_routes_removed: string[];
+  worktrees_removed: string[];
+  worktree_errors: { path: string; reason: string }[];
+}
+
+export const previewOrphanCleanup = () =>
+  apiGet<OrphanPlan>("/api/performance/orphans");
+
+export const cleanupOrphans = (remove_worktrees: boolean) =>
+  apiPost<CleanupReport>("/api/performance/cleanup/orphans", {
+    remove_worktrees,
+  });

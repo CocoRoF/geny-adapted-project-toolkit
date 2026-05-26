@@ -15,6 +15,7 @@ import {
   Skull,
   Square,
   Thermometer,
+  Trash2,
   Wifi,
   WifiOff,
   Zap,
@@ -36,6 +37,7 @@ import {
   stopContainer,
 } from "@/api/performance";
 import { useI18n } from "@/app/providers/i18n-context";
+import { CleanupOrphansModal } from "@/performance/CleanupOrphansModal";
 import { LogsModal } from "@/performance/LogsModal";
 import { Sparkline } from "@/performance/Sparkline";
 import { useContainersStream } from "@/performance/useContainersStream";
@@ -204,6 +206,7 @@ export function PerformanceDashboard() {
   const [host, setHost] = useState<HostInfo | null>(null);
   const [gpu, setGpu] = useState<GpusResponse | null>(null);
   const [logsFor, setLogsFor] = useState<{ id: string; name: string } | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [view, setView] = useState<ViewFilter>("all");
   const seriesRef = useRef<SeriesMap>({});
   const [, bump] = useState(0);
@@ -365,7 +368,7 @@ export function PerformanceDashboard() {
         ) : null}
 
         {showOrphans && tree?.orphanProjects.length ? (
-          <OrphanSection>
+          <OrphanSection onCleanup={() => setCleanupOpen(true)}>
             {tree.orphanProjects.map((p) => (
               <ProjectGroup
                 key={`orphan-${p.project_id ?? "null"}`}
@@ -423,6 +426,17 @@ export function PerformanceDashboard() {
           containerId={logsFor.id}
           containerName={logsFor.name}
           onClose={() => setLogsFor(null)}
+        />
+      ) : null}
+
+      {cleanupOpen ? (
+        <CleanupOrphansModal
+          onClose={() => setCleanupOpen(false)}
+          onCleaned={() => {
+            // SSE pushes the fresh snapshot ~2 s later — clearing
+            // the local sparkline series for the removed
+            // containers happens automatically on the next tick.
+          }}
         />
       ) : null}
     </section>
@@ -680,7 +694,13 @@ function ViewPill({
   );
 }
 
-function OrphanSection({ children }: { children: React.ReactNode }) {
+function OrphanSection({
+  children,
+  onCleanup,
+}: {
+  children: React.ReactNode;
+  onCleanup: () => void;
+}) {
   const { t } = useI18n();
   return (
     <div className="rounded-md border border-warn/40 bg-warn/[0.04]">
@@ -688,9 +708,18 @@ function OrphanSection({ children }: { children: React.ReactNode }) {
         <strong className="text-[11px] font-semibold uppercase tracking-wider text-warn">
           {t("performance.orphan.header")}
         </strong>
-        <span className="text-[11px] text-fg-muted">
+        <span className="flex-1 truncate text-[11px] text-fg-muted">
           {t("performance.orphan.hint")}
         </span>
+        <Button
+          size="sm"
+          variant="danger"
+          onClick={onCleanup}
+          className="h-6 shrink-0 px-2 text-[11px]"
+        >
+          <Trash2 className="mr-1 h-3 w-3" />
+          {t("performance.orphan.cleanup")}
+        </Button>
       </div>
       <div className="space-y-2 p-2">{children}</div>
     </div>
