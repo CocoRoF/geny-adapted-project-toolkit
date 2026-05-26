@@ -1164,13 +1164,23 @@ async def stack_down(
 
 
 class StackRerouteBody(BaseModel):
-    """Optional overrides for `POST /stack/reroute`. Both fields
+    """Optional overrides for `POST /stack/reroute`. All fields
     persist back to `Environment.deploy_target_config` so they
-    survive future re-deploys."""
+    survive future re-deploys.
+
+    Upstream transport options (`upstream_scheme`,
+    `upstream_host_header`, `upstream_tls_insecure`) cover the case
+    where the operator's prod stack fronts its services with its own
+    nginx/traefik that forces HTTPS, uses `server_name` matching, or
+    presents a cert for a public domain instead of the internal
+    docker DNS name."""
 
     primary_service: str | None = None
     primary_port: int | None = None
     strip_prefix: bool | None = None
+    upstream_scheme: str | None = None  # "http" | "https"
+    upstream_host_header: str | None = None
+    upstream_tls_insecure: bool | None = None
 
 
 @router.post("/{env_id}/stack/reroute", response_model=StackOpResponse)
@@ -1287,6 +1297,26 @@ async def stack_reroute(
     strip_opt = target_config.get("strip_prefix")
     strip_prefix = (True if strip_opt is None else bool(strip_opt)) and mode == PreviewMode.PATH
 
+    # Upstream transport — pick override first, then saved config,
+    # then safe defaults (plain HTTP, no Host rewrite, verify TLS).
+    upstream_scheme = (
+        override.upstream_scheme
+        or target_config.get("upstream_scheme")
+        or "http"
+    ).lower()
+    upstream_host_header = (
+        override.upstream_host_header
+        if override.upstream_host_header is not None
+        else target_config.get("upstream_host_header")
+    )
+    if upstream_host_header == "":  # empty string from the modal clears it
+        upstream_host_header = None
+    upstream_tls_insecure = (
+        override.upstream_tls_insecure
+        if override.upstream_tls_insecure is not None
+        else bool(target_config.get("upstream_tls_insecure", False))
+    )
+
     # Make sure the chosen upstream container is on gapt-net so
     # Caddy (which is also on gapt-net) can reach it by DNS name.
     # Idempotent — docker prints "already in network" on a
@@ -1323,6 +1353,9 @@ async def stack_reroute(
         upstream_port=primary_port,
         mode=mode,
         strip_prefix=strip_prefix,
+        upstream_scheme=upstream_scheme,
+        upstream_host_header=upstream_host_header,
+        upstream_tls_insecure=upstream_tls_insecure,
     )
     try:
         host = await manager.register(binding)
@@ -1341,6 +1374,17 @@ async def stack_reroute(
     new_config["primary_port"] = int(primary_port)
     if override.strip_prefix is not None:
         new_config["strip_prefix"] = bool(override.strip_prefix)
+    if override.upstream_scheme is not None:
+        new_config["upstream_scheme"] = upstream_scheme
+    if override.upstream_host_header is not None:
+        # Empty string from the UI clears the override; store None to
+        # keep target_options compact.
+        if upstream_host_header is None:
+            new_config.pop("upstream_host_header", None)
+        else:
+            new_config["upstream_host_header"] = upstream_host_header
+    if override.upstream_tls_insecure is not None:
+        new_config["upstream_tls_insecure"] = bool(override.upstream_tls_insecure)
     if new_config != target_config:
         env_row.deploy_target_config = new_config
         await db.commit()
@@ -1353,9 +1397,11 @@ async def stack_reroute(
         affected=1,
         output=(
             f"re-routed → https://{host}\n"
-            f"upstream={chosen.container_name}:{primary_port} "
+            f"upstream={upstream_scheme}://{chosen.container_name}:{primary_port} "
             f"(service={chosen.service or '?'})\n"
             f"strip_prefix={strip_prefix} mode={mode.value}\n"
+            f"host_header={upstream_host_header or '(passthrough)'} "
+            f"tls_insecure={upstream_tls_insecure}\n"
             f"network_connect={'ok' if network_ok else 'failed'}"
         ),
     )

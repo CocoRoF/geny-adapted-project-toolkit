@@ -250,8 +250,20 @@ export const stopStack = (envId: string) =>
 export const restartStack = (envId: string) =>
   apiPost<StackOpResult>(`/api/environments/${envId}/stack/restart`);
 
-export const rerouteStack = (envId: string) =>
-  apiPost<StackOpResult>(`/api/environments/${envId}/stack/reroute`);
+export interface StackRerouteBody {
+  primary_service?: string | null;
+  primary_port?: number | null;
+  strip_prefix?: boolean | null;
+  upstream_scheme?: "http" | "https" | null;
+  upstream_host_header?: string | null;
+  upstream_tls_insecure?: boolean | null;
+}
+
+export const rerouteStack = (envId: string, body?: StackRerouteBody) =>
+  apiFetch<StackOpResult>(`/api/environments/${envId}/stack/reroute`, {
+    method: "POST",
+    json: body ?? {},
+  });
 
 export interface RollbackRequestBody {
   run_id: string;

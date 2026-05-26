@@ -306,3 +306,70 @@ async def test_upsert_referer_fallback_lands_above_api_route() -> None:
         and any(h.get("handler") == "static_response" for h in r.get("handle", []))
     )
     assert asset_idx < primary_idx < safety_idx
+
+
+@pytest.mark.asyncio
+async def test_subdomain_manager_https_upstream_with_host_override() -> None:
+    """Operator's prod stack may front services with its own nginx
+    that forces HTTPS, presents a cert for the public domain (not
+    the docker DNS name), and routes on `server_name`. The binding's
+    transport knobs (`upstream_scheme=https`, `upstream_host_header`,
+    `upstream_tls_insecure`) should produce a Caddy reverse_proxy
+    handler that talks HTTPS, skips TLS verification, and rewrites
+    the outgoing Host header."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="nginx",
+            upstream_port=443,
+            upstream_scheme="https",
+            upstream_host_header="hrletsgo.me",
+            upstream_tls_insecure=True,
+        )
+    )
+    posted = calls[2][2]
+    primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    proxy = next(h for h in primary["handle"] if h.get("handler") == "reverse_proxy")
+    assert proxy["transport"]["protocol"] == "http"
+    assert proxy["transport"]["tls"]["insecure_skip_verify"] is True
+    assert proxy["headers"]["request"]["set"]["Host"] == ["hrletsgo.me"]
+    assert proxy["upstreams"][0]["dial"] == "nginx:443"
+
+
+@pytest.mark.asyncio
+async def test_subdomain_manager_http_upstream_omits_transport() -> None:
+    """Default HTTP upstream — no `transport`, no `headers` keys on
+    the reverse_proxy handler. Keeps the route payload compact and
+    backwards-compatible with the existing test fleet."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+        )
+    )
+    posted = calls[2][2]
+    primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    proxy = next(h for h in primary["handle"] if h.get("handler") == "reverse_proxy")
+    assert "transport" not in proxy
+    assert "headers" not in proxy

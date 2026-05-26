@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Loader2,
   Route,
@@ -14,6 +16,7 @@ import {
 import { ApiError } from "@/api/client";
 import {
   type RunDetail,
+  type StackRerouteBody,
   type StackStatus as StackStatusType,
   getDeployRunDetail,
   getStackStatus,
@@ -205,6 +208,11 @@ export function RunDetailPanel({ runId }: Props) {
             environmentId={environment.id}
             envName={environment.name}
             isSuccessRun={run.status === "success"}
+            targetConfig={target}
+            onConfigChange={(updated) => setDetail({
+              ...detail,
+              environment: { ...environment, deploy_target_config: updated },
+            })}
           />
         ) : (
           <div />
@@ -233,16 +241,50 @@ function StackSection({
   environmentId,
   envName,
   isSuccessRun,
+  targetConfig,
+  onConfigChange,
 }: {
   environmentId: string;
   envName: string;
   isSuccessRun: boolean;
+  targetConfig: Record<string, unknown>;
+  onConfigChange: (updated: Record<string, unknown>) => void;
 }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<StackStatusType | null>(null);
   const [busy, setBusy] = useState<"down" | "restart" | "reroute" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [rerouteOutput, setRerouteOutput] = useState<string | null>(null);
+  const [showOverrides, setShowOverrides] = useState(false);
+
+  // Form fields seeded from the saved target_config. Empty string
+  // means "don't override this field" so the backend keeps using the
+  // existing saved value. Booleans use a tri-state encoded as ""
+  // (inherit), "true", "false".
+  const cfg = targetConfig;
+  const savedService = typeof cfg.primary_service === "string" ? cfg.primary_service : "";
+  const savedPort = typeof cfg.primary_port === "number" ? String(cfg.primary_port) : "";
+  const savedStrip =
+    typeof cfg.strip_prefix === "boolean" ? (cfg.strip_prefix ? "true" : "false") : "";
+  const savedScheme =
+    cfg.upstream_scheme === "https" || cfg.upstream_scheme === "http"
+      ? cfg.upstream_scheme
+      : "";
+  const savedHostHdr =
+    typeof cfg.upstream_host_header === "string" ? cfg.upstream_host_header : "";
+  const savedTlsSkip =
+    typeof cfg.upstream_tls_insecure === "boolean"
+      ? cfg.upstream_tls_insecure
+        ? "true"
+        : "false"
+      : "";
+
+  const [fService, setFService] = useState(savedService);
+  const [fPort, setFPort] = useState(savedPort);
+  const [fStrip, setFStrip] = useState(savedStrip);
+  const [fScheme, setFScheme] = useState(savedScheme);
+  const [fHostHdr, setFHostHdr] = useState(savedHostHdr);
+  const [fTlsSkip, setFTlsSkip] = useState(savedTlsSkip);
 
   const refresh = useCallback(async () => {
     try {
@@ -281,20 +323,68 @@ function StackSection({
     }
   };
 
+  const buildRerouteBody = (): StackRerouteBody => {
+    // Only include fields the user has actually changed from the
+    // saved values — otherwise we'd churn target_config with
+    // identical writes and the success message wouldn't reflect what
+    // the operator intentionally adjusted.
+    const body: StackRerouteBody = {};
+    if (fService !== savedService) body.primary_service = fService || null;
+    if (fPort !== savedPort) {
+      const n = Number.parseInt(fPort, 10);
+      body.primary_port = Number.isFinite(n) && n > 0 ? n : null;
+    }
+    if (fStrip !== savedStrip) {
+      body.strip_prefix = fStrip === "true" ? true : fStrip === "false" ? false : null;
+    }
+    if (fScheme !== savedScheme) {
+      body.upstream_scheme = fScheme === "https" || fScheme === "http" ? fScheme : null;
+    }
+    if (fHostHdr !== savedHostHdr) body.upstream_host_header = fHostHdr;
+    if (fTlsSkip !== savedTlsSkip) {
+      body.upstream_tls_insecure =
+        fTlsSkip === "true" ? true : fTlsSkip === "false" ? false : null;
+    }
+    return body;
+  };
+
   const onReroute = async () => {
+    const body = buildRerouteBody();
+    const hasOverrides = Object.keys(body).length > 0;
     if (
       !window.confirm(
-        t("deploy.stack.confirm.reroute").replace("{name}", envName),
+        (hasOverrides
+          ? t("deploy.stack.confirm.reroute_overrides")
+          : t("deploy.stack.confirm.reroute")
+        ).replace("{name}", envName),
       )
     )
       return;
     setBusy("reroute");
     setRerouteOutput(null);
     try {
-      const r = await rerouteStack(environmentId);
+      const r = await rerouteStack(environmentId, hasOverrides ? body : undefined);
       setRerouteOutput(r.output);
       if (!r.ok) {
         window.alert(t("deploy.stack.failed.reroute") + "\n\n" + r.output.slice(-400));
+      }
+      // Optimistic config update — server already persisted, and the
+      // detail panel won't refetch unless the user re-opens it.
+      if (hasOverrides && r.ok) {
+        const next = { ...targetConfig };
+        if (body.primary_service !== undefined)
+          next.primary_service = body.primary_service ?? undefined;
+        if (body.primary_port !== undefined)
+          next.primary_port = body.primary_port ?? undefined;
+        if (body.strip_prefix !== undefined)
+          next.strip_prefix = body.strip_prefix ?? undefined;
+        if (body.upstream_scheme !== undefined)
+          next.upstream_scheme = body.upstream_scheme ?? undefined;
+        if (body.upstream_host_header !== undefined)
+          next.upstream_host_header = body.upstream_host_header || undefined;
+        if (body.upstream_tls_insecure !== undefined)
+          next.upstream_tls_insecure = body.upstream_tls_insecure ?? undefined;
+        onConfigChange(next);
       }
       await refresh();
     } catch (e) {
@@ -395,6 +485,89 @@ function StackSection({
           {rerouteOutput}
         </pre>
       ) : null}
+      <div className="mb-2 rounded-md border border-border bg-bg-elevated">
+        <button
+          type="button"
+          className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+          onClick={() => setShowOverrides((v) => !v)}
+          aria-expanded={showOverrides}
+        >
+          {showOverrides ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+          {t("deploy.stack.overrides.title")}
+        </button>
+        {showOverrides ? (
+          <div className="grid grid-cols-1 gap-2 border-t border-border p-2.5 md:grid-cols-2 lg:grid-cols-3">
+            <Field label={t("deploy.stack.overrides.primary_service")}>
+              <input
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fService}
+                placeholder="nginx"
+                onChange={(e) => setFService(e.target.value.trim())}
+                spellCheck={false}
+              />
+            </Field>
+            <Field label={t("deploy.stack.overrides.primary_port")}>
+              <input
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fPort}
+                placeholder="3000 / 80 / 443"
+                onChange={(e) => setFPort(e.target.value.trim())}
+                inputMode="numeric"
+                spellCheck={false}
+              />
+            </Field>
+            <Field label={t("deploy.stack.overrides.scheme")}>
+              <select
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fScheme}
+                onChange={(e) => setFScheme(e.target.value)}
+              >
+                <option value="">— inherit —</option>
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </Field>
+            <Field label={t("deploy.stack.overrides.host_header")}>
+              <input
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fHostHdr}
+                placeholder="example.com"
+                onChange={(e) => setFHostHdr(e.target.value.trim())}
+                spellCheck={false}
+              />
+            </Field>
+            <Field label={t("deploy.stack.overrides.tls_insecure")}>
+              <select
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fTlsSkip}
+                onChange={(e) => setFTlsSkip(e.target.value)}
+              >
+                <option value="">— inherit —</option>
+                <option value="false">verify</option>
+                <option value="true">skip verify</option>
+              </select>
+            </Field>
+            <Field label={t("deploy.stack.overrides.strip_prefix")}>
+              <select
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fStrip}
+                onChange={(e) => setFStrip(e.target.value)}
+              >
+                <option value="">— inherit —</option>
+                <option value="true">true (strip /preview/&lt;slug&gt;)</option>
+                <option value="false">false (keep prefix)</option>
+              </select>
+            </Field>
+            <p className="md:col-span-2 lg:col-span-3 text-[10.5px] leading-snug text-fg-subtle">
+              {t("deploy.stack.overrides.hint")}
+            </p>
+          </div>
+        ) : null}
+      </div>
       {!hasContainers ? (
         <p className="text-[11px] text-fg-subtle">
           {isSuccessRun
@@ -468,6 +641,15 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
       </h3>
       <div>{children}</div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] uppercase tracking-wider text-fg-subtle">{label}</span>
+      {children}
+    </label>
   );
 }
 

@@ -346,12 +346,29 @@ class LocalComposeTarget:
             True if strip_opt is None else bool(strip_opt)
         ) and mode == PreviewMode.PATH
 
+        # Upstream transport options — set when the operator's stack
+        # fronts its services with its own nginx/traefik that forces
+        # HTTPS or uses `server_name` matching against a public
+        # domain. Defaults stay safe (plain HTTP, no Host rewrite).
+        upstream_scheme = str(
+            request.target_options.get("upstream_scheme", "http")
+        ).lower()
+        upstream_host_header = request.target_options.get("upstream_host_header")
+        if upstream_host_header == "":
+            upstream_host_header = None
+        upstream_tls_insecure = bool(
+            request.target_options.get("upstream_tls_insecure", False)
+        )
+
         binding = SubdomainBinding(
             workspace_slug=slug,
             upstream_host=container_name,
             upstream_port=primary_port,
             mode=mode,
             strip_prefix=strip_prefix,
+            upstream_scheme=upstream_scheme,
+            upstream_host_header=upstream_host_header,
+            upstream_tls_insecure=upstream_tls_insecure,
         )
         host = await self.subdomain_manager.register(binding)
         return f"https://{host}"

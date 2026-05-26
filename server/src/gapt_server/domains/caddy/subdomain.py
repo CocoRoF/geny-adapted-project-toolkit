@@ -89,6 +89,37 @@ def _route_id(workspace_slug: str) -> str:
     return f"gapt-preview-{workspace_slug.lower()}"
 
 
+def _reverse_proxy_handler(binding: SubdomainBinding) -> dict[str, Any]:
+    """Build the Caddy `reverse_proxy` handler for a binding.
+
+    Most workspaces just need an HTTP upstream by docker DNS name, but
+    prod compose stacks sometimes front their services with their own
+    nginx/traefik that:
+      * only speaks HTTPS (forces 301 from :80),
+      * presents a cert for the *public* domain rather than the docker
+        DNS name (so verification would fail), and
+      * uses `server_name` matching to route — meaning the inbound
+        `Host:` header has to be the public domain, not ours.
+
+    The optional `upstream_scheme` / `upstream_tls_insecure` /
+    `upstream_host_header` knobs cover that case. Defaults stay
+    backwards-compatible (plain HTTP, no rewrite)."""
+    handler: dict[str, Any] = {
+        "handler": "reverse_proxy",
+        "upstreams": [{"dial": f"{binding.upstream_host}:{binding.upstream_port}"}],
+    }
+    if binding.upstream_scheme == "https":
+        tls: dict[str, Any] = {}
+        if binding.upstream_tls_insecure:
+            tls["insecure_skip_verify"] = True
+        handler["transport"] = {"protocol": "http", "tls": tls}
+    if binding.upstream_host_header:
+        handler["headers"] = {
+            "request": {"set": {"Host": [binding.upstream_host_header]}}
+        }
+    return handler
+
+
 def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
     """Two Caddy routes per path-mode preview binding.
 
@@ -116,12 +147,7 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
     upsert / unregister flow can target them by id."""
     slug = binding.workspace_slug.lower()
     prefix = f"/preview/{slug}"
-    upstream_handler: dict[str, Any] = {
-        "handler": "reverse_proxy",
-        "upstreams": [
-            {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
-        ],
-    }
+    upstream_handler = _reverse_proxy_handler(binding)
     primary_handlers: list[dict[str, Any]] = []
     if binding.strip_prefix:
         primary_handlers.append(
@@ -181,14 +207,7 @@ def _subdomain_route_payload(
     return {
         "@id": _route_id(binding.workspace_slug),
         "match": [{"host": [host]}],
-        "handle": [
-            {
-                "handler": "reverse_proxy",
-                "upstreams": [
-                    {"dial": f"{binding.upstream_host}:{binding.upstream_port}"}
-                ],
-            }
-        ],
+        "handle": [_reverse_proxy_handler(binding)],
         "terminal": True,
     }
 
