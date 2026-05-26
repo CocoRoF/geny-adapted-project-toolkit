@@ -159,6 +159,14 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.gpu.temp": "온도",
   "performance.gpu.power": "전력",
   "performance.gpu.driver": "드라이버",
+  "performance.view.all": "전체",
+  "performance.view.project": "프로젝트",
+  "performance.view.orphan": "Orphan Prj",
+  "performance.view.infra": "GAPT 인프라",
+  "performance.view.other": "기타",
+  "performance.view_empty": "이 분류에 해당하는 컨테이너가 없습니다.",
+  "performance.orphan.header": "Orphan 프로젝트",
+  "performance.orphan.hint": "DB 에 더 이상 매칭되는 프로젝트/워크스페이스/환경 row 가 없는 컨테이너 (보관됨, 삭제, 혹은 기록되지 않음). 살펴보고 정리하기 안전합니다.",
 
   // --- IDE shell ---
   "ide.layout.reset": "레이아웃 초기화",

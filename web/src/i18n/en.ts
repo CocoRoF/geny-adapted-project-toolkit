@@ -160,6 +160,14 @@ export const en = {
   "performance.gpu.temp": "Temp",
   "performance.gpu.power": "Power",
   "performance.gpu.driver": "Driver",
+  "performance.view.all": "All",
+  "performance.view.project": "Project",
+  "performance.view.orphan": "Orphan Prj",
+  "performance.view.infra": "GAPT Infra",
+  "performance.view.other": "Other",
+  "performance.view_empty": "No containers in this view.",
+  "performance.orphan.header": "Orphan projects",
+  "performance.orphan.hint": "Containers whose project / workspace / environment row is no longer in the DB (archived, dropped, or never recorded). Safe to inspect & clean up.",
 
   // --- IDE shell ---
   "ide.layout.reset": "Reset layout",

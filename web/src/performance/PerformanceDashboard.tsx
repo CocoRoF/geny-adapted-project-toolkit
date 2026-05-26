@@ -80,8 +80,22 @@ interface TreeProject {
   unbucketed: ContainerSample[];
 }
 
+function countContainers(p: TreeProject): number {
+  return (
+    p.workspaces.reduce((n, w) => n + w.containers.length, 0) +
+    p.environments.reduce((n, e) => n + e.containers.length, 0) +
+    p.unbucketed.length
+  );
+}
+
 function buildTree(resp: ContainersResponse): {
-  projects: TreeProject[];
+  /** Projects that have a matching DB row. */
+  realProjects: TreeProject[];
+  /** Projects we couldn't resolve in the DB (archived row, wiped
+   * schema, label/id mismatch). Operator may want to clean these
+   * up — surfaced separately so they don't visually pollute the
+   * live project list. */
+  orphanProjects: TreeProject[];
   infra: ContainerSample[];
   other: ContainerSample[];
 } {
@@ -155,14 +169,8 @@ function buildTree(resp: ContainersResponse): {
     ensureProject(s.summary.project_id).unbucketed.push(s);
   }
 
-  // Stable sort: known projects by display_name, orphan project last.
-  const sorted = Array.from(projects.values()).sort((a, b) => {
-    if (a.project_id === null) return 1;
-    if (b.project_id === null) return -1;
-    return a.display_name.localeCompare(b.display_name);
-  });
-  // Inside each project, sort workspaces by branch / id and envs by name.
-  for (const p of sorted) {
+  // Sort workspaces by branch and envs by name within each project.
+  for (const p of projects.values()) {
     p.workspaces.sort((a, b) =>
       (a.workspace?.branch ?? a.workspace_id).localeCompare(
         b.workspace?.branch ?? b.workspace_id,
@@ -174,10 +182,22 @@ function buildTree(resp: ContainersResponse): {
       ),
     );
   }
-  return { projects: sorted, infra, other };
+  // Split real (has DB row) from orphan (project_id was null OR id
+  // didn't resolve to a row). Real first, both sorted alpha by
+  // display name; orphan id slug as the tiebreaker.
+  const all = Array.from(projects.values());
+  const realProjects = all
+    .filter((p) => p.project !== null)
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const orphanProjects = all
+    .filter((p) => p.project === null)
+    .sort((a, b) => (a.project_id ?? "").localeCompare(b.project_id ?? ""));
+  return { realProjects, orphanProjects, infra, other };
 }
 
 // ─────────────────────────────────────────────────────── page ──
+
+type ViewFilter = "all" | "project" | "orphan" | "infra" | "other";
 
 export function PerformanceDashboard() {
   const { t } = useI18n();
@@ -187,6 +207,7 @@ export function PerformanceDashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [logsFor, setLogsFor] = useState<{ id: string; name: string } | null>(null);
+  const [view, setView] = useState<ViewFilter>("all");
   const seriesRef = useRef<SeriesMap>({});
   const [, bump] = useState(0);
 
@@ -224,6 +245,23 @@ export function PerformanceDashboard() {
   }, [pull]);
 
   const tree = useMemo(() => (resp ? buildTree(resp) : null), [resp]);
+
+  // Container counts per top-level view so the pills can show
+  // `(N)` numbers. Use container counts (not project counts) since
+  // that matches the table headers below.
+  const counts = useMemo(() => {
+    if (!tree) return { all: 0, project: 0, orphan: 0, infra: 0, other: 0 };
+    const project = tree.realProjects.reduce((n, p) => n + countContainers(p), 0);
+    const orphan = tree.orphanProjects.reduce((n, p) => n + countContainers(p), 0);
+    const infra = tree.infra.length;
+    const other = tree.other.length;
+    return { all: project + orphan + infra + other, project, orphan, infra, other };
+  }, [tree]);
+
+  const showProjects = view === "all" || view === "project";
+  const showOrphans = view === "all" || view === "orphan";
+  const showInfra = view === "all" || view === "infra";
+  const showOther = view === "all" || view === "other";
 
   const onAction = async (
     sample: ContainerSample,
@@ -280,25 +318,80 @@ export function PerformanceDashboard() {
         </p>
       ) : null}
 
+      {/* Top-level view filter */}
+      <div className="mb-3 flex flex-wrap items-center gap-1">
+        <ViewPill
+          active={view === "all"}
+          label={`${t("performance.view.all")}`}
+          count={counts.all}
+          onClick={() => setView("all")}
+        />
+        <ViewPill
+          active={view === "project"}
+          label={t("performance.view.project")}
+          count={counts.project}
+          onClick={() => setView("project")}
+        />
+        {counts.orphan > 0 ? (
+          <ViewPill
+            active={view === "orphan"}
+            label={t("performance.view.orphan")}
+            count={counts.orphan}
+            onClick={() => setView("orphan")}
+            tone="warn"
+          />
+        ) : null}
+        <ViewPill
+          active={view === "infra"}
+          label={t("performance.view.infra")}
+          count={counts.infra}
+          onClick={() => setView("infra")}
+        />
+        {counts.other > 0 ? (
+          <ViewPill
+            active={view === "other"}
+            label={t("performance.view.other")}
+            count={counts.other}
+            onClick={() => setView("other")}
+          />
+        ) : null}
+      </div>
+
       {/* Tree */}
       <div className="mt-3 space-y-3">
-        {tree?.projects.length ? (
-          tree.projects.map((p) => (
-            <ProjectGroup
-              key={p.project_id ?? "__orphan__"}
-              tree={p}
-              series={seriesRef.current}
-              onLogs={(s) => setLogsFor({ id: s.summary.id, name: s.summary.name })}
-              onAction={onAction}
-            />
-          ))
-        ) : !err ? (
+        {showProjects && tree?.realProjects.length
+          ? tree.realProjects.map((p) => (
+              <ProjectGroup
+                key={p.project_id ?? "__orphan__"}
+                tree={p}
+                series={seriesRef.current}
+                onLogs={(s) => setLogsFor({ id: s.summary.id, name: s.summary.name })}
+                onAction={onAction}
+              />
+            ))
+          : null}
+        {showProjects && tree && tree.realProjects.length === 0 && !err ? (
           <p className="rounded-md border border-border bg-bg-elevated px-4 py-6 text-center text-[12px] text-fg-subtle">
             {t("performance.empty_projects")}
           </p>
         ) : null}
 
-        {tree?.infra.length ? (
+        {showOrphans && tree?.orphanProjects.length ? (
+          <OrphanSection>
+            {tree.orphanProjects.map((p) => (
+              <ProjectGroup
+                key={`orphan-${p.project_id ?? "null"}`}
+                tree={p}
+                series={seriesRef.current}
+                onLogs={(s) => setLogsFor({ id: s.summary.id, name: s.summary.name })}
+                onAction={onAction}
+                orphan
+              />
+            ))}
+          </OrphanSection>
+        ) : null}
+
+        {showInfra && tree?.infra.length ? (
           <FlatGroup
             title={t("performance.cat.infra")}
             icon={<ServerCog className="h-4 w-4 text-success" strokeWidth={1.5} />}
@@ -309,7 +402,7 @@ export function PerformanceDashboard() {
           />
         ) : null}
 
-        {tree?.other.length ? (
+        {showOther && tree?.other.length ? (
           <FlatGroup
             title={t("performance.cat.other")}
             icon={<Server className="h-4 w-4 text-fg-muted" strokeWidth={1.5} />}
@@ -318,6 +411,18 @@ export function PerformanceDashboard() {
             onLogs={(s) => setLogsFor({ id: s.summary.id, name: s.summary.name })}
             onAction={onAction}
           />
+        ) : null}
+
+        {/* When a filter yields no rows, show a friendly empty state
+            so the operator knows the page rendered (vs. a perf bug). */}
+        {tree &&
+        ((view === "project" && tree.realProjects.length === 0) ||
+          (view === "orphan" && tree.orphanProjects.length === 0) ||
+          (view === "infra" && tree.infra.length === 0) ||
+          (view === "other" && tree.other.length === 0)) ? (
+          <p className="rounded-md border border-border bg-bg-elevated px-4 py-6 text-center text-[12px] text-fg-subtle">
+            {t("performance.view_empty")}
+          </p>
         ) : null}
       </div>
 
@@ -508,12 +613,62 @@ interface RowHelpers {
   onAction: (s: ContainerSample, a: "stop" | "kill" | "restart") => Promise<void>;
 }
 
+function ViewPill({
+  active,
+  label,
+  count,
+  tone,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  tone?: "warn";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+        active
+          ? "bg-bg text-fg shadow-[inset_0_-2px_0_var(--color-accent)]"
+          : tone === "warn"
+            ? "text-warn hover:bg-surface-hover hover:text-warn"
+            : "text-fg-muted hover:bg-surface-hover hover:text-fg",
+      )}
+    >
+      {label}
+      <span className="ml-1 text-fg-subtle tabular-nums">({count})</span>
+    </button>
+  );
+}
+
+function OrphanSection({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
+  return (
+    <div className="rounded-md border border-warn/40 bg-warn/[0.04]">
+      <div className="flex items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-1.5">
+        <strong className="text-[11px] font-semibold uppercase tracking-wider text-warn">
+          {t("performance.orphan.header")}
+        </strong>
+        <span className="text-[11px] text-fg-muted">
+          {t("performance.orphan.hint")}
+        </span>
+      </div>
+      <div className="space-y-2 p-2">{children}</div>
+    </div>
+  );
+}
+
 function ProjectGroup({
   tree,
+  orphan = false,
   ...rest
-}: { tree: TreeProject } & RowHelpers) {
+}: { tree: TreeProject; orphan?: boolean } & RowHelpers) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(!orphan);
   // Project-level roll-up
   const allSamples = [
     ...tree.workspaces.flatMap((w) => w.containers),
