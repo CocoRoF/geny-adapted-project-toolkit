@@ -5,6 +5,7 @@ import { RequireAuth } from "@/app/RequireAuth";
 import { Cost } from "@/routes/Cost";
 import { Environments } from "@/routes/Environments";
 import { Login } from "@/routes/Login";
+import { Performance } from "@/routes/Performance";
 import { ProjectDetail } from "@/routes/ProjectDetail";
 import { ProjectsIndex } from "@/routes/ProjectsIndex";
 import { Settings } from "@/routes/Settings";
@@ -73,6 +74,16 @@ export function AppRouter() {
           <RequireAuth>
             <AppShellLayout>
               <Cost />
+            </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/performance"
+        element={
+          <RequireAuth>
+            <AppShellLayout>
+              <Performance />
             </AppShellLayout>
           </RequireAuth>
         }

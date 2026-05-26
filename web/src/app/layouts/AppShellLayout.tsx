@@ -38,6 +38,7 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
           <nav className="hidden items-center gap-1 sm:flex">
             <TopLink to="/projects">{t("nav.projects")}</TopLink>
             <TopLink to="/cost">{t("nav.cost")}</TopLink>
+            <TopLink to="/performance">{t("nav.performance")}</TopLink>
             <TopLink to="/settings">{t("nav.settings")}</TopLink>
           </nav>
         ) : null}

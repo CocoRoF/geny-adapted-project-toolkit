@@ -26,6 +26,7 @@ from gapt_server.routers import (
     metrics,
     notifications,
     oneshot,
+    performance,
     policies,
     preview,
     projects,
@@ -168,6 +169,7 @@ def create_app(
     app.include_router(preview.ask_router)
     app.include_router(policies.router)
     app.include_router(cost.router)
+    app.include_router(performance.router)
     app.include_router(metrics.router)
     app.include_router(notifications.router)
     app.include_router(oneshot.router)
