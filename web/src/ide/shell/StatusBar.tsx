@@ -1,0 +1,57 @@
+import { GitBranch, Server, TerminalSquare } from "lucide-react";
+
+import { cn } from "@/ui/cn";
+
+interface Props {
+  branch: string;
+  workspaceStatus: string;
+  openFile: string | null;
+  onToggleTerminal: () => void;
+}
+
+/** Bottom strip — VSCode-style status bar. Single 22px row. Left side
+ * is workspace state (branch, sandbox), right side is per-action
+ * quick toggles. Click handlers wired by the parent. */
+export function StatusBar({
+  branch,
+  workspaceStatus,
+  openFile,
+  onToggleTerminal,
+}: Props) {
+  const isRunning = workspaceStatus === "running";
+  return (
+    <footer
+      role="contentinfo"
+      className="flex h-[22px] shrink-0 items-center gap-3 border-t border-border bg-bg-elevated px-3 text-[11px] text-fg-muted"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <GitBranch className="h-3 w-3" strokeWidth={1.5} />
+        <span className="font-medium text-fg">{branch || "—"}</span>
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <Server
+          className={cn(
+            "h-3 w-3",
+            isRunning ? "text-success" : "text-fg-subtle",
+          )}
+          strokeWidth={1.5}
+        />
+        {workspaceStatus}
+      </span>
+      {openFile ? (
+        <span className="ml-2 truncate text-fg-subtle" title={openFile}>
+          {openFile}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        onClick={onToggleTerminal}
+        title="Toggle Terminal (Ctrl+`)"
+        className="ml-auto inline-flex items-center gap-1 rounded px-1.5 hover:bg-surface-hover hover:text-fg"
+      >
+        <TerminalSquare className="h-3 w-3" strokeWidth={1.5} />
+        Terminal
+      </button>
+    </footer>
+  );
+}

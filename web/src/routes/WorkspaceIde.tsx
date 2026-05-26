@@ -11,7 +11,7 @@ import {
 } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
 import { DeployWorkspace } from "@/ide/DeployWorkspace";
-import { DockviewShell } from "@/ide/DockviewShell";
+import { IdeShell } from "@/ide/shell/IdeShell";
 import { IntrospectionWizard } from "@/ide/IntrospectionWizard";
 import { ServiceWorkspace } from "@/ide/ServiceWorkspace";
 import { Badge } from "@/ui/Badge";
@@ -168,7 +168,12 @@ export function WorkspaceIde() {
       {state === "ready" && wid && pid && workspace?.status === "running" ? (
         <div className="flex-1 overflow-hidden">
           {view === "ide" ? (
-            <DockviewShell workspaceId={wid} projectId={pid} />
+            <IdeShell
+              workspaceId={wid}
+              projectId={pid}
+              branch={workspace.branch}
+              workspaceStatus={workspace.status}
+            />
           ) : view === "service" ? (
             <ServiceWorkspace workspaceId={wid} />
           ) : (

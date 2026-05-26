@@ -99,23 +99,6 @@ pre {
   box-sizing: border-box;
 }
 
-/* Dockview overrides — use our palette instead of dockview defaults so
- * the IDE panel chrome doesn't clash with the rest of the app. */
-.dv-react,
-.dv-dockview,
-.dockview-theme-abyss {
-  --dv-background-color: var(--color-bg);
-  --dv-paneview-background-color: var(--color-bg-elevated);
-  --dv-tabs-and-actions-container-background-color: var(--color-bg-elevated);
-  --dv-tabs-container-scrollbar-color: var(--color-border);
-  --dv-tab-background-color: var(--color-bg-elevated);
-  --dv-tab-divider-color: var(--color-border);
-  --dv-active-tab-background-color: var(--color-bg);
-  --dv-active-tab-color: var(--color-fg);
-  --dv-inactive-tab-color: var(--color-fg-muted);
-  --dv-separator-border: var(--color-border);
-}
-
 /* Scrollbar polish for dark mode. */
 :root[data-theme="dark"] ::-webkit-scrollbar {
   width: 10px;

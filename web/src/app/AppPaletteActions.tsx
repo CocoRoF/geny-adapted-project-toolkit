@@ -6,10 +6,9 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
 
 /** Registers the top-level navigation actions inside the palette.
- *
- * Layout / IDE actions register themselves from within
- * <DockviewShell> (Cycle 3.11) so they only appear when a workspace
- * is open. */
+ * Workspace-local actions (toggle terminal, switch side view, etc.)
+ * are wired directly into `IdeShell` via keyboard handlers — they
+ * don't show up in the palette today. */
 export function AppPaletteActions() {
   const navigate = useNavigate();
   const { t, locale, setLocale } = useI18n();
