@@ -29,9 +29,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002  — runtime use via Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from gapt_server.container import get_db_session
+from gapt_server.container import AppContainer, get_container
 from gapt_server.db import models
 from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.performance import (
@@ -333,15 +333,38 @@ def _gpu_dto(g: GpuSample) -> GpuDto:
 # ────────────────────────────────────────────────────── endpoints ──
 
 
+async def _load_db_context_isolated(
+    container: AppContainer,
+) -> tuple[
+    dict[str, models.Project],
+    dict[str, models.Workspace],
+    dict[str, models.Environment],
+]:
+    """Open a short-lived session JUST for the projects/workspaces/
+    environments lookup, release the connection immediately. The
+    performance endpoints are polled at 3 s while the actual stats
+    sampling takes ~1 s of docker I/O — if we held the request-
+    scoped session for the whole duration we'd saturate the pool
+    when multiple browser tabs poll concurrently. Two empty tables
+    + a sub-50ms read does not deserve a long-lived connection."""
+    if container.session_factory is None:
+        return ({}, {}, {})
+    async with container.session_factory() as db:
+        return await _load_db_context(db)
+
+
 @router.get("/containers", response_model=ContainersResponse)
 async def list_containers(
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> ContainersResponse:
     sampler = _get_sampler()
+    # DB read uses its own short-lived session (released before the
+    # slow docker sampling begins / in parallel with it). The
+    # request-scoped session dependency is intentionally NOT used.
     samples, db_ctx = await asyncio.gather(
         sampler.sample_all(),
-        _load_db_context(db),
+        _load_db_context_isolated(container),
     )
     projects, workspaces, environments = db_ctx
     enriched: list[ContainerSample] = []
@@ -383,9 +406,9 @@ async def list_containers(
 
 
 @router.get("/containers/{container_id}", response_model=SampleDto)
-async def get_container(
+async def get_container_detail(
     container_id: str,
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SampleDto:
     sampler = _get_sampler()
@@ -395,7 +418,7 @@ async def get_container(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "container.not_found", "reason": container_id},
         )
-    projects, workspaces, environments = await _load_db_context(db)
+    projects, workspaces, environments = await _load_db_context_isolated(container)
     enriched = ContainerSample(
         summary=_enrich_summary(sample.summary, projects, workspaces, environments),
         limits=sample.limits,

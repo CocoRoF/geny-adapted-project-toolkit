@@ -21,6 +21,7 @@ so a host with 20 containers still answers in ~1 s.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -292,12 +293,55 @@ def _is_gapt_container(attrs: dict[str, Any]) -> bool:
 class ContainerSampler:
     """Wraps a `docker.DockerClient` with the bookkeeping the API
     routes care about. Construct once (the daemon socket open is
-    expensive); call `sample_all` per request."""
+    expensive); call `sample_all` per request.
+
+    `sample_all()` is wrapped in a ~2 s TTL cache + single-flight
+    lock. Why both:
+
+      * **TTL cache**: docker `stats(stream=False)` blocks ~1 s per
+        container on the host's /proc deltas. Sampling 20+ containers
+        without a cache means the browser's 3 s poll cycle never
+        catches up, and concurrent browser tabs each pay the full
+        cost. A 2 s ceiling is fresh enough that the dashboard still
+        feels live and bounds the worst-case load.
+
+      * **Single-flight lock**: when N tabs poll simultaneously
+        and the cache happens to be expired, only ONE of them
+        does the real sampling; the others await the in-flight
+        coroutine and get the result for free. Otherwise we'd
+        still saturate the docker daemon on cache misses.
+    """
+
+    _SAMPLE_TTL_S = 2.0
 
     def __init__(self, client: docker.DockerClient) -> None:
         self._client = client
+        self._sample_cache: list[ContainerSample] | None = None
+        self._sample_cache_at: float = 0.0
+        self._sample_lock = asyncio.Lock()
 
     async def sample_all(self) -> list[ContainerSample]:
+        now = time.monotonic()
+        if (
+            self._sample_cache is not None
+            and (now - self._sample_cache_at) < self._SAMPLE_TTL_S
+        ):
+            return self._sample_cache
+        async with self._sample_lock:
+            # Another caller may have refilled the cache while we
+            # waited on the lock; re-check before doing work.
+            now = time.monotonic()
+            if (
+                self._sample_cache is not None
+                and (now - self._sample_cache_at) < self._SAMPLE_TTL_S
+            ):
+                return self._sample_cache
+            out = await self._sample_all_uncached()
+            self._sample_cache = out
+            self._sample_cache_at = time.monotonic()
+            return out
+
+    async def _sample_all_uncached(self) -> list[ContainerSample]:
         attrs_list = await asyncio.to_thread(self._list_attrs)
         gapt = [a for a in attrs_list if _is_gapt_container(a)]
         # Stats calls are I/O-bound; parallelise.
