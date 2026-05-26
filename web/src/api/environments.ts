@@ -257,6 +257,7 @@ export interface StackRerouteBody {
   upstream_scheme?: "http" | "https" | null;
   upstream_host_header?: string | null;
   upstream_tls_insecure?: boolean | null;
+  preview_mode?: "path" | "subdomain" | null;
 }
 
 export const rerouteStack = (envId: string, body?: StackRerouteBody) =>

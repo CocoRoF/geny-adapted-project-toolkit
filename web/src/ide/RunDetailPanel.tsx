@@ -278,6 +278,10 @@ function StackSection({
         ? "true"
         : "false"
       : "";
+  const savedMode =
+    cfg.preview_mode === "subdomain" || cfg.preview_mode === "path"
+      ? cfg.preview_mode
+      : "";
 
   const [fService, setFService] = useState(savedService);
   const [fPort, setFPort] = useState(savedPort);
@@ -285,6 +289,7 @@ function StackSection({
   const [fScheme, setFScheme] = useState(savedScheme);
   const [fHostHdr, setFHostHdr] = useState(savedHostHdr);
   const [fTlsSkip, setFTlsSkip] = useState(savedTlsSkip);
+  const [fMode, setFMode] = useState<string>(savedMode);
 
   const refresh = useCallback(async () => {
     try {
@@ -345,6 +350,10 @@ function StackSection({
       body.upstream_tls_insecure =
         fTlsSkip === "true" ? true : fTlsSkip === "false" ? false : null;
     }
+    if (fMode !== savedMode) {
+      body.preview_mode =
+        fMode === "subdomain" || fMode === "path" ? fMode : null;
+    }
     return body;
   };
 
@@ -384,6 +393,8 @@ function StackSection({
           next.upstream_host_header = body.upstream_host_header || undefined;
         if (body.upstream_tls_insecure !== undefined)
           next.upstream_tls_insecure = body.upstream_tls_insecure ?? undefined;
+        if (body.preview_mode !== undefined)
+          next.preview_mode = body.preview_mode ?? undefined;
         onConfigChange(next);
       }
       await refresh();
@@ -501,6 +512,17 @@ function StackSection({
         </button>
         {showOverrides ? (
           <div className="grid grid-cols-1 gap-2 border-t border-border p-2.5 md:grid-cols-2 lg:grid-cols-3">
+            <Field label={t("deploy.stack.overrides.preview_mode")}>
+              <select
+                className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+                value={fMode}
+                onChange={(e) => setFMode(e.target.value)}
+              >
+                <option value="">— inherit —</option>
+                <option value="path">path (apex/preview/&lt;slug&gt;)</option>
+                <option value="subdomain">subdomain (&lt;slug&gt;.preview-domain)</option>
+              </select>
+            </Field>
             <Field label={t("deploy.stack.overrides.primary_service")}>
               <input
                 className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg"

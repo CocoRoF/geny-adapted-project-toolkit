@@ -76,6 +76,22 @@ class SubdomainBinding:
     # bucket since its cert is for the public domain, not the
     # internal docker DNS name.
     upstream_tls_insecure: bool = False
+    # ── cookie pinning (path mode only) ──
+    # Path mode shares the apex domain with GAPT itself, so any
+    # root-relative URL the upstream app emits (`/projects`,
+    # `/api/v1/posts`, ...) collides with GAPT's own routes. The
+    # Referer-based fallback catches in-iframe navigations but loses
+    # the address-bar / new-tab / browser-refresh case.
+    #
+    # When this is > 0, Caddy sets a short-lived
+    # `gapt_preview=<slug>` cookie when the visitor first hits
+    # `/preview/<slug>/...`, and a separate route forwards any
+    # later root-relative request bearing that cookie back to the
+    # same upstream. TTL kept intentionally short (default 5 min)
+    # to bound the "tab A's GAPT got eaten by tab B's preview"
+    # cookie-pollution window; for true robustness use subdomain
+    # mode instead. Set to 0 to disable.
+    cookie_pinning_ttl_s: int = 300
 
 
 def _full_host(workspace_slug: str, preview_domain: str) -> str:
@@ -121,34 +137,60 @@ def _reverse_proxy_handler(binding: SubdomainBinding) -> dict[str, Any]:
 
 
 def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
-    """Two Caddy routes per path-mode preview binding.
+    """Up to three Caddy routes per path-mode preview binding.
 
     **Primary route** — matches `/preview/<slug>` and `/preview/<slug>/*`
     and reverse-proxies. When `binding.strip_prefix` is True (opt-in),
     `rewrite.strip_path_prefix` runs first so the upstream sees `/`.
     Default keeps the prefix so basePath-aware apps (Next.js basePath,
-    Vite base, FastAPI root_path) round-trip cleanly.
+    Vite base, FastAPI root_path) round-trip cleanly. When cookie
+    pinning is enabled, this route also sets a short-lived
+    `gapt_preview=<slug>` cookie so later root-relative requests can
+    be re-routed without a Referer.
+
+    **Cookie fallback** — when cookie pinning is enabled, this matches
+    any request bearing `Cookie: gapt_preview=<slug>` AND
+    `Sec-Fetch-Site: same-origin` (so cross-site or top-frame typed
+    navigations don't accidentally route — only same-origin sub-
+    resource / in-iframe requests). Reverse-proxies to the same
+    upstream. The Sec-Fetch-Site guard isn't perfect (clicking
+    around GAPT in another tab is also same-origin), which is why
+    the TTL is short and subdomain mode is recommended for true
+    multi-tenant robustness.
 
     **Referer fallback** — Next.js (and many other frameworks) emit
     plain `<link rel="icon" href="/favicon.png">` and similar
     root-relative URLs that bypass basePath entirely. The browser
     requests those from the apex (`gapt.hrletsgo.me/favicon.png`)
-    where the IDE catch-all would catch them. This second route
-    matches any request whose `Referer` header starts with
-    `/preview/<slug>` and reverse-proxies to the same upstream, so
-    those stragglers land on the right app. The strip-prefix toggle
-    doesn't apply here — Referer-borne requests are already at root.
+    where the IDE catch-all would catch them. This route matches any
+    request whose `Referer` header starts with `/preview/<slug>` and
+    reverse-proxies. Kept as defense-in-depth alongside the cookie
+    fallback: a cross-tab navigation may strip the cookie via TTL
+    expiry but still carry a Referer (or vice-versa).
 
-    The primary route is registered first so prefixed requests never
-    need the Referer check. Both carry the same upstream and a
-    terminal flag.
-
-    Both routes share a stable `@id` family (main + `-asset`) so the
-    upsert / unregister flow can target them by id."""
+    All routes carry a stable `@id` family (main + `-asset` +
+    `-cookie`) so the upsert / unregister flow can target them by
+    id."""
     slug = binding.workspace_slug.lower()
     prefix = f"/preview/{slug}"
     upstream_handler = _reverse_proxy_handler(binding)
     primary_handlers: list[dict[str, Any]] = []
+    if binding.cookie_pinning_ttl_s > 0:
+        # Set-Cookie on the primary route: short TTL, Path=/ so the
+        # cookie is sent for any root-relative follow-up, SameSite=Lax
+        # so cross-site embedders don't carry it, HttpOnly so the
+        # app's JS can't read it (we own the routing decision).
+        ttl = binding.cookie_pinning_ttl_s
+        cookie = (
+            f"gapt_preview={slug}; Path=/; Max-Age={ttl}; "
+            f"SameSite=Lax; HttpOnly"
+        )
+        primary_handlers.append(
+            {
+                "handler": "headers",
+                "response": {"set": {"Set-Cookie": [cookie]}},
+            }
+        )
     if binding.strip_prefix:
         primary_handlers.append(
             {"handler": "rewrite", "strip_path_prefix": prefix}
@@ -197,7 +239,39 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
         "handle": fallback_handlers,
         "terminal": True,
     }
-    return [primary, asset_fallback]
+    payloads: list[dict[str, Any]] = [primary, asset_fallback]
+    if binding.cookie_pinning_ttl_s > 0:
+        # The cookie regex matches the slug as an exact value, anchored
+        # by the standard cookie-pair delimiters (start-of-header or
+        # `; ` before, `;` or end-of-header after). This avoids
+        # `gapt_preview=a` accidentally matching when the actual
+        # cookie is `gapt_preview=ab` — though in practice slugs are
+        # ULIDs so a false collision is vanishingly unlikely.
+        #
+        # Sec-Fetch-Site=same-origin narrows the catchment to
+        # navigations whose origin already is the apex: clicks from
+        # inside the preview iframe (same-origin), in-tab nav from
+        # `/preview/<slug>/...` to `/projects`, etc. It excludes
+        # cross-site nav (`cross-site`) and top-level typed URLs
+        # (`none`), which would otherwise hijack legitimate fresh
+        # visits to the GAPT UI in another tab.
+        cookie_fallback = {
+            "@id": _route_id(binding.workspace_slug) + "-cookie",
+            "match": [
+                {
+                    "header_regexp": {
+                        "Cookie": {
+                            "pattern": f"(?:^|;\\s*)gapt_preview={slug}(?:;|$)",
+                        }
+                    },
+                    "header": {"Sec-Fetch-Site": ["same-origin"]},
+                }
+            ],
+            "handle": fallback_handlers,
+            "terminal": True,
+        }
+        payloads.append(cookie_fallback)
+    return payloads
 
 
 def _subdomain_route_payload(
@@ -245,20 +319,44 @@ class SubdomainManager:
             path mode      → `<apex>/preview/<slug>`
             subdomain mode → `<slug>.<preview-domain>`
 
-        Path mode registers TWO routes — the primary `/preview/<slug>`
-        match plus a Referer-based fallback for root-relative assets
-        (`<link rel="icon" href="/favicon.png">` etc.) that bypass the
-        framework's basePath. See `_path_route_payloads` for details."""
+        Path mode registers up to THREE routes — the primary
+        `/preview/<slug>` match, a Referer-based fallback, and a
+        cookie-pinning fallback for root-relative URLs that bypass
+        the framework's basePath. See `_path_route_payloads` for
+        details. Subdomain mode registers a single host-matched
+        route; no fallbacks needed (host header is the routing
+        key).
+
+        Before splicing the fresh payloads, the full @id family for
+        this slug (`gapt-preview-<slug>`, `-asset`, `-cookie`) is
+        cleared from the routes array — so switching mode (e.g.
+        path → subdomain) doesn't leave the old fallback routes
+        orphaned."""
+        # Stale @ids to clear regardless of which mode we're entering.
+        # This is the cross-mode cleanup — without it a path-mode
+        # binding upgraded to subdomain would leave its `-asset` /
+        # `-cookie` fallback routes catching requests forever.
+        primary_id = _route_id(binding.workspace_slug)
+        full_family = {primary_id, f"{primary_id}-asset", f"{primary_id}-cookie"}
+
         if binding.mode == PreviewMode.SUBDOMAIN:
-            await self._upsert([_subdomain_route_payload(binding, self.preview_domain)])
+            await self._upsert(
+                [_subdomain_route_payload(binding, self.preview_domain)],
+                extra_clear=full_family,
+            )
             return _full_host(binding.workspace_slug, self.preview_domain)
 
         # Path mode — preview_domain is the apex (no subdomain).
-        await self._upsert(_path_route_payloads(binding))
+        await self._upsert(_path_route_payloads(binding), extra_clear=full_family)
         host = self.preview_domain.rstrip(".").lower()
         return f"{host}/preview/{binding.workspace_slug.lower()}"
 
-    async def _upsert(self, payloads: list[dict[str, Any]]) -> None:
+    async def _upsert(
+        self,
+        payloads: list[dict[str, Any]],
+        *,
+        extra_clear: set[str] | None = None,
+    ) -> None:
         """Replace any pre-existing routes with matching `@id`s, then
         splice the fresh route(s) in *before* the first anchor route
         that would otherwise swallow the request (IDE catch-all OR
@@ -276,6 +374,11 @@ class SubdomainManager:
         is a superset of another (e.g. Referer-fallback should sit
         after the primary path match for predictable ordering)."""
         route_ids = {p["@id"] for p in payloads}
+        if extra_clear:
+            # Caller is asking us to clear extra @ids too — used to
+            # drop the full @id family on a mode switch so stale
+            # fallback routes from the previous mode don't linger.
+            route_ids = route_ids | extra_clear
         async with self._lock:
             try:
                 current = await self.client.get(self.routes_path)
@@ -331,18 +434,22 @@ class SubdomainManager:
             # Split payloads by routing strategy. Path-matched routes
             # (the primary `/preview/<slug>/*` match) sit just before
             # the safety-net / IDE catch-all — they only need to
-            # outrank those two. Referer-matched fallbacks need to
-            # outrank EVERY other path-keyed handler (`/api/*`,
-            # `/health`, `/preview/* 404`, IDE) because the prod app
-            # emits root-relative URLs like `/api/v1/posts`, `/_next/
-            # static/...`, `/favicon.png`, etc., and those would
-            # otherwise hit the GAPT control plane.
-            def _is_referer_only(p: dict[str, Any]) -> bool:
+            # outrank those two. Header-only fallbacks (Referer +
+            # cookie pinning) need to outrank EVERY other path-keyed
+            # handler (`/api/*`, `/health`, `/preview/* 404`, IDE)
+            # because the prod app emits root-relative URLs like
+            # `/api/v1/posts`, `/_next/static/...`, `/favicon.png`,
+            # etc., and those would otherwise hit the GAPT control
+            # plane.
+            def _is_header_only(p: dict[str, Any]) -> bool:
                 m = (p.get("match") or [{}])[0]
-                return "header_regexp" in m and not m.get("path")
+                has_header_match = (
+                    "header_regexp" in m or "header" in m
+                )
+                return has_header_match and not m.get("path")
 
-            referer_payloads = [p for p in payloads if _is_referer_only(p)]
-            path_payloads = [p for p in payloads if not _is_referer_only(p)]
+            referer_payloads = [p for p in payloads if _is_header_only(p)]
+            path_payloads = [p for p in payloads if not _is_header_only(p)]
 
             # Anchor for the path-keyed routes: the safety-net 404 or
             # the IDE catch-all, whichever comes first.
@@ -386,11 +493,11 @@ class SubdomainManager:
             await self.client.post(self.routes_path, arr)
 
     async def unregister(self, workspace_slug: str) -> None:
-        """Delete both the primary preview route and its Referer
-        fallback (if registered). Idempotent — 404 means "already
-        gone" and is swallowed."""
+        """Delete the primary preview route plus its Referer fallback
+        and (optional) cookie fallback. Idempotent — 404 means
+        "already gone" and is swallowed."""
         primary = _route_id(workspace_slug)
-        for route_id in (primary, f"{primary}-asset"):
+        for route_id in (primary, f"{primary}-asset", f"{primary}-cookie"):
             try:
                 await self.client.delete(f"/id/{route_id}")
             except CaddyAdminError as exc:

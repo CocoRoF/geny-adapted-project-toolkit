@@ -79,8 +79,51 @@ async def caddy_on_demand_ask(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "preview.empty_slug", "reason": domain},
         )
-    # SubdomainManager.register/_workspace_slug both use the
-    # workspace.id (ULID) lowercased — match that.
+    # Two slug families share this domain:
+    #
+    #   1. **Workspace preview** — slug == workspace.id lowercased
+    #      (registered by `SubdomainManager.register` / the
+    #      `_workspace_slug` helper). The classic dev IDE preview.
+    #
+    #   2. **Prod deploy** — slug == `prod-<env_name>-<project_id>`
+    #      lowercased. Registered by `LocalComposeTarget._route_primary_service`
+    #      and `routers.deploy.stack_reroute`. The deploy gets its
+    #      own subdomain in subdomain-mode (the architecturally
+    #      robust answer to path-mode root-relative URL collisions
+    #      with the GAPT apex).
+    #
+    # We accept either. Look at the slug shape to decide which table
+    # to query; on no match return 404 so Caddy refuses to mint the
+    # cert (the standard on-demand TLS gate behaviour).
+    if slug.startswith("prod-"):
+        # `prod-<env_name>-<project_id>` — project_id is a ULID
+        # (26 chars), env_name is whatever the operator named the
+        # env. Split from the right so an env name containing `-`
+        # (e.g. `staging-eu`) still resolves cleanly.
+        rest = slug[len("prod-") :]
+        if "-" not in rest:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "preview.unknown", "reason": slug},
+            )
+        env_name, project_id_lower = rest.rsplit("-", 1)
+        # project_id is stored uppercased; the slug is lowercase.
+        env_row = (
+            await db.execute(
+                select(models.Environment).where(
+                    models.Environment.project_id == project_id_lower.upper(),
+                    models.Environment.name == env_name,
+                )
+            )
+        ).scalar_one_or_none()
+        if env_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "preview.unknown", "reason": slug},
+            )
+        return {"domain": domain}
+
+    # Workspace preview — slug == workspace.id lowercased.
     row = (
         await db.execute(
             select(models.Workspace).where(models.Workspace.id == slug.upper())

@@ -1181,6 +1181,11 @@ class StackRerouteBody(BaseModel):
     upstream_scheme: str | None = None  # "http" | "https"
     upstream_host_header: str | None = None
     upstream_tls_insecure: bool | None = None
+    # "path" (default — single apex domain, shares /preview/<slug>/*
+    # with GAPT, robust-ish via cookie pinning) or "subdomain" (each
+    # preview gets `<slug>.<preview_domain>` — architecturally robust
+    # but requires wildcard DNS + on-demand TLS at Caddy).
+    preview_mode: str | None = None
 
 
 @router.post("/{env_id}/stack/reroute", response_model=StackOpResponse)
@@ -1292,7 +1297,11 @@ async def stack_reroute(
         client=CaddyAdminClient(transport=transport),
         preview_domain=settings.caddy_preview_domain,
     )
-    mode_str = str(target_config.get("preview_mode", "path")).lower()
+    mode_str = str(
+        override.preview_mode
+        or target_config.get("preview_mode")
+        or "path"
+    ).lower()
     mode = PreviewMode.SUBDOMAIN if mode_str == "subdomain" else PreviewMode.PATH
     strip_opt = target_config.get("strip_prefix")
     strip_prefix = (True if strip_opt is None else bool(strip_opt)) and mode == PreviewMode.PATH
@@ -1385,6 +1394,13 @@ async def stack_reroute(
             new_config["upstream_host_header"] = upstream_host_header
     if override.upstream_tls_insecure is not None:
         new_config["upstream_tls_insecure"] = bool(override.upstream_tls_insecure)
+    if override.preview_mode is not None:
+        # Normalise — anything other than "subdomain" persists as
+        # "path" so a typo doesn't accidentally enable subdomain
+        # mode without wildcard DNS.
+        new_config["preview_mode"] = (
+            "subdomain" if str(override.preview_mode).lower() == "subdomain" else "path"
+        )
     if new_config != target_config:
         env_row.deploy_target_config = new_config
         await db.commit()
@@ -1399,10 +1415,16 @@ async def stack_reroute(
             f"re-routed → https://{host}\n"
             f"upstream={upstream_scheme}://{chosen.container_name}:{primary_port} "
             f"(service={chosen.service or '?'})\n"
-            f"strip_prefix={strip_prefix} mode={mode.value}\n"
+            f"mode={mode.value} strip_prefix={strip_prefix}\n"
             f"host_header={upstream_host_header or '(passthrough)'} "
             f"tls_insecure={upstream_tls_insecure}\n"
             f"network_connect={'ok' if network_ok else 'failed'}"
+            + (
+                "\nnote: subdomain mode needs wildcard DNS (*. on the preview "
+                "domain) + Caddy on-demand TLS approval via /api/preview/ask"
+                if mode == PreviewMode.SUBDOMAIN
+                else ""
+            )
         ),
     )
 

@@ -101,8 +101,11 @@ async def test_subdomain_manager_path_mode_default() -> None:
     assert new_route["match"][0]["path"] == ["/preview/01kws", "/preview/01kws/*"]
     # Default: no prefix strip — the app keeps `/preview/<slug>` in
     # its received URL so basePath-aware apps emit matching URLs.
-    assert new_route["handle"][0]["handler"] == "reverse_proxy"
-    assert new_route["handle"][0]["upstreams"][0]["dial"] == "gapt-ws-01kws:3000"
+    # With cookie pinning on by default, the primary handler list
+    # is [headers (Set-Cookie), reverse_proxy]; the proxy isn't at
+    # index 0 anymore — find it by handler name.
+    proxy = next(h for h in new_route["handle"] if h["handler"] == "reverse_proxy")
+    assert proxy["upstreams"][0]["dial"] == "gapt-ws-01kws:3000"
 
 
 @pytest.mark.asyncio
@@ -134,9 +137,11 @@ async def test_subdomain_manager_path_mode_strip_prefix_opt_in() -> None:
     # by @id rather than positional indexing — the splice puts the
     # Referer-fallback ahead of the primary now.
     primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
-    assert primary["handle"][0]["handler"] == "rewrite"
-    assert primary["handle"][0]["strip_path_prefix"] == "/preview/01kws"
-    assert primary["handle"][1]["handler"] == "reverse_proxy"
+    # With cookie pinning on, the handler chain is
+    # [headers (Set-Cookie), rewrite (strip), reverse_proxy].
+    rewrite = next(h for h in primary["handle"] if h["handler"] == "rewrite")
+    assert rewrite["strip_path_prefix"] == "/preview/01kws"
+    assert any(h["handler"] == "reverse_proxy" for h in primary["handle"])
 
 
 @pytest.mark.asyncio
@@ -170,9 +175,10 @@ async def test_subdomain_manager_subdomain_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_subdomain_manager_unregister_targets_id_path() -> None:
-    """Unregister deletes both the primary route AND its Referer
-    fallback (the route that catches `/favicon.png`-style root-
-    relative assets emitted by the upstream app)."""
+    """Unregister deletes the primary route, its Referer fallback,
+    AND its cookie-pinning fallback (when cookie pinning was
+    registered). All three are idempotent — 404 on any one is
+    silently swallowed (covered separately)."""
     seen_paths: list[str] = []
 
     async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
@@ -185,6 +191,7 @@ async def test_subdomain_manager_unregister_targets_id_path() -> None:
     assert seen_paths == [
         "/id/gapt-preview-01kws",
         "/id/gapt-preview-01kws-asset",
+        "/id/gapt-preview-01kws-cookie",
     ]
 
 
@@ -344,6 +351,185 @@ async def test_subdomain_manager_https_upstream_with_host_override() -> None:
     assert proxy["transport"]["tls"]["insecure_skip_verify"] is True
     assert proxy["headers"]["request"]["set"]["Host"] == ["hrletsgo.me"]
     assert proxy["upstreams"][0]["dial"] == "nginx:443"
+
+
+@pytest.mark.asyncio
+async def test_cookie_pinning_sets_short_lived_cookie_and_fallback_route() -> None:
+    """Cookie pinning (path mode, on by default) injects a
+    `Set-Cookie` header on the primary `/preview/<slug>` route and
+    registers a third Caddy route that catches root-relative
+    follow-up requests bearing the cookie + Sec-Fetch-Site=same-
+    origin. This is the path-mode-only workaround for apex URL
+    collisions — subdomain mode doesn't need it."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+        )
+    )
+    posted = calls[2][2]
+    # Primary route carries Set-Cookie via a `headers` response handler.
+    primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    headers_handler = next(h for h in primary["handle"] if h["handler"] == "headers")
+    cookie_header = headers_handler["response"]["set"]["Set-Cookie"][0]
+    assert "gapt_preview=01kws" in cookie_header
+    assert "Path=/" in cookie_header
+    assert "Max-Age=300" in cookie_header
+    assert "SameSite=Lax" in cookie_header
+    assert "HttpOnly" in cookie_header
+
+    # Cookie-fallback route exists, matches cookie + same-origin
+    # Sec-Fetch-Site, reverse-proxies to the same upstream.
+    cookie_route = next(
+        r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie"
+    )
+    match = cookie_route["match"][0]
+    assert "gapt_preview=01kws" in match["header_regexp"]["Cookie"]["pattern"]
+    assert match["header"]["Sec-Fetch-Site"] == ["same-origin"]
+    proxy = next(h for h in cookie_route["handle"] if h["handler"] == "reverse_proxy")
+    assert proxy["upstreams"][0]["dial"] == "gapt-ws-01kws:3000"
+
+
+@pytest.mark.asyncio
+async def test_cookie_pinning_disabled_when_ttl_zero() -> None:
+    """`cookie_pinning_ttl_s=0` opts out: primary route has no
+    Set-Cookie header, and no `-cookie` fallback route is registered.
+    Subdomain-mode bindings should always use this (or just rely on
+    the host header — cookie pinning is path-mode-only)."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            cookie_pinning_ttl_s=0,
+        )
+    )
+    posted = calls[2][2]
+    primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    assert not any(h["handler"] == "headers" for h in primary["handle"])
+    assert not any(
+        isinstance(r, dict) and r.get("@id") == "gapt-preview-01kws-cookie"
+        for r in posted
+    )
+
+
+@pytest.mark.asyncio
+async def test_switching_from_path_to_subdomain_drops_stale_fallback_routes() -> None:
+    """When an env is re-routed from path to subdomain mode, the old
+    `-asset` and `-cookie` fallback routes must be cleared from the
+    routes array. Otherwise they'd keep catching root-relative
+    requests forever even though the user-facing URL is now a
+    subdomain. The full @id family (`gapt-preview-<slug>`, `-asset`,
+    `-cookie`) is dropped before the fresh subdomain payload is
+    spliced in."""
+    calls: list[tuple[str, str, Any]] = []
+    # Existing state — a path-mode binding's three routes plus an
+    # IDE catch-all.
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {
+            "@id": "gapt-preview-01kws-asset",
+            "match": [{"header_regexp": {"Referer": {"pattern": "...01kws.../"}}}],
+            "handle": [{"handler": "reverse_proxy"}],
+        },
+        {
+            "@id": "gapt-preview-01kws-cookie",
+            "match": [{"header_regexp": {"Cookie": {"pattern": "gapt_preview=01kws"}}}],
+            "handle": [{"handler": "reverse_proxy"}],
+        },
+        {
+            "@id": "gapt-preview-01kws",
+            "match": [{"path": ["/preview/01kws", "/preview/01kws/*"]}],
+            "handle": [{"handler": "reverse_proxy"}],
+        },
+        {"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "ide"}]}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    posted = calls[2][2]
+    # Exactly one route bearing the slug family should remain — the
+    # new host-keyed subdomain route. The old `-asset` and `-cookie`
+    # routes must have been cleared.
+    slug_family_ids = {"gapt-preview-01kws", "gapt-preview-01kws-asset", "gapt-preview-01kws-cookie"}
+    remaining = [r for r in posted if r.get("@id") in slug_family_ids]
+    assert len(remaining) == 1
+    assert remaining[0]["@id"] == "gapt-preview-01kws"
+    assert remaining[0]["match"][0]["host"] == ["01kws.gapt.example"]
+
+
+@pytest.mark.asyncio
+async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
+    """The cookie fallback has to outrank `/api/*` and the safety-
+    net 404 just like the Referer fallback does — both are header-
+    only matchers for catching root-relative requests that bypass
+    `/preview/<slug>`."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {"match": [{"path": ["/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {
+            "match": [{"path": ["/preview", "/preview/*"]}],
+            "handle": [{"handler": "static_response", "status_code": 404}],
+        },
+        {"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "ide:35173"}]}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(workspace_slug="01KWS", upstream_host="gapt-ws-01kws", upstream_port=3000)
+    )
+    posted = calls[2][2]
+    cookie_idx = next(
+        i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws-cookie"
+    )
+    api_idx = next(
+        i for i, r in enumerate(posted)
+        if "/api/*" in (r.get("match") or [{}])[0].get("path", [])
+    )
+    assert cookie_idx < api_idx
 
 
 @pytest.mark.asyncio
