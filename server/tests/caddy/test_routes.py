@@ -20,9 +20,9 @@ from gapt_server.db import enums
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import InMemoryAuditSink
 from gapt_server.domains.caddy.share import parse_share_link
-from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.routers import preview as preview_router
 from gapt_server.settings import Settings
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -71,7 +71,7 @@ async def fx() -> AsyncIterator[_Fx]:
         auth_enabled=False,
     )
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
 
     # Stub the Caddy HTTP transport so no real network fires.
@@ -153,7 +153,7 @@ async def test_preview_disabled_when_caddy_unset() -> None:
     # No caddy_admin_url / preview_domain on this Settings.
     settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
     try:

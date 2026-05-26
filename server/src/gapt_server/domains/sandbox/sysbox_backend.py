@@ -63,14 +63,9 @@ class SysboxBackendConfig:
 
 
 class SysboxBackend:
-    """Production sandbox backend.
-
-    Tests inject a mock via the `client` parameter — see
-    `tests/sandbox/test_sysbox_backend.py`. The protocol-level
-    `MockSandboxBackend` is preferred when the test only cares about
-    workflow ordering; `SysboxBackend` with a Mock is for when the
-    test needs to assert the *exact* docker call.
-    """
+    """Production sandbox backend — the only `SandboxBackend`
+    implementation. Tests inject a docker-SDK fake via the `client`
+    parameter — see `tests/sandbox/test_sysbox_backend.py`."""
 
     name = "sysbox"
 

@@ -11,7 +11,6 @@ import pytest
 
 from gapt_server.domains.sandbox import (
     ExecResult,
-    MockSandboxBackend,
     SandboxCreateSpec,
 )
 from gapt_server.domains.workspaces.files import (
@@ -21,13 +20,14 @@ from gapt_server.domains.workspaces.files import (
     read_file,
     write_file,
 )
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 
 WORKTREE = "/workspace/demo"
 
 
-async def _running_sandbox() -> tuple[MockSandboxBackend, object]:
-    backend = MockSandboxBackend()
+async def _running_sandbox() -> tuple[FakeSandboxBackend, object]:
+    backend = FakeSandboxBackend()
     ref = await backend.create(
         SandboxCreateSpec(
             project_id="p1",

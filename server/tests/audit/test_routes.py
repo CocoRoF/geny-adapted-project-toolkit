@@ -18,8 +18,8 @@ from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.settings import Settings
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -60,7 +60,7 @@ async def fx() -> AsyncIterator[_Fx]:
     _reset_and_upgrade(sync_dsn)
     settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
     try:

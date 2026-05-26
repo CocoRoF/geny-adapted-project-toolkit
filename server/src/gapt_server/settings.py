@@ -63,14 +63,17 @@ class Settings(BaseSettings):
 
     # --- sandbox / runtime (Cycle 1.7 onwards) ---
     sandbox_runtime: str = "sysbox-runc"
-    sandbox_image_tag: str = "ghcr.io/cocorof/gapt-runtime:dev"
+    # Per-workspace sandbox image — built locally via
+    # `docker/workspace/build.sh` (tag `gapt-workspace:latest`). We
+    # ship no pushed registry image yet, so the default has to be
+    # something the operator actually has on disk after running the
+    # build script. Override with `GAPT_SANDBOX_IMAGE_TAG=...` once a
+    # registry copy exists.
+    sandbox_image_tag: str = "gapt-workspace:latest"
     sandbox_daemon_socket: str = "/run/agent.sock"
     sandbox_daemon_token_ttl_s: int = 900  # 15 minutes
     sandbox_idle_pause_s: int = 1800  # 30 minutes → paused
     sandbox_idle_archive_s: int = 86_400  # 24 hours → archive
-    # When true, container boots use the real docker SDK + sysbox-runc.
-    # Default false keeps unit/CI runs hermetic (MockSandboxBackend).
-    sandbox_use_real_docker: bool = False
 
     # --- arq / background jobs ---
     arq_queue_name: str = "gapt:default"

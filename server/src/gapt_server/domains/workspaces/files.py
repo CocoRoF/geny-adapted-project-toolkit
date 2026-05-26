@@ -237,14 +237,10 @@ async def write_file(
         body = content
     else:
         raise WorkspaceFileError("workspace.path.invalid", f"unsupported encoding: {encoding!r}")
-    # Use `tee` so we don't depend on the shell. Tee reads stdin and
-    # writes to argv[1]. The mock backend doesn't actually run tee so
-    # we shape this as a single exec_in call with stdin-equivalence:
-    # MockSandboxBackend records the argv so tests can assert on it.
-    # For SysboxBackend, tee needs the bytes via stdin — that's why
-    # we keep this single argv plus a separate "stdin" pathway in the
-    # backend signature (added in M2). For M1, we encode the content
-    # in argv via printf as a stopgap.
+    # `tee` reads stdin and writes to argv[1]. SysboxBackend needs the
+    # bytes via stdin — for M1 we sidestep the stdin plumbing by
+    # encoding the payload in argv via `printf` (base64-safe). M2 will
+    # add a real stdin channel to the backend signature.
     # printf reads its first arg as a format string; %s lets us pass
     # any payload safely. Base64-encode utf-8 text so binary writes
     # don't need a different code path.

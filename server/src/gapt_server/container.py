@@ -38,7 +38,6 @@ from gapt_server.domains.notifications import (
     SlackWebhookChannel,
 )
 from gapt_server.domains.sandbox import (
-    MockSandboxBackend,
     SandboxBackend,
     SysboxBackend,
     make_default_client,
@@ -113,12 +112,12 @@ def build_container(
     `InMemoryAuditSink`). When unset, a `PostgresAuditSink` is built
     against the same engine (or `NullAuditSink` when no DSN).
 
-    Pass `sandbox_backend` to inject a custom backend (tests use
-    `MockSandboxBackend`). Otherwise the backend is picked based on
-    `settings.sandbox_use_real_docker`.
+    Pass `sandbox_backend` to inject a custom fake (tests use narrow
+    stubs at the protocol boundary). Otherwise the only real backend
+    — `SysboxBackend` — is built against the ambient docker daemon.
     """
     if sandbox_backend is None:
-        sandbox_backend = _build_default_sandbox(settings)
+        sandbox_backend = SysboxBackend(client=make_default_client())
 
     env_service = GaptEnvironmentService()
     notifications = _build_notifications(settings)
@@ -188,10 +187,6 @@ def _build_notifications(settings: Settings) -> NotificationService:
     return NotificationService(channels=channels)
 
 
-def _build_default_sandbox(settings: Settings) -> SandboxBackend:
-    if settings.sandbox_use_real_docker:
-        return SysboxBackend(client=make_default_client())
-    return MockSandboxBackend()
 
 
 def _coerce_async_dsn(dsn: str) -> str:

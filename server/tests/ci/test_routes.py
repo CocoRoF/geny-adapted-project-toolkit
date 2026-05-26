@@ -17,9 +17,9 @@ from httpx import ASGITransport, AsyncClient
 from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.routers import ci as ci_router
 from gapt_server.settings import Settings
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -78,7 +78,7 @@ async def fx() -> AsyncIterator[_Fx]:
         auth_enabled=False,
     )
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
     try:
@@ -158,7 +158,7 @@ async def test_ci_runs_412_when_token_missing() -> None:
     # ci_github_token omitted
     settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
     try:
@@ -190,7 +190,7 @@ async def test_ci_runs_uses_system_scoped_vault_token(tmp_path) -> None:  # type
         auth_enabled=False,
     )  # NO ci_github_token
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     app = create_app(settings=settings, container=container)
     # The vault is a module-level singleton; pin ours so the test

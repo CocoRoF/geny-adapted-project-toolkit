@@ -385,6 +385,15 @@ def _http_from_fs_error(exc: fs.WorkspaceFileError) -> HTTPException:
     )
 
 
+# Container-side worktree path. `WorkspaceSandbox` always bind-mounts
+# the host worktree at `/workspace` (see
+# `domains/workspace_sandbox/manager.py`), so every file op running
+# inside the `gapt-ws-<wid>` container operates against this prefix
+# — never the host-side `models.Workspace.worktree_path`, which is
+# only meaningful on the host filesystem.
+_CONTAINER_WORKTREE = "/workspace"
+
+
 async def _workspace_for_fs(
     db: AsyncSession,
     *,
@@ -411,7 +420,20 @@ async def _workspace_for_fs(
                 "reason": f"workspace {workspace_id} is {row.status.value} — start it first",
             },
         )
-    ref = SandboxRef(id=row.sandbox_id, container_id=None, backend="mock")
+    # File ops run inside the long-lived **workspace** container
+    # (`gapt-ws-<wid>`) — that's the one with the cloned repo, npm,
+    # git, etc. The `sandboxes` row's `container_id` points at a
+    # *different*, shorter-lived agent-runtime container (`gapt-<id>`)
+    # that exits right after boot, so executing against it always
+    # fails. The docker SDK accepts a container *name* anywhere an
+    # id is accepted, so we resolve the workspace-container name and
+    # hand it to the backend.
+    container_name = f"gapt-ws-{workspace_id.lower()}"
+    ref = SandboxRef(
+        id=row.sandbox_id,
+        container_id=container_name,
+        backend="sysbox",
+    )
     return row, ref
 
 
@@ -425,7 +447,9 @@ async def tree(
 ) -> list[TreeEntryResponse]:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
-        entries = await fs.list_tree(sandbox, ref, worktree_path=workspace.worktree_path, path=path)
+        entries = await fs.list_tree(
+            sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path
+        )
     except fs.WorkspaceFileError as exc:
         raise _http_from_fs_error(exc) from exc
     return [TreeEntryResponse(**vars(e)) for e in entries]
@@ -441,7 +465,7 @@ async def read_workspace_file(
 ) -> FileContentResponse:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
-        content = await fs.read_file(sandbox, ref, worktree_path=workspace.worktree_path, path=path)
+        content = await fs.read_file(sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path)
     except fs.WorkspaceFileError as exc:
         raise _http_from_fs_error(exc) from exc
     return FileContentResponse(**vars(content))
@@ -461,7 +485,7 @@ async def write_workspace_file(
         await fs.write_file(
             sandbox,
             ref,
-            worktree_path=workspace.worktree_path,
+            worktree_path=_CONTAINER_WORKTREE,
             path=path,
             content=payload.content,
             encoding=payload.encoding,
@@ -484,7 +508,7 @@ async def delete_workspace_path(
 ) -> None:
     workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
     try:
-        await fs.delete_path(sandbox, ref, worktree_path=workspace.worktree_path, path=path)
+        await fs.delete_path(sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path)
     except fs.WorkspaceFileError as exc:
         raise _http_from_fs_error(exc) from exc
 

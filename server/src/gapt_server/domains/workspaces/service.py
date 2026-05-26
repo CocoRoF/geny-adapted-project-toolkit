@@ -715,7 +715,7 @@ class WorkspaceService:
         # in-memory mock sandbox across server restarts. Stopping a
         # workspace whose sandbox has been swept away is still a
         # legitimate "now stopped" transition from the user's view.
-        await self._sandbox_for(row, action="stop", swallow_missing=True)
+        await self._sandbox_for(db, row, action="stop", swallow_missing=True)
         row.status = enums.WorkspaceStatus.STOPPED
         row.last_activity_at = _now()
         await db.flush()
@@ -740,7 +740,7 @@ class WorkspaceService:
         # start request becomes a no-op + status flip. The next time
         # the user does real work the workspace boot path will
         # recreate the sandbox.
-        await self._sandbox_for(row, action="start", swallow_missing=True)
+        await self._sandbox_for(db, row, action="start", swallow_missing=True)
         row.status = enums.WorkspaceStatus.RUNNING
         row.last_activity_at = _now()
         await db.flush()
@@ -752,7 +752,7 @@ class WorkspaceService:
         row = await self._fetch(
             db, actor=actor, workspace_id=workspace_id
         )
-        await self._sandbox_for(row, action="destroy", swallow_missing=True)
+        await self._sandbox_for(db, row, action="destroy", swallow_missing=True)
         row.status = enums.WorkspaceStatus.ARCHIVED
         row.last_activity_at = _now()
         await db.flush()
@@ -771,6 +771,7 @@ class WorkspaceService:
 
     async def _sandbox_for(
         self,
+        db: AsyncSession,
         row: models.Workspace,
         *,
         action: str,
@@ -782,7 +783,18 @@ class WorkspaceService:
             raise WorkspaceError(
                 "workspace.no_sandbox", f"workspace {row.id} has no attached sandbox"
             )
-        ref = SandboxRef(id=row.sandbox_id, container_id=None, backend=self._sandbox.name)
+        # Real-docker backends (SysboxBackend) need the actual
+        # `container_id`, not None. Mock backend ignores it. Fetching
+        # the sandbox row here keeps callers from having to do it.
+        sandbox_row = (
+            await db.execute(
+                select(models.Sandbox).where(models.Sandbox.id == row.sandbox_id)
+            )
+        ).scalar_one_or_none()
+        container_id = sandbox_row.container_id if sandbox_row else None
+        ref = SandboxRef(
+            id=row.sandbox_id, container_id=container_id, backend=self._sandbox.name
+        )
         try:
             if action == "start":
                 await self._sandbox.start(ref)

@@ -7,7 +7,6 @@ import pytest
 
 from gapt_server.domains.sandbox import (
     ExecResult,
-    MockSandboxBackend,
     SandboxCreateSpec,
 )
 from gapt_server.domains.workspaces.diff import (
@@ -15,13 +14,14 @@ from gapt_server.domains.workspaces.diff import (
     WorkspaceDiffError,
     working_tree_diff,
 )
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 
 WORKTREE = "/workspace/demo"
 
 
-async def _running_sandbox() -> tuple[MockSandboxBackend, object]:
-    backend = MockSandboxBackend()
+async def _running_sandbox() -> tuple[FakeSandboxBackend, object]:
+    backend = FakeSandboxBackend()
     ref = await backend.create(
         SandboxCreateSpec(
             project_id="p1",

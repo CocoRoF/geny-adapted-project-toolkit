@@ -22,8 +22,9 @@ from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.db import models
 from gapt_server.domains.audit.sink import InMemoryAuditSink
-from gapt_server.domains.sandbox import MockSandboxBackend, SandboxBackendError
+from gapt_server.domains.sandbox import SandboxBackendError
 from gapt_server.settings import Settings
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -59,7 +60,7 @@ def _reset_and_upgrade(sync_dsn: str) -> None:
 class _Fx:
     app: FastAPI
     audit: InMemoryAuditSink
-    sandbox: MockSandboxBackend
+    sandbox: FakeSandboxBackend
 
 
 @pytest_asyncio.fixture
@@ -68,7 +69,7 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     _reset_and_upgrade(sync_dsn)
     settings = Settings(postgres_dsn=sync_dsn, auth_enabled=False)  # type: ignore[arg-type]
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
 
     # Stub the host-side git clone so tests don't hit the real network

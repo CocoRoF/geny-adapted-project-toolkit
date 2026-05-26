@@ -18,9 +18,9 @@ from gapt_server.app import create_app
 from gapt_server.container import build_container
 from gapt_server.domains.audit.sink import InMemoryAuditSink
 from gapt_server.domains.auth.session import InMemorySessionStore
-from gapt_server.domains.sandbox import MockSandboxBackend
 from gapt_server.routers.auth import set_session_store
 from gapt_server.settings import Settings
+from tests._helpers.fake_sandbox import FakeSandboxBackend
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -62,7 +62,7 @@ async def fx() -> AsyncIterator[_Fx]:
     # auth_enabled=True so we can exercise the 401-without-cookie path.
     settings = Settings(postgres_dsn=sync_dsn)
     audit = InMemoryAuditSink()
-    sandbox = MockSandboxBackend()
+    sandbox = FakeSandboxBackend()
     container = build_container(settings, audit_sink=audit, sandbox_backend=sandbox)
     # Pin a fresh session store so sibling tests don't carry cookies in.
     set_session_store(InMemorySessionStore())
