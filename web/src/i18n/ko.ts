@@ -167,6 +167,11 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.view_empty": "이 분류에 해당하는 컨테이너가 없습니다.",
   "performance.orphan.header": "Orphan 프로젝트",
   "performance.orphan.hint": "DB 에 더 이상 매칭되는 프로젝트/워크스페이스/환경 row 가 없는 컨테이너 (보관됨, 삭제, 혹은 기록되지 않음). 살펴보고 정리하기 안전합니다.",
+  "performance.stream.live": "실시간",
+  "performance.stream.paused": "일시중지 (탭 가려짐)",
+  "performance.stream.connecting": "연결 중…",
+  "performance.stream.reconnecting": "재연결 중…",
+  "performance.stream_hint": "SSE 푸시 방식 — 이 탭이 보이는 동안에만 서버가 샘플링합니다. 다른 탭으로 가면 연결이 끊기고, 돌아오면 자동 재연결. 행을 클릭하면 정체성/제한/실시간 통계 상세를 볼 수 있습니다.",
 
   // --- IDE shell ---
   "ide.layout.reset": "레이아웃 초기화",

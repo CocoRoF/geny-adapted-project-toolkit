@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,7 +8,6 @@ import {
   GitBranch,
   HardDrive,
   MemoryStick,
-  RefreshCw,
   RotateCcw,
   Rocket,
   Server,
@@ -16,6 +15,8 @@ import {
   Skull,
   Square,
   Thermometer,
+  Wifi,
+  WifiOff,
   Zap,
 } from "lucide-react";
 
@@ -31,19 +32,18 @@ import {
   getGpuInfo,
   getHostInfo,
   killContainer,
-  listContainers,
   restartContainer,
   stopContainer,
 } from "@/api/performance";
 import { useI18n } from "@/app/providers/i18n-context";
 import { LogsModal } from "@/performance/LogsModal";
 import { Sparkline } from "@/performance/Sparkline";
+import { useContainersStream } from "@/performance/useContainersStream";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { cn } from "@/ui/cn";
 
-const POLL_MS = 3000;
-const SPARK_LEN = 40; // ~2 min @ 3s
+const SPARK_LEN = 40; // ~2 min @ 2s server tick
 
 type Point = { cpu_pct: number; mem_bytes: number };
 type SeriesMap = Record<string, Point[]>;
@@ -203,46 +203,45 @@ export function PerformanceDashboard() {
   const { t } = useI18n();
   const [host, setHost] = useState<HostInfo | null>(null);
   const [gpu, setGpu] = useState<GpusResponse | null>(null);
-  const [resp, setResp] = useState<ContainersResponse | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [logsFor, setLogsFor] = useState<{ id: string; name: string } | null>(null);
   const [view, setView] = useState<ViewFilter>("all");
   const seriesRef = useRef<SeriesMap>({});
   const [, bump] = useState(0);
 
-  const pull = useCallback(async () => {
-    try {
-      const data = await listContainers();
-      setResp(data);
-      setErr(null);
-      const next = { ...seriesRef.current };
-      for (const s of data.samples) {
-        const id = s.summary.id;
-        const arr = next[id] ? [...next[id]] : [];
-        arr.push({
-          cpu_pct: s.stats?.cpu_pct ?? 0,
-          mem_bytes: s.stats?.mem_bytes ?? 0,
-        });
-        if (arr.length > SPARK_LEN) arr.shift();
-        next[id] = arr;
-      }
-      const alive = new Set(data.samples.map((s) => s.summary.id));
-      for (const k of Object.keys(next)) if (!alive.has(k)) delete next[k];
-      seriesRef.current = next;
-      bump((n) => n + 1);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  // SSE stream — auto-pauses when tab hidden, auto-resumes on focus.
+  const { data: resp, state: streamState, error: streamErr, tickCount } =
+    useContainersStream();
+  const err = streamErr;
 
+  // Build per-container sparkline series from incoming ticks. We
+  // can't put this inside the hook because the hook is general-
+  // purpose; series accumulation is dashboard-specific.
+  useEffect(() => {
+    if (!resp) return;
+    const next = { ...seriesRef.current };
+    for (const s of resp.samples) {
+      const id = s.summary.id;
+      const arr = next[id] ? [...next[id]] : [];
+      arr.push({
+        cpu_pct: s.stats?.cpu_pct ?? 0,
+        mem_bytes: s.stats?.mem_bytes ?? 0,
+      });
+      if (arr.length > SPARK_LEN) arr.shift();
+      next[id] = arr;
+    }
+    const alive = new Set(resp.samples.map((s) => s.summary.id));
+    for (const k of Object.keys(next)) if (!alive.has(k)) delete next[k];
+    seriesRef.current = next;
+    bump((n) => n + 1);
+  }, [resp]);
+
+  // One-shot fetches: host info + GPU. These don't need streaming —
+  // host CPU count + total memory are constants for the process's
+  // lifetime, and GPU stats rarely move per-second.
   useEffect(() => {
     void getHostInfo().then(setHost).catch(() => undefined);
     void getGpuInfo().then(setGpu).catch(() => undefined);
-    void pull();
-    const id = window.setInterval(() => void pull(), POLL_MS);
-    return () => window.clearInterval(id);
-  }, [pull]);
+  }, []);
 
   const tree = useMemo(() => (resp ? buildTree(resp) : null), [resp]);
 
@@ -279,18 +278,10 @@ export function PerformanceDashboard() {
       if (action === "stop") await stopContainer(sample.summary.id);
       else if (action === "kill") await killContainer(sample.summary.id);
       else await restartContainer(sample.summary.id);
-      await pull();
+      // No manual refresh — the SSE stream will push the next tick
+      // within ~2 s and the table re-renders on its own.
     } catch (e) {
       window.alert(e instanceof ApiError ? e.reason : String(e));
-    }
-  };
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await pull();
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -302,10 +293,7 @@ export function PerformanceDashboard() {
           <p className="mt-0.5 text-[12px] text-fg-muted">{t("performance.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={refreshing}>
-            <RefreshCw className={cn("mr-1 h-3.5 w-3.5", refreshing && "animate-spin")} />
-            {t("performance.refresh")}
-          </Button>
+          <StreamIndicator state={streamState} tickCount={tickCount} />
         </div>
       </header>
 
@@ -427,7 +415,7 @@ export function PerformanceDashboard() {
       </div>
 
       <p className="mt-4 text-[11px] text-fg-subtle">
-        {t("performance.poll_hint").replace("{n}", String(Math.round(POLL_MS / 1000)))}
+        {t("performance.stream_hint")}
       </p>
 
       {logsFor ? (
@@ -611,6 +599,53 @@ interface RowHelpers {
   series: SeriesMap;
   onLogs: (s: ContainerSample) => void;
   onAction: (s: ContainerSample, a: "stop" | "kill" | "restart") => Promise<void>;
+}
+
+function StreamIndicator({
+  state,
+  tickCount,
+}: {
+  state: "idle" | "connecting" | "open" | "paused" | "error";
+  tickCount: number;
+}) {
+  const { t } = useI18n();
+  // Pulse the dot on every tick so the operator sees "live" without
+  // a separate animation. The `key={tickCount}` resets the CSS
+  // transition each tick.
+  if (state === "open") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-success/40 bg-success/10 px-2 py-1 text-[11px] font-medium text-success">
+        <span
+          key={tickCount}
+          className="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-success"
+        />
+        <Wifi className="h-3 w-3" strokeWidth={1.5} />
+        {t("performance.stream.live")}
+      </span>
+    );
+  }
+  if (state === "paused") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] font-medium text-fg-muted">
+        <WifiOff className="h-3 w-3" strokeWidth={1.5} />
+        {t("performance.stream.paused")}
+      </span>
+    );
+  }
+  if (state === "error") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn/10 px-2 py-1 text-[11px] font-medium text-warn">
+        <WifiOff className="h-3 w-3" strokeWidth={1.5} />
+        {t("performance.stream.reconnecting")}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] font-medium text-fg-muted">
+      <Wifi className="h-3 w-3 animate-pulse" strokeWidth={1.5} />
+      {t("performance.stream.connecting")}
+    </span>
+  );
 }
 
 function ViewPill({

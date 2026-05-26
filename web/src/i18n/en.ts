@@ -168,6 +168,11 @@ export const en = {
   "performance.view_empty": "No containers in this view.",
   "performance.orphan.header": "Orphan projects",
   "performance.orphan.hint": "Containers whose project / workspace / environment row is no longer in the DB (archived, dropped, or never recorded). Safe to inspect & clean up.",
+  "performance.stream.live": "Live",
+  "performance.stream.paused": "Paused (tab hidden)",
+  "performance.stream.connecting": "Connecting…",
+  "performance.stream.reconnecting": "Reconnecting…",
+  "performance.stream_hint": "Pushed via SSE — the server only samples while this tab is visible. Switch tabs and the connection closes; come back and it auto-resumes. Click a row for identity / limits / live breakdown.",
 
   // --- IDE shell ---
   "ide.layout.reset": "Reset layout",

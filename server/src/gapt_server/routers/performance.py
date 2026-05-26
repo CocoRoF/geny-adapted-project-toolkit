@@ -24,12 +24,14 @@ without a second round-trip per container.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from gapt_server.container import AppContainer, get_container
 from gapt_server.db import models
@@ -44,6 +46,7 @@ from gapt_server.domains.performance import (
     GpuSample,
     sample_gpu,
 )
+from gapt_server.domains.performance.broadcaster import PerformanceBroadcaster
 from gapt_server.domains.sandbox import make_default_client
 from gapt_server.routers.auth import get_current_user
 
@@ -54,11 +57,71 @@ router = APIRouter(prefix="/api/performance", tags=["performance"])
 _SAMPLER: ContainerSampler | None = None
 
 
+_BROADCASTER: PerformanceBroadcaster | None = None
+
+
 def _get_sampler() -> ContainerSampler:
     global _SAMPLER  # noqa: PLW0603
     if _SAMPLER is None:
         _SAMPLER = ContainerSampler(client=make_default_client())
     return _SAMPLER
+
+
+def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
+    """Lazy-construct the broadcaster on first stream subscribe. We
+    can't wire this at app start because the payload builder closes
+    over `container.session_factory`, which isn't valid before the
+    DB engine is up."""
+    global _BROADCASTER  # noqa: PLW0603
+    if _BROADCASTER is None:
+        broadcaster = PerformanceBroadcaster(sampler=_get_sampler())
+
+        async def _build_payload(samples: list[ContainerSample]) -> dict:
+            projects, workspaces, environments = await _load_db_context_isolated(
+                container
+            )
+            enriched: list[ContainerSample] = []
+            for s in samples:
+                enriched.append(
+                    ContainerSample(
+                        summary=_enrich_summary(
+                            s.summary, projects, workspaces, environments
+                        ),
+                        limits=s.limits,
+                        stats=s.stats,
+                    )
+                )
+            total_cpu = sum((s.stats.cpu_pct for s in enriched if s.stats), 0.0)
+            total_mem = sum((s.stats.mem_bytes for s in enriched if s.stats), 0)
+            running = sum(1 for s in enriched if s.summary.status == "running")
+            return {
+                "samples": [_sample_dto(s).model_dump() for s in enriched],
+                "projects": [
+                    {"id": p.id, "slug": p.slug, "display_name": p.display_name}
+                    for p in projects.values()
+                ],
+                "workspaces": [
+                    {
+                        "id": w.id,
+                        "project_id": w.project_id,
+                        "branch": w.branch,
+                        "status": w.status.value,
+                    }
+                    for w in workspaces.values()
+                ],
+                "environments": [
+                    {"id": e.id, "project_id": e.project_id, "name": e.name}
+                    for e in environments.values()
+                ],
+                "total_containers": len(enriched),
+                "running_containers": running,
+                "total_cpu_pct": total_cpu,
+                "total_mem_bytes": total_mem,
+            }
+
+        broadcaster.set_payload_builder(_build_payload)
+        _BROADCASTER = broadcaster
+    return _BROADCASTER
 
 
 # ────────────────────────────────────────────────── response models ──
@@ -511,6 +574,52 @@ async def container_logs(
             detail={"code": "container.logs_failed", "reason": str(exc)},
         ) from exc
     return LogsResponse(container_id=container_id, text=text, truncated_to_tail=tail)
+
+
+@router.get("/stream")
+async def stream_containers(
+    request: Request,
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> EventSourceResponse:
+    """SSE feed of the containers payload. Push cadence ~2 s. The
+    backing broadcaster only samples while at least one client is
+    connected — close the connection (tab hidden, navigate away)
+    and the sampling loop self-cancels. Auto-reconnect happens
+    client-side via the browser's EventSource semantics."""
+    broadcaster = _get_broadcaster(container)
+
+    async def event_iter() -> AsyncIterator[dict]:
+        try:
+            async for frame in broadcaster.subscribe():
+                if await request.is_disconnected():
+                    break
+                # sse-starlette expects either str (plain `data:`) or
+                # a dict with `event` / `data` / `id`. We pre-encoded
+                # the SSE frame on the broadcaster side; strip the
+                # wrapping so sse-starlette doesn't double-encode.
+                yield _parse_sse_frame(frame)
+        except asyncio.CancelledError:
+            return
+
+    return EventSourceResponse(
+        event_iter(),
+        ping=15,  # keep-alive comment every 15s so proxies don't kill idle
+    )
+
+
+def _parse_sse_frame(frame: bytes) -> dict:
+    """Broadcaster encodes raw SSE bytes; sse-starlette wants its
+    own dict format. Cheap re-parse — payload is JSON either way."""
+    text = frame.decode("utf-8")
+    event = "message"
+    data = ""
+    for line in text.split("\n"):
+        if line.startswith("event: "):
+            event = line[len("event: ") :].strip()
+        elif line.startswith("data: "):
+            data = line[len("data: ") :]
+    return {"event": event, "data": data}
 
 
 @router.get("/host", response_model=HostInfoResponse)
