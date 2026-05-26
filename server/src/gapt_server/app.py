@@ -73,6 +73,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 .values(status=enums.WorkspaceStatus.FAILED)
             )
             await db.commit()
+    # Deploy runs whose task died with the previous server life
+    # are now orphans too — flip them to `aborted` so the UI doesn't
+    # show a forever-spinning bar.
+    if container.session_factory is not None:
+        from gapt_server.domains.deploy.registry import (  # noqa: PLC0415
+            mark_orphan_runs_aborted,
+        )
+
+        try:
+            flipped = await mark_orphan_runs_aborted(container.session_factory)
+            if flipped:
+                logger.info("deploy.orphan_runs_marked_aborted", count=flipped)
+        except Exception:
+            logger.exception("deploy.orphan_runs_mark_failed")
     # gapt-net reconciler — periodic sweep that keeps prod compose
     # stacks attached to the shared network. Compose `--no-deps`
     # restarts strip external nets; without this loop the user has
@@ -164,6 +178,7 @@ def create_app(
     app.include_router(sessions.by_id)
     app.include_router(audit.router)
     app.include_router(deploy.router)
+    app.include_router(deploy.runs_router)
     app.include_router(ci.router)
     app.include_router(preview.router)
     app.include_router(preview.ask_router)

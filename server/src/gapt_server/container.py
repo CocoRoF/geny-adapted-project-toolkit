@@ -31,6 +31,7 @@ from gapt_server.domains.audit.sink import (
     NullAuditSink,
     PostgresAuditSink,
 )
+from gapt_server.domains.deploy.registry import DeployRegistry
 from gapt_server.domains.notifications import (
     DiscordWebhookChannel,
     InMemoryChannel,
@@ -86,8 +87,10 @@ class AppContainer:
     notifications: NotificationService
     services: ServiceRegistry
     workspace_sandbox: WorkspaceSandboxManager
+    deploy_registry: "DeployRegistry"  # noqa: UP037 — forward ref for fwd decl
 
     async def aclose(self) -> None:
+        await self.deploy_registry.aclose()
         await self.session_registry.aclose()
         await self.services.aclose()
         await self.workspace_sandbox.aclose()
@@ -142,6 +145,7 @@ def build_container(
             notifications=notifications,
             services=ServiceRegistry(sandbox_manager=ws_sandbox_noop),
             workspace_sandbox=ws_sandbox_noop,
+            deploy_registry=DeployRegistry(session_factory=None),
         )
 
     engine = create_engine(_coerce_async_dsn(str(settings.postgres_dsn)))
@@ -171,6 +175,7 @@ def build_container(
         notifications=notifications,
         services=ServiceRegistry(sandbox_manager=ws_sandbox),
         workspace_sandbox=ws_sandbox,
+        deploy_registry=DeployRegistry(session_factory=factory),
     )
 
 
@@ -274,6 +279,12 @@ def get_workspace_sandbox_manager(
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> WorkspaceSandboxManager:
     return container.workspace_sandbox
+
+
+def get_deploy_registry(
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> DeployRegistry:
+    return container.deploy_registry
 
 
 def attach_container(app: FastAPI, container: AppContainer) -> None:

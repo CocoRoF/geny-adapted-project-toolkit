@@ -328,11 +328,30 @@ class LocalComposeTarget:
             if str(mode_str).lower() == "subdomain"
             else PreviewMode.PATH
         )
+        # In path mode, `strip_prefix=True` is the safe default —
+        # most prod images are NOT basePath-aware (the HTML they
+        # ship emits root-relative `/_next/static/...`, `/favicon.png`,
+        # etc.). With strip_prefix=True Caddy hands the upstream a
+        # clean `/...` URL and the SubdomainManager's Referer-fallback
+        # route catches root-relative asset requests. The previous
+        # default (False) silently broke any app that wasn't compiled
+        # with `NEXT_PUBLIC_BASE_PATH` baked in.
+        #
+        # Opt-out via `target_options.strip_prefix = false` for
+        # basePath-baked builds (Next.js with `basePath` set at
+        # build time, etc.) where the app expects to see the prefix.
+        # Subdomain mode never strips — the host *IS* the basePath.
+        strip_opt = request.target_options.get("strip_prefix")
+        strip_prefix = (
+            True if strip_opt is None else bool(strip_opt)
+        ) and mode == PreviewMode.PATH
+
         binding = SubdomainBinding(
             workspace_slug=slug,
             upstream_host=container_name,
             upstream_port=primary_port,
             mode=mode,
+            strip_prefix=strip_prefix,
         )
         host = await self.subdomain_manager.register(binding)
         return f"https://{host}"

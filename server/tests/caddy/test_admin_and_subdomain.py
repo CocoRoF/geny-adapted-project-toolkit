@@ -128,10 +128,15 @@ async def test_subdomain_manager_path_mode_strip_prefix_opt_in() -> None:
         )
     )
     posted = calls[2][2]
-    route = posted[0]
-    assert route["handle"][0]["handler"] == "rewrite"
-    assert route["handle"][0]["strip_path_prefix"] == "/preview/01kws"
-    assert route["handle"][1]["handler"] == "reverse_proxy"
+    # The path-match primary route carries the rewrite handler (the
+    # Referer-only `-asset` fallback no longer rewrites since
+    # strip_prefix=True means the upstream serves at root). Find it
+    # by @id rather than positional indexing — the splice puts the
+    # Referer-fallback ahead of the primary now.
+    primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    assert primary["handle"][0]["handler"] == "rewrite"
+    assert primary["handle"][0]["strip_path_prefix"] == "/preview/01kws"
+    assert primary["handle"][1]["handler"] == "reverse_proxy"
 
 
 @pytest.mark.asyncio
@@ -236,3 +241,68 @@ async def test_upsert_inserts_before_preview_safety_net_404() -> None:
     assert new_idx < safety_net_idx, (
         "dynamic /preview/<slug> route must run BEFORE the safety-net 404"
     )
+
+
+@pytest.mark.asyncio
+async def test_upsert_referer_fallback_lands_above_api_route() -> None:
+    """Prod apps emit root-relative URLs — `/api/v1/posts`, `/_next/
+    static/...`, etc. The Referer-keyed `-asset` fallback must
+    outrank the GAPT control-plane `/api/*` route, otherwise those
+    XHR calls 404 against the wrong upstream. The path-keyed
+    primary route can stay near the bottom (it only needs to beat
+    the safety net + IDE)."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {"match": [{"path": ["/health"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {
+            "match": [{"path": ["/preview", "/preview/*"]}],
+            "handle": [{"handler": "static_response", "status_code": 404}],
+        },
+        {"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "ide:35173"}]}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            strip_prefix=True,
+        )
+    )
+    posted = calls[2][2]
+    asset_idx = next(
+        i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws-asset"
+    )
+    api_idx = next(
+        i
+        for i, r in enumerate(posted)
+        if "/api/*" in (r.get("match") or [{}])[0].get("path", [])
+    )
+    assert asset_idx < api_idx, (
+        "Referer-fallback must run BEFORE /api/* so prod XHR to /api/v1/... "
+        "hits the deployed app, not the GAPT control plane"
+    )
+    # Referer-fallback should also outrank the safety-net 404 + IDE.
+    primary_idx = next(
+        i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws"
+    )
+    safety_idx = next(
+        i
+        for i, r in enumerate(posted)
+        if any(
+            isinstance(p, str) and p.startswith("/preview")
+            for p in (r.get("match") or [{}])[0].get("path", [])
+        )
+        and any(h.get("handler") == "static_response" for h in r.get("handle", []))
+    )
+    assert asset_idx < primary_idx < safety_idx

@@ -62,6 +62,20 @@ class SubdomainBinding:
     upstream_port: int  # listening port inside the container
     mode: PreviewMode = PreviewMode.PATH
     strip_prefix: bool = False
+    # ── upstream transport (the user's prod stack sometimes ships its
+    # own reverse-proxy that expects HTTPS + a specific Host) ──
+    upstream_scheme: str = "http"  # "http" | "https"
+    # When set, Caddy rewrites the outgoing `Host:` header to this
+    # value before forwarding. Useful when the upstream's nginx /
+    # traefik / etc. only recognises a particular `server_name` and
+    # we sit behind a different preview domain.
+    upstream_host_header: str | None = None
+    # When True, Caddy doesn't verify the upstream's TLS certificate.
+    # Required for HTTPS upstreams that present a self-signed or
+    # mismatched cert — the user's prod stack often falls in this
+    # bucket since its cert is for the public domain, not the
+    # internal docker DNS name.
+    upstream_tls_insecure: bool = False
 
 
 def _full_host(workspace_slug: str, preview_domain: str) -> str:
@@ -295,7 +309,25 @@ class SubdomainManager:
                                     names.add(ihname)
                 return names
 
-            insert_at = len(arr)
+            # Split payloads by routing strategy. Path-matched routes
+            # (the primary `/preview/<slug>/*` match) sit just before
+            # the safety-net / IDE catch-all — they only need to
+            # outrank those two. Referer-matched fallbacks need to
+            # outrank EVERY other path-keyed handler (`/api/*`,
+            # `/health`, `/preview/* 404`, IDE) because the prod app
+            # emits root-relative URLs like `/api/v1/posts`, `/_next/
+            # static/...`, `/favicon.png`, etc., and those would
+            # otherwise hit the GAPT control plane.
+            def _is_referer_only(p: dict[str, Any]) -> bool:
+                m = (p.get("match") or [{}])[0]
+                return "header_regexp" in m and not m.get("path")
+
+            referer_payloads = [p for p in payloads if _is_referer_only(p)]
+            path_payloads = [p for p in payloads if not _is_referer_only(p)]
+
+            # Anchor for the path-keyed routes: the safety-net 404 or
+            # the IDE catch-all, whichever comes first.
+            path_anchor = len(arr)
             for i, r in enumerate(arr):
                 handlers = _all_handlers(r)
                 paths = (r.get("match") or [{}])[0].get("path") or []
@@ -306,10 +338,25 @@ class SubdomainManager:
                     handlers & {"subroute", "reverse_proxy", "file_server"}
                 )
                 if is_preview_safety_net or is_ide_catchall:
-                    insert_at = i
+                    path_anchor = i
                     break
-            for offset, payload in enumerate(payloads):
-                arr.insert(insert_at + offset, payload)
+
+            for offset, payload in enumerate(path_payloads):
+                arr.insert(path_anchor + offset, payload)
+
+            # Anchor for the Referer-keyed fallback: directly after
+            # the leading `encode` header filter (which has no match
+            # and a non-routing handler). When the host doesn't ship
+            # an `encode` block at all, this drops to index 0 — also
+            # fine, just means the fallback is the first considered.
+            referer_anchor = 0
+            for i, r in enumerate(arr):
+                handlers = _all_handlers(r)
+                if not r.get("match") and "encode" in handlers:
+                    referer_anchor = i + 1
+                    break
+            for offset, payload in enumerate(referer_payloads):
+                arr.insert(referer_anchor + offset, payload)
             # DELETE then POST — see method docstring.
             try:
                 await self.client.delete(self.routes_path)

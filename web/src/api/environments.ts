@@ -1,4 +1,4 @@
-import { apiDelete, apiFetch, apiGet } from "@/api/client";
+import { apiDelete, apiFetch, apiGet, apiPost } from "@/api/client";
 
 export type DeployTargetKind = "local" | "remote_ssh" | "webhook" | "k8s";
 
@@ -142,6 +142,116 @@ export function streamDeploy(
   })();
   return ctrl;
 }
+
+// ──────────────────────────── Async / persistent deploy v2 ──
+//
+// `triggerDeployAsync()` returns immediately with the new run_id;
+// the backend keeps the orchestrator task alive across HTTP
+// connections. `getActiveRun()` lets a fresh tab discover whether
+// a deploy is already in flight (auto-resume on remount).
+
+export interface AsyncDeployAccepted {
+  run_id: string;
+  environment_id: string;
+  status: string;
+  started_at: string;
+}
+
+export interface ActiveRun {
+  run_id: string;
+  environment_id: string;
+  project_id: string;
+  version: string;
+  status: string; // pending | running | success | failed | aborted
+  started_at: string;
+  bound_url: string | null;
+  exec_code: string | null;
+  finished_at: string | null;
+}
+
+export const triggerDeployAsync = (envId: string, body: DeployRequestBody) =>
+  apiFetch<AsyncDeployAccepted>(`/api/environments/${envId}/deploy/async`, {
+    method: "POST",
+    json: body,
+  });
+
+export const getActiveDeploy = (envId: string) =>
+  apiGet<ActiveRun | null>(`/api/environments/${envId}/deploy/active`);
+
+export const getDeployRun = (runId: string) =>
+  apiGet<ActiveRun>(`/api/deploy/runs/${runId}`);
+
+export const cancelDeployRun = (runId: string) =>
+  apiPost<void>(`/api/deploy/runs/${runId}/cancel`);
+
+// ───────────────────── Persistent run detail (DB-backed) ──
+
+export interface EnvConfigSnapshot {
+  id: string;
+  name: string;
+  deploy_target_kind: string;
+  deploy_target_config: Record<string, unknown>;
+  require_2fa: boolean;
+  secret_refs: string[];
+  cost_multiplier: number;
+}
+
+export interface ProjectSnapshot {
+  id: string;
+  slug: string;
+  display_name: string;
+}
+
+export interface RunDetail {
+  run: DeployRunRow;
+  environment: EnvConfigSnapshot;
+  project: ProjectSnapshot;
+}
+
+export const getDeployRunDetail = (runId: string) =>
+  apiGet<RunDetail>(`/api/deploy/runs/${runId}/detail`);
+
+// ───────────────────── Stack lifecycle (post-deploy) ──
+
+export interface StackService {
+  container_id: string;
+  container_name: string;
+  service: string;
+  image: string;
+  status: string;
+  health: string | null;
+  started_at: string | null;
+  exit_code: number | null;
+}
+
+export interface StackStatus {
+  environment_id: string;
+  project: string;
+  services: StackService[];
+  running_count: number;
+  total_count: number;
+}
+
+export interface StackOpResult {
+  environment_id: string;
+  project: string;
+  action: string;
+  ok: boolean;
+  affected: number;
+  output: string;
+}
+
+export const getStackStatus = (envId: string) =>
+  apiGet<StackStatus>(`/api/environments/${envId}/stack`);
+
+export const stopStack = (envId: string) =>
+  apiPost<StackOpResult>(`/api/environments/${envId}/stack/down`);
+
+export const restartStack = (envId: string) =>
+  apiPost<StackOpResult>(`/api/environments/${envId}/stack/restart`);
+
+export const rerouteStack = (envId: string) =>
+  apiPost<StackOpResult>(`/api/environments/${envId}/stack/reroute`);
 
 export interface RollbackRequestBody {
   run_id: string;
