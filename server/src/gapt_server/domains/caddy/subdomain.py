@@ -273,16 +273,37 @@ class SubdomainManager:
             #      iframe). Without this branch the dynamic
             #      `/preview/<slug>` routes would be inserted AFTER
             #      the 404 and the 404 would always win.
+            # Caddyfile-authored blocks compile down to a `subroute`
+            # outer handler with the *real* handler nested one level
+            # in (e.g. `{handler: subroute, routes: [{handle: [{handler:
+            # static_response, ...}]}]}`). The detection here flattens
+            # outer + nested into a single set so the safety-net and
+            # IDE catch-all are recognised regardless of whether they
+            # were registered via the admin API or compiled from the
+            # Caddyfile.
+            def _all_handlers(route: dict[str, Any]) -> set[str]:
+                names: set[str] = set()
+                for h in route.get("handle", []) or []:
+                    name = h.get("handler")
+                    if name:
+                        names.add(name)
+                    if name == "subroute":
+                        for sub in h.get("routes", []) or []:
+                            for ih in sub.get("handle", []) or []:
+                                ihname = ih.get("handler")
+                                if ihname:
+                                    names.add(ihname)
+                return names
+
             insert_at = len(arr)
             for i, r in enumerate(arr):
-                handlers = [h.get("handler") for h in r.get("handle", [])]
+                handlers = _all_handlers(r)
                 paths = (r.get("match") or [{}])[0].get("path") or []
                 is_preview_safety_net = any(
                     isinstance(p, str) and p.startswith("/preview") for p in paths
                 ) and "static_response" in handlers
-                is_ide_catchall = (not r.get("match")) and any(
-                    h in {"subroute", "reverse_proxy", "file_server"}
-                    for h in handlers
+                is_ide_catchall = (not r.get("match")) and bool(
+                    handlers & {"subroute", "reverse_proxy", "file_server"}
                 )
                 if is_preview_safety_net or is_ide_catchall:
                     insert_at = i

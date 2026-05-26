@@ -100,6 +100,7 @@ def get_workspace_service(
         audit_sink=audit_sink,
         session_factory=session_factory,
         credentials_resolver=resolve_credentials,
+        workspace_sandbox=container.workspace_sandbox,
     )
 
 
@@ -397,6 +398,7 @@ _CONTAINER_WORKTREE = "/workspace"
 async def _workspace_for_fs(
     db: AsyncSession,
     *,
+    container: AppContainer,
     user: AdminPrincipal,
     workspace_id: str,
 ) -> tuple[models.Workspace, SandboxRef]:
@@ -412,7 +414,7 @@ async def _workspace_for_fs(
         await fetch_project_for(db, actor=user, project_id=row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    if row.sandbox_id is None or row.status != enums.WorkspaceStatus.RUNNING:
+    if row.status != enums.WorkspaceStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -421,17 +423,31 @@ async def _workspace_for_fs(
             },
         )
     # File ops run inside the long-lived **workspace** container
-    # (`gapt-ws-<wid>`) — that's the one with the cloned repo, npm,
-    # git, etc. The `sandboxes` row's `container_id` points at a
-    # *different*, shorter-lived agent-runtime container (`gapt-<id>`)
-    # that exits right after boot, so executing against it always
-    # fails. The docker SDK accepts a container *name* anywhere an
-    # id is accepted, so we resolve the workspace-container name and
-    # hand it to the backend.
-    container_name = f"gapt-ws-{workspace_id.lower()}"
+    # (`gapt-ws-<wid>`) — the one with the cloned repo, npm, git, etc.
+    # The `sandboxes` row's `container_id` points at the agent-runtime
+    # sandbox which is short-lived; we deliberately ignore it here.
+    #
+    # We `ensure()` the workspace container before every fs op so:
+    #   * First navigation to the IDE (right after workspace create)
+    #     doesn't 404 because no one's booted the container yet.
+    #   * Server restarts that didn't run the recovery sweep don't
+    #     leave the user staring at an empty file tree.
+    # `ensure()` is idempotent — when the container's already up it
+    # short-circuits on a single `docker inspect`.
+    ws_sandbox = container.workspace_sandbox.get(workspace_id, row.worktree_path)
+    try:
+        await ws_sandbox.ensure()
+    except Exception as exc:  # noqa: BLE001 — surface as 409 to the UI
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "workspace.fs.sandbox_boot_failed",
+                "reason": f"could not start workspace container: {exc}",
+            },
+        ) from exc
     ref = SandboxRef(
-        id=row.sandbox_id,
-        container_id=container_name,
+        id=row.sandbox_id or workspace_id,
+        container_id=ws_sandbox.container_name,
         backend="sysbox",
     )
     return row, ref
@@ -443,9 +459,12 @@ async def tree(
     path: str = "/",
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[TreeEntryResponse]:
-    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    _, ref = await _workspace_for_fs(
+        db, container=container, user=user, workspace_id=workspace_id
+    )
     try:
         entries = await fs.list_tree(
             sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path
@@ -461,9 +480,12 @@ async def read_workspace_file(
     path: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> FileContentResponse:
-    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    _, ref = await _workspace_for_fs(
+        db, container=container, user=user, workspace_id=workspace_id
+    )
     try:
         content = await fs.read_file(sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path)
     except fs.WorkspaceFileError as exc:
@@ -478,9 +500,12 @@ async def write_workspace_file(
     payload: WriteFileRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> FileContentResponse:
-    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    _, ref = await _workspace_for_fs(
+        db, container=container, user=user, workspace_id=workspace_id
+    )
     try:
         await fs.write_file(
             sandbox,
@@ -504,9 +529,12 @@ async def delete_workspace_path(
     path: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> None:
-    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    _, ref = await _workspace_for_fs(
+        db, container=container, user=user, workspace_id=workspace_id
+    )
     try:
         await fs.delete_path(sandbox, ref, worktree_path=_CONTAINER_WORKTREE, path=path)
     except fs.WorkspaceFileError as exc:
@@ -534,14 +562,17 @@ async def workspace_diff(
     workspace_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     sandbox: SandboxBackend = Depends(get_sandbox_backend),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> DiffResponse:
     """Working-tree-vs-HEAD diff for the workspace. Empty payload when
     the worktree is not a git repo (or HEAD has not been set yet)."""
-    workspace, ref = await _workspace_for_fs(db, user=user, workspace_id=workspace_id)
+    _, ref = await _workspace_for_fs(
+        db, container=container, user=user, workspace_id=workspace_id
+    )
     try:
         result = await diff_svc.working_tree_diff(
-            sandbox, ref, worktree_path=workspace.worktree_path
+            sandbox, ref, worktree_path=_CONTAINER_WORKTREE
         )
     except diff_svc.WorkspaceDiffError as exc:
         raise HTTPException(

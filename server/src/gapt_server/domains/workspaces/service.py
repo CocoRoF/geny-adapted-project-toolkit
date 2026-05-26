@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from gapt_server.domains.auth import AdminPrincipal
+    from gapt_server.domains.workspace_sandbox import WorkspaceSandboxManager
 
 
 CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
@@ -338,6 +339,7 @@ class WorkspaceService:
         clone_runner: CloneRunner | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         credentials_resolver: CredentialResolver | None = None,
+        workspace_sandbox: WorkspaceSandboxManager | None = None,
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
@@ -355,6 +357,12 @@ class WorkspaceService:
         self._credentials_resolver = credentials_resolver
         # Track in-flight clone tasks so tests + shutdown can join them.
         self._clone_tasks: set[asyncio.Task[None]] = set()
+        # Optional. When provided, the background clone path also boots
+        # the `gapt-ws-<wid>` container right after a successful clone
+        # so the user's first hit to the IDE never sees a "container
+        # not found" race. Without it, ensure() runs lazily on the
+        # first fs/terminal request — still works, just adds latency.
+        self._workspace_sandbox = workspace_sandbox
 
     # ────────────────────────────────────────────────────── create ──
 
@@ -572,6 +580,31 @@ class WorkspaceService:
             outcome=outcome,
             status=new_status.value,
         )
+        # Proactively boot the workspace container so the user's first
+        # navigation to the IDE doesn't race with a cold-start
+        # `docker run`. `ensure()` is idempotent — if it's already up
+        # this is just a single `docker inspect`. Best-effort: a
+        # failure here doesn't roll the workspace status back (the
+        # ensure path runs again on the first fs request as a safety
+        # net), it just logs.
+        if (
+            new_status is enums.WorkspaceStatus.RUNNING
+            and self._workspace_sandbox is not None
+        ):
+            try:
+                ws_sandbox = self._workspace_sandbox.get(workspace_id, worktree)
+                await ws_sandbox.ensure()
+                logger.info(
+                    "workspace.sandbox.preboot.ok",
+                    workspace_id=workspace_id,
+                    container=ws_sandbox.container_name,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort, retried lazily
+                logger.warning(
+                    "workspace.sandbox.preboot.failed",
+                    workspace_id=workspace_id,
+                    error=str(exc),
+                )
 
     async def aclose(self) -> None:
         """Wait for in-flight clone tasks to finish — used by the
