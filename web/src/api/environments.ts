@@ -28,22 +28,22 @@ export interface EnvironmentResponse extends EnvironmentPayload {
 }
 
 export const listEnvironments = (projectId: string) =>
-  apiGet<EnvironmentResponse[]>(`/api/projects/${projectId}/environments`);
+  apiGet<EnvironmentResponse[]>(`/_gapt/api/projects/${projectId}/environments`);
 
 export const createEnvironment = (projectId: string, payload: EnvironmentPayload) =>
-  apiFetch<EnvironmentResponse>(`/api/projects/${projectId}/environments`, {
+  apiFetch<EnvironmentResponse>(`/_gapt/api/projects/${projectId}/environments`, {
     method: "POST",
     json: payload,
   });
 
 export const updateEnvironment = (envId: string, payload: EnvironmentPayload) =>
-  apiFetch<EnvironmentResponse>(`/api/environments/${envId}`, {
+  apiFetch<EnvironmentResponse>(`/_gapt/api/environments/${envId}`, {
     method: "PUT",
     json: payload,
   });
 
 export const deleteEnvironment = (envId: string) =>
-  apiDelete<void>(`/api/environments/${envId}`);
+  apiDelete<void>(`/_gapt/api/environments/${envId}`);
 
 // ─────────────────────────── Deploy + rollback triggers ──
 
@@ -62,7 +62,7 @@ export interface DeployResultResponse {
 }
 
 export const triggerDeploy = (envId: string, body: DeployRequestBody) =>
-  apiFetch<DeployResultResponse>(`/api/environments/${envId}/deploy`, {
+  apiFetch<DeployResultResponse>(`/_gapt/api/environments/${envId}/deploy`, {
     method: "POST",
     json: body,
   });
@@ -85,7 +85,7 @@ export function streamDeploy(
   const ctrl = new AbortController();
   (async () => {
     try {
-      const resp = await fetch(`/api/environments/${envId}/deploy/stream`, {
+      const resp = await fetch(`/_gapt/api/environments/${envId}/deploy/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify(body),
@@ -170,19 +170,19 @@ export interface ActiveRun {
 }
 
 export const triggerDeployAsync = (envId: string, body: DeployRequestBody) =>
-  apiFetch<AsyncDeployAccepted>(`/api/environments/${envId}/deploy/async`, {
+  apiFetch<AsyncDeployAccepted>(`/_gapt/api/environments/${envId}/deploy/async`, {
     method: "POST",
     json: body,
   });
 
 export const getActiveDeploy = (envId: string) =>
-  apiGet<ActiveRun | null>(`/api/environments/${envId}/deploy/active`);
+  apiGet<ActiveRun | null>(`/_gapt/api/environments/${envId}/deploy/active`);
 
 export const getDeployRun = (runId: string) =>
-  apiGet<ActiveRun>(`/api/deploy/runs/${runId}`);
+  apiGet<ActiveRun>(`/_gapt/api/deploy/runs/${runId}`);
 
 export const cancelDeployRun = (runId: string) =>
-  apiPost<void>(`/api/deploy/runs/${runId}/cancel`);
+  apiPost<void>(`/_gapt/api/deploy/runs/${runId}/cancel`);
 
 // ───────────────────── Persistent run detail (DB-backed) ──
 
@@ -209,7 +209,7 @@ export interface RunDetail {
 }
 
 export const getDeployRunDetail = (runId: string) =>
-  apiGet<RunDetail>(`/api/deploy/runs/${runId}/detail`);
+  apiGet<RunDetail>(`/_gapt/api/deploy/runs/${runId}/detail`);
 
 // ───────────────────── Stack lifecycle (post-deploy) ──
 
@@ -242,13 +242,13 @@ export interface StackOpResult {
 }
 
 export const getStackStatus = (envId: string) =>
-  apiGet<StackStatus>(`/api/environments/${envId}/stack`);
+  apiGet<StackStatus>(`/_gapt/api/environments/${envId}/stack`);
 
 export const stopStack = (envId: string) =>
-  apiPost<StackOpResult>(`/api/environments/${envId}/stack/down`);
+  apiPost<StackOpResult>(`/_gapt/api/environments/${envId}/stack/down`);
 
 export const restartStack = (envId: string) =>
-  apiPost<StackOpResult>(`/api/environments/${envId}/stack/restart`);
+  apiPost<StackOpResult>(`/_gapt/api/environments/${envId}/stack/restart`);
 
 export interface StackRerouteBody {
   primary_service?: string | null;
@@ -261,7 +261,7 @@ export interface StackRerouteBody {
 }
 
 export const rerouteStack = (envId: string, body?: StackRerouteBody) =>
-  apiFetch<StackOpResult>(`/api/environments/${envId}/stack/reroute`, {
+  apiFetch<StackOpResult>(`/_gapt/api/environments/${envId}/stack/reroute`, {
     method: "POST",
     json: body ?? {},
   });
@@ -282,7 +282,7 @@ export interface RollbackResultResponse {
 }
 
 export const triggerRollback = (envId: string, body: RollbackRequestBody) =>
-  apiFetch<RollbackResultResponse>(`/api/environments/${envId}/rollback`, {
+  apiFetch<RollbackResultResponse>(`/_gapt/api/environments/${envId}/rollback`, {
     method: "POST",
     json: body,
   });
@@ -304,4 +304,4 @@ export interface DeployRunRow {
 }
 
 export const listDeployRuns = (envId: string, limit = 20) =>
-  apiGet<DeployRunRow[]>(`/api/environments/${envId}/runs?limit=${limit}`);
+  apiGet<DeployRunRow[]>(`/_gapt/api/environments/${envId}/runs?limit=${limit}`);

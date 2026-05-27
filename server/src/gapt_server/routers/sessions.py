@@ -2,14 +2,14 @@
 
 Routes:
 
-- ``POST /api/projects/{pid}/sessions``           — create + bind pipeline
-- ``GET  /api/projects/{pid}/sessions``           — list active for project
-- ``GET  /api/sessions/{sid}``                    — fetch one
-- ``POST /api/sessions/{sid}/invoke``             — kick off a user turn
-- ``GET  /api/sessions/{sid}/stream``             — SSE event stream
-- ``POST /api/sessions/{sid}/interrupt``          — cancel running invoke
-- ``GET  /api/sessions/{sid}/messages?since=N``   — replay buffer
-- ``POST /api/sessions/{sid}/archive``            — archive + tear down
+- ``POST /_gapt/api/projects/{pid}/sessions``           — create + bind pipeline
+- ``GET  /_gapt/api/projects/{pid}/sessions``           — list active for project
+- ``GET  /_gapt/api/sessions/{sid}``                    — fetch one
+- ``POST /_gapt/api/sessions/{sid}/invoke``             — kick off a user turn
+- ``GET  /_gapt/api/sessions/{sid}/stream``             — SSE event stream
+- ``POST /_gapt/api/sessions/{sid}/interrupt``          — cancel running invoke
+- ``GET  /_gapt/api/sessions/{sid}/messages?since=N``   — replay buffer
+- ``POST /_gapt/api/sessions/{sid}/archive``            — archive + tear down
 
 Stream contract documented in `agent/streaming.py`. Cost roll-up is
 handled by the HookRunner attached at session create time — the bus
@@ -77,8 +77,8 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-by_project = APIRouter(prefix="/api/projects", tags=["sessions"])
-by_id = APIRouter(prefix="/api/sessions", tags=["sessions"])
+by_project = APIRouter(prefix="/_gapt/api/projects", tags=["sessions"])
+by_id = APIRouter(prefix="/_gapt/api/sessions", tags=["sessions"])
 
 
 # ────────────────────────────────────────────────────────── DTOs ──

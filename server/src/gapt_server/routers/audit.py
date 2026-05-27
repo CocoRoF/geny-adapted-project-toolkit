@@ -1,6 +1,6 @@
 """Audit log query endpoint.
 
-`GET /api/projects/{pid}/audit` returns the project's audit rows
+`GET /_gapt/api/projects/{pid}/audit` returns the project's audit rows
 sorted by ts descending. Filters: `action` prefix, `outcome`,
 `since` / `until` ISO-8601 timestamps. The membership check piggybacks
 on `fetch_project_for` — same gate as workspaces and sessions.
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-router = APIRouter(prefix="/api/projects", tags=["audit"])
+router = APIRouter(prefix="/_gapt/api/projects", tags=["audit"])
 
 
 class AuditEntry(BaseModel):

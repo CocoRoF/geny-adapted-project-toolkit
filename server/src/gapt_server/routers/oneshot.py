@@ -1,6 +1,6 @@
 """Headless one-shot session endpoint — M5 cron / webhook interface seed.
 
-Single endpoint: `POST /api/sessions/oneshot` that
+Single endpoint: `POST /_gapt/api/sessions/oneshot` that
 
   1. Creates an agent session against an existing workspace
   2. Sends one user message
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+router = APIRouter(prefix="/_gapt/api/sessions", tags=["sessions"])
 
 
 _MAX_TIMEOUT_S = 600

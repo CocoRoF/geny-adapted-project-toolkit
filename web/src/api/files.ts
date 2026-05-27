@@ -23,20 +23,20 @@ export interface WriteFileInput {
 const enc = encodeURIComponent;
 
 export const listTree = (workspaceId: string, path = "/"): Promise<TreeEntry[]> =>
-  apiGet<TreeEntry[]>(`/api/workspaces/${workspaceId}/tree?path=${enc(path)}`);
+  apiGet<TreeEntry[]>(`/_gapt/api/workspaces/${workspaceId}/tree?path=${enc(path)}`);
 
 export const readFile = (workspaceId: string, path: string): Promise<FileContent> =>
-  apiGet<FileContent>(`/api/workspaces/${workspaceId}/file?path=${enc(path)}`);
+  apiGet<FileContent>(`/_gapt/api/workspaces/${workspaceId}/file?path=${enc(path)}`);
 
 export const writeFile = (
   workspaceId: string,
   path: string,
   input: WriteFileInput,
 ): Promise<FileContent> =>
-  apiFetch<FileContent>(`/api/workspaces/${workspaceId}/file?path=${enc(path)}`, {
+  apiFetch<FileContent>(`/_gapt/api/workspaces/${workspaceId}/file?path=${enc(path)}`, {
     method: "PUT",
     json: input,
   });
 
 export const deleteFile = (workspaceId: string, path: string): Promise<void> =>
-  apiDelete<void>(`/api/workspaces/${workspaceId}/file?path=${enc(path)}`);
+  apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}/file?path=${enc(path)}`);

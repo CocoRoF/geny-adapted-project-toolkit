@@ -8,9 +8,16 @@ import { I18nProvider } from "@/app/providers/I18nProvider";
 import { PaletteProvider } from "@/app/providers/PaletteProvider";
 import { ThemeProvider } from "@/app/providers/ThemeProvider";
 
+// SPA basename — mirrors Vite's `base: "/_gapt/app/"`. Every
+// react-router path (`/projects`, `/login`, `/projects/:pid`...) is
+// implicitly prefixed with `/_gapt/app` at the URL level, so the
+// catch-all 404 in Caddy outside `/_gapt/*` is what actually fires
+// for leaked preview URLs — by design.
+const ROUTER_BASENAME = "/_gapt/app";
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={ROUTER_BASENAME}>
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>

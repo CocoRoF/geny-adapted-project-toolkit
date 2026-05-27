@@ -115,33 +115,33 @@ export interface LogsResponse {
 }
 
 export const listContainers = () =>
-  apiGet<ContainersResponse>("/api/performance/containers");
+  apiGet<ContainersResponse>("/_gapt/api/performance/containers");
 
 export const getContainer = (id: string) =>
-  apiGet<ContainerSample>(`/api/performance/containers/${id}`);
+  apiGet<ContainerSample>(`/_gapt/api/performance/containers/${id}`);
 
-export const getHostInfo = () => apiGet<HostInfo>("/api/performance/host");
+export const getHostInfo = () => apiGet<HostInfo>("/_gapt/api/performance/host");
 
-export const getGpuInfo = () => apiGet<GpusResponse>("/api/performance/gpu");
+export const getGpuInfo = () => apiGet<GpusResponse>("/_gapt/api/performance/gpu");
 
 export const stopContainer = (id: string) =>
   apiPost<{ container_id: string; action: string; ok: boolean }>(
-    `/api/performance/containers/${id}/stop`,
+    `/_gapt/api/performance/containers/${id}/stop`,
   );
 
 export const killContainer = (id: string) =>
   apiPost<{ container_id: string; action: string; ok: boolean }>(
-    `/api/performance/containers/${id}/kill`,
+    `/_gapt/api/performance/containers/${id}/kill`,
   );
 
 export const restartContainer = (id: string) =>
   apiPost<{ container_id: string; action: string; ok: boolean }>(
-    `/api/performance/containers/${id}/restart`,
+    `/_gapt/api/performance/containers/${id}/restart`,
   );
 
 export const fetchContainerLogs = (id: string, tail = 500) =>
   apiFetch<LogsResponse>(
-    `/api/performance/containers/${id}/logs?tail=${tail}`,
+    `/_gapt/api/performance/containers/${id}/logs?tail=${tail}`,
     { method: "GET" },
   );
 
@@ -178,9 +178,9 @@ export interface CleanupReport {
 }
 
 export const previewOrphanCleanup = () =>
-  apiGet<OrphanPlan>("/api/performance/orphans");
+  apiGet<OrphanPlan>("/_gapt/api/performance/orphans");
 
 export const cleanupOrphans = (remove_worktrees: boolean) =>
-  apiPost<CleanupReport>("/api/performance/cleanup/orphans", {
+  apiPost<CleanupReport>("/_gapt/api/performance/cleanup/orphans", {
     remove_worktrees,
   });

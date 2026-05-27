@@ -73,7 +73,7 @@ async def fx() -> AsyncIterator[_Fx]:
 
 async def _create_project(client: AsyncClient) -> str:
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -133,7 +133,7 @@ async def test_summary_rolls_up_per_project(fx: _Fx) -> None:
             cost=0.25, in_tokens=60, out_tokens=20,
         )
 
-        resp = await client.get("/api/cost/summary")
+        resp = await client.get("/_gapt/api/cost/summary")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["total_cost_usd"] == 0.75
@@ -160,7 +160,7 @@ async def test_summary_respects_since_until_window(fx: _Fx) -> None:
         )
 
         since = (now - timedelta(days=7)).isoformat().replace("+", "%2B")
-        resp = await client.get(f"/api/cost/summary?since={since}")
+        resp = await client.get(f"/_gapt/api/cost/summary?since={since}")
         assert resp.status_code == 200
         body = resp.json()
         # Only the recent session inside the window counts.
@@ -187,7 +187,7 @@ async def test_daily_buckets_per_project(fx: _Fx) -> None:
             cost=0.05, in_tokens=4, out_tokens=2, when=d2,
         )
 
-        resp = await client.get(f"/api/projects/{project_id}/cost/daily")
+        resp = await client.get(f"/_gapt/api/projects/{project_id}/cost/daily")
         assert resp.status_code == 200
         body = resp.json()
         assert len(body) == 2

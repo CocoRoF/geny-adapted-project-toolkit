@@ -1,6 +1,6 @@
 """Workspace file-system access — minimal tree / read / write / delete.
 
-Exposed via `/api/workspaces/{wid}/{tree,files}` so the web IDE
+Exposed via `/_gapt/api/workspaces/{wid}/{tree,files}` so the web IDE
 (`FileTree`, `Editor`) can navigate the workspace contents. Backed by
 `SandboxBackend.exec_in` so the operation runs *inside* the sandbox —
 the host filesystem is never touched.

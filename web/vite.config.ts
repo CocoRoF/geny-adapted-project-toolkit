@@ -5,6 +5,11 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  // SPA lives under /_gapt/app/ — Caddy fans /_gapt/app/* here and
+  // 302s the apex root to /_gapt/app/. Reserving a single prefix
+  // for GAPT lets preview apps emit any root-relative URL without
+  // colliding with GAPT itself.
+  base: "/_gapt/app/",
   plugins: [
     react(),
     tailwindcss(),
@@ -18,11 +23,11 @@ export default defineConfig({
         theme_color: "#0b0d10",
         background_color: "#0b0d10",
         display: "standalone",
-        start_url: "/projects",
-        scope: "/",
+        start_url: "/_gapt/app/projects",
+        scope: "/_gapt/app/",
         icons: [
           {
-            src: "/vite.svg",
+            src: "vite.svg",
             sizes: "192x192",
             type: "image/svg+xml",
             purpose: "any maskable",
@@ -34,8 +39,8 @@ export default defineConfig({
         // shell assets so the IDE chrome loads offline-fast, but the
         // API responses always go through the network. Offline shell
         // is a stretch goal; cache freshness is non-negotiable.
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallback: "/_gapt/app/index.html",
+        navigateFallbackDenylist: [/^\/_gapt\/api\//, /^\/preview\//],
         runtimeCaching: [],
       },
     }),
@@ -53,7 +58,11 @@ export default defineConfig({
     // only used during local development without Caddy in front.
     port: 35173,
     proxy: {
-      "/api": {
+      // Pure-vite local dev (without Caddy in front): proxy
+      // /_gapt/api → backend on 38001. Caddy already does this in
+      // the normal dev path; the proxy is for the rare case of
+      // hitting http://localhost:35173/_gapt/app/ directly.
+      "/_gapt/api": {
         target: "http://localhost:38001",
         changeOrigin: false,
         ws: true,

@@ -99,15 +99,15 @@ describe("<ProjectDetail />", () => {
   it("renders project header and workspace list", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
         handler: () => jsonResponse(200, PROJECT),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1/workspaces",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
         handler: () => jsonResponse(200, [WORKSPACE]),
       },
     ]);
@@ -125,20 +125,20 @@ describe("<ProjectDetail />", () => {
   it("stops a running workspace via the action button", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
         handler: () => jsonResponse(200, PROJECT),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1/workspaces",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
         handler: () => jsonResponse(200, [WORKSPACE]),
       },
       {
         match: (input, init) =>
-          pathOf(input) === "/api/workspaces/w1/stop" && init?.method === "POST",
+          pathOf(input) === "/_gapt/api/workspaces/w1/stop" && init?.method === "POST",
         handler: () => jsonResponse(200, { ...WORKSPACE, status: "stopped" }),
       },
     ]);
@@ -159,15 +159,15 @@ describe("<ProjectDetail />", () => {
   it("shows an empty-state when no workspaces exist", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
         handler: () => jsonResponse(200, PROJECT),
       },
       {
-        match: (input) => pathOf(input) === "/api/projects/p1/workspaces",
+        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
         handler: () => jsonResponse(200, []),
       },
     ]);

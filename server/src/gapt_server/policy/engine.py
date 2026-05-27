@@ -189,7 +189,7 @@ class PolicyEngine:
 
     def effective_table(self) -> list[dict[str, str]]:
         """Snapshot of every known action plus its current decision +
-        source. Used by `GET /api/policies` so the operator can see
+        source. Used by `GET /_gapt/api/policies` so the operator can see
         what the merged policy actually does.
 
         The "source" string is `builtin` for L1 defaults and

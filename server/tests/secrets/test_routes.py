@@ -1,4 +1,4 @@
-"""HTTP-level tests for /api/secrets — auth + plaintext never leaks."""
+"""HTTP-level tests for /_gapt/api/secrets — auth + plaintext never leaks."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ async def routes_fx(tmp_path: Path) -> AsyncIterator[_RoutesFixture]:
 
 @pytest.mark.asyncio
 async def test_secrets_require_auth() -> None:
-    """A separate auth_enabled=True app makes sure /api/secrets is gated."""
+    """A separate auth_enabled=True app makes sure /_gapt/api/secrets is gated."""
     sync_dsn = _require_dsn()
     _reset_and_upgrade(sync_dsn)
     settings = Settings(postgres_dsn=sync_dsn)
@@ -91,7 +91,7 @@ async def test_secrets_require_auth() -> None:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            unauth = await client.get("/api/secrets")
+            unauth = await client.get("/_gapt/api/secrets")
             assert unauth.status_code == 401
     finally:
         await container.aclose()
@@ -103,7 +103,7 @@ async def test_full_secret_lifecycle_via_http(routes_fx: _RoutesFixture) -> None
         transport=ASGITransport(app=routes_fx.app), base_url="http://test"
     ) as client:
         created = await client.post(
-            "/api/secrets",
+            "/_gapt/api/secrets",
             json={
                 "scope": "system",
                 "owner_id": routes_fx.admin_id,
@@ -118,28 +118,28 @@ async def test_full_secret_lifecycle_via_http(routes_fx: _RoutesFixture) -> None
         assert "value" not in view
         assert view["key_name"] == "anthropic"
 
-        listing = await client.get("/api/secrets")
+        listing = await client.get("/_gapt/api/secrets")
         assert listing.status_code == 200
         items = listing.json()
         assert len(items) == 1
         # Plaintext does not appear anywhere in the listing payload.
         assert "sk-LIVE-DO-NOT-LEAK" not in listing.text
 
-        single = await client.get(f"/api/secrets/{secret_id}")
+        single = await client.get(f"/_gapt/api/secrets/{secret_id}")
         assert single.status_code == 200
         assert "value" not in single.json()
         assert "sk-LIVE-DO-NOT-LEAK" not in single.text
 
         rotated = await client.post(
-            f"/api/secrets/{secret_id}/rotate", json={"value": "sk-LIVE-v2"}
+            f"/_gapt/api/secrets/{secret_id}/rotate", json={"value": "sk-LIVE-v2"}
         )
         assert rotated.status_code == 200
         assert rotated.json()["rotated_at"] is not None
 
-        deleted = await client.delete(f"/api/secrets/{secret_id}")
+        deleted = await client.delete(f"/_gapt/api/secrets/{secret_id}")
         assert deleted.status_code == 204
 
-        missing = await client.get(f"/api/secrets/{secret_id}")
+        missing = await client.get(f"/_gapt/api/secrets/{secret_id}")
         assert missing.status_code == 404
 
 
@@ -154,10 +154,10 @@ async def test_duplicate_secret_returns_409(routes_fx: _RoutesFixture) -> None:
             "key_name": "dup",
             "value": "v1",
         }
-        first = await client.post("/api/secrets", json=payload)
+        first = await client.post("/_gapt/api/secrets", json=payload)
         assert first.status_code == 201
 
         payload["value"] = "v2"
-        second = await client.post("/api/secrets", json=payload)
+        second = await client.post("/_gapt/api/secrets", json=payload)
         assert second.status_code == 409
         assert second.json()["detail"]["code"] == "secret.duplicate"

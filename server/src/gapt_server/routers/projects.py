@@ -1,12 +1,12 @@
 """Project + Environment routes.
 
-- `POST   /api/projects`                              — create
-- `GET    /api/projects`                              — list
-- `GET    /api/projects/{pid}`                        — fetch
-- `PATCH  /api/projects/{pid}`                        — update
-- `DELETE /api/projects/{pid}`                        — archive
-- `POST   /api/projects/{pid}/environments`           — create env
-- `GET    /api/projects/{pid}/environments`           — list envs
+- `POST   /_gapt/api/projects`                              — create
+- `GET    /_gapt/api/projects`                              — list
+- `GET    /_gapt/api/projects/{pid}`                        — fetch
+- `PATCH  /_gapt/api/projects/{pid}`                        — update
+- `DELETE /_gapt/api/projects/{pid}`                        — archive
+- `POST   /_gapt/api/projects/{pid}/environments`           — create env
+- `GET    /_gapt/api/projects/{pid}/environments`           — list envs
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def get_project_service(
     return ProjectService(audit_sink=audit_sink)
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+router = APIRouter(prefix="/_gapt/api/projects", tags=["projects"])
 
 
 # ────────────────────────────────────────────────────── DTOs ──

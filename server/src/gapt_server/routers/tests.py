@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from gapt_server.container import AppContainer
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["tests"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["tests"])
 
 
 class TestRunRequest(BaseModel):

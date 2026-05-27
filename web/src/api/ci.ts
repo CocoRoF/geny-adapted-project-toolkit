@@ -26,7 +26,7 @@ export function listCiRuns(
   if (options.branch) params.set("branch", options.branch);
   if (options.limit) params.set("limit", String(options.limit));
   const qs = params.toString();
-  return apiGet<CiRun[]>(`/api/projects/${projectId}/ci/runs${qs ? `?${qs}` : ""}`);
+  return apiGet<CiRun[]>(`/_gapt/api/projects/${projectId}/ci/runs${qs ? `?${qs}` : ""}`);
 }
 
 export interface CiLogResponse {
@@ -36,7 +36,7 @@ export interface CiLogResponse {
 }
 
 export function fetchCiRunLogs(projectId: string, runId: number): Promise<CiLogResponse> {
-  return apiGet<CiLogResponse>(`/api/projects/${projectId}/ci/runs/${runId}/logs`);
+  return apiGet<CiLogResponse>(`/_gapt/api/projects/${projectId}/ci/runs/${runId}/logs`);
 }
 
 export interface RerunResponse {
@@ -50,5 +50,5 @@ export function rerunCiRun(
   options: { failed_only?: boolean } = {},
 ): Promise<RerunResponse> {
   const qs = options.failed_only ? "?failed_only=true" : "";
-  return apiPost<RerunResponse>(`/api/projects/${projectId}/ci/runs/${runId}/rerun${qs}`);
+  return apiPost<RerunResponse>(`/_gapt/api/projects/${projectId}/ci/runs/${runId}/rerun${qs}`);
 }

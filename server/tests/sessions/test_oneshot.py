@@ -1,4 +1,4 @@
-"""HTTP-level tests for POST /api/sessions/oneshot."""
+"""HTTP-level tests for POST /_gapt/api/sessions/oneshot."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
 async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]:
     """Creates project + workspace. Returns (project_id, workspace_id)."""
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -128,7 +128,7 @@ async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]
     project_id = created.json()["id"]
 
     wks = await client.post(
-        f"/api/projects/{project_id}/workspaces",
+        f"/_gapt/api/projects/{project_id}/workspaces",
         json={"branch": "main"},
     )
     assert wks.status_code == 201, wks.text
@@ -148,7 +148,7 @@ async def test_oneshot_aggregates_text_chunks(fx: _Fx) -> None:
         _, workspace_id = await _create_project_with_workspace(client)
 
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "ping"},
         )
         assert resp.status_code == 200, resp.text
@@ -174,7 +174,7 @@ async def test_oneshot_captures_tool_calls(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "edit a.py"},
         )
         body = resp.json()
@@ -199,7 +199,7 @@ async def test_oneshot_surfaces_pipeline_error(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "x"},
         )
         body = resp.json()
@@ -214,7 +214,7 @@ async def test_oneshot_archives_session_on_completion(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "hi"},
         )
         session_id = resp.json()["session_id"]
@@ -234,7 +234,7 @@ async def test_oneshot_workspace_not_found(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": "01KS90000000000000000XXXXX", "message": "hi"},
         )
         assert resp.status_code == 404
@@ -257,7 +257,7 @@ async def test_oneshot_requires_auth() -> None:
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
-                "/api/sessions/oneshot",
+                "/_gapt/api/sessions/oneshot",
                 json={"workspace_id": "01KS90000000000000000XXXXX", "message": "hi"},
             )
             assert resp.status_code == 401
@@ -291,7 +291,7 @@ async def test_oneshot_timeout_returns_status_timeout(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, workspace_id = await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/oneshot",
+            "/_gapt/api/sessions/oneshot",
             json={"workspace_id": workspace_id, "message": "hi", "timeout_s": 1},
         )
         body = resp.json()

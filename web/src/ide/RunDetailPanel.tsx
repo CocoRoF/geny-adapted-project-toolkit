@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  HelpCircle,
   Loader2,
   Route,
   RotateCcw,
@@ -25,6 +26,7 @@ import {
   stopStack,
 } from "@/api/environments";
 import { useI18n } from "@/app/providers/i18n-context";
+import { StackRerouteHelpModal } from "@/ide/StackRerouteHelpModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { cn } from "@/ui/cn";
@@ -43,7 +45,7 @@ const STATUS_TONE: Record<string, "neutral" | "success" | "warn" | "danger" | "a
 };
 
 /** Right-pane view for a *past* deploy run. Loads from the DB-
- * backed `/api/deploy/runs/{id}/detail` endpoint (the in-memory
+ * backed `/_gapt/api/deploy/runs/{id}/detail` endpoint (the in-memory
  * registry only retains live + recently-terminal handles for ~10
  * min). Shows the run header, the deploy target config used, the
  * full captured log_tail, and the bound URL.
@@ -254,8 +256,15 @@ function StackSection({
   const [status, setStatus] = useState<StackStatusType | null>(null);
   const [busy, setBusy] = useState<"down" | "restart" | "reroute" | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [rerouteOutput, setRerouteOutput] = useState<string | null>(null);
+  // Last action's output kept until next action starts. Lets the user
+  // see what `docker compose down/restart/reroute` actually printed —
+  // otherwise the post-action state (0/0 running, etc.) is all they get
+  // and stop/restart feel like they vanished into a void.
+  const [actionOutput, setActionOutput] = useState<
+    { kind: "down" | "restart" | "reroute"; ok: boolean; output: string } | null
+  >(null);
   const [showOverrides, setShowOverrides] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // Form fields seeded from the saved target_config. Empty string
   // means "don't override this field" so the backend keeps using the
@@ -315,8 +324,10 @@ function StackSection({
     )
       return;
     setBusy("down");
+    setActionOutput(null);
     try {
       const r = await stopStack(environmentId);
+      setActionOutput({ kind: "down", ok: r.ok, output: r.output });
       if (!r.ok) {
         window.alert(t("deploy.stack.failed.down") + "\n\n" + r.output.slice(-400));
       }
@@ -370,10 +381,10 @@ function StackSection({
     )
       return;
     setBusy("reroute");
-    setRerouteOutput(null);
+    setActionOutput(null);
     try {
       const r = await rerouteStack(environmentId, hasOverrides ? body : undefined);
-      setRerouteOutput(r.output);
+      setActionOutput({ kind: "reroute", ok: r.ok, output: r.output });
       if (!r.ok) {
         window.alert(t("deploy.stack.failed.reroute") + "\n\n" + r.output.slice(-400));
       }
@@ -413,8 +424,10 @@ function StackSection({
     )
       return;
     setBusy("restart");
+    setActionOutput(null);
     try {
       const r = await restartStack(environmentId);
+      setActionOutput({ kind: "restart", ok: r.ok, output: r.output });
       if (!r.ok) {
         window.alert(t("deploy.stack.failed.restart") + "\n\n" + r.output.slice(-400));
       }
@@ -437,8 +450,34 @@ function StackSection({
         <span className="text-[10.5px] text-fg-subtle">
           {status ? `${status.running_count} / ${status.total_count} running` : "—"}
         </span>
+        {busy ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t(
+              busy === "down"
+                ? "deploy.stack.busy.down"
+                : busy === "restart"
+                  ? "deploy.stack.busy.restart"
+                  : "deploy.stack.busy.reroute",
+            )}
+          </span>
+        ) : null}
         <code className="text-[10.5px] text-fg-subtle">{status?.project ?? "—"}</code>
         <div className="ml-auto flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowHelp(true)}
+            title={t("deploy.stack.help.button_title")}
+            aria-label={t("deploy.stack.help.button_label")}
+          >
+            <HelpCircle className="mr-1 h-3 w-3" />
+            {t("deploy.stack.help.button_label")}
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -491,10 +530,55 @@ function StackSection({
           {err}
         </p>
       ) : null}
-      {rerouteOutput ? (
-        <pre className="mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-success/40 bg-success/10 px-3 py-1.5 font-mono text-[11px] text-success">
-          {rerouteOutput}
-        </pre>
+      {actionOutput ? (
+        <div
+          className={cn(
+            "mb-2 rounded-md border",
+            actionOutput.ok
+              ? "border-success/40 bg-success/10"
+              : "border-danger/40 bg-danger/10",
+          )}
+        >
+          <header
+            className={cn(
+              "flex items-center gap-2 border-b px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-wider",
+              actionOutput.ok
+                ? "border-success/30 text-success"
+                : "border-danger/30 text-danger",
+            )}
+          >
+            <span>
+              {t(
+                actionOutput.kind === "down"
+                  ? "deploy.stack.output.down"
+                  : actionOutput.kind === "restart"
+                    ? "deploy.stack.output.restart"
+                    : "deploy.stack.output.reroute",
+              )}
+            </span>
+            <span className="text-[10px] font-normal opacity-70">
+              {actionOutput.ok
+                ? t("deploy.stack.output.ok")
+                : t("deploy.stack.output.failed")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setActionOutput(null)}
+              className="ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium hover:bg-bg-subtle"
+              aria-label={t("deploy.stack.output.dismiss")}
+            >
+              {t("deploy.stack.output.dismiss")}
+            </button>
+          </header>
+          <pre
+            className={cn(
+              "max-h-40 overflow-auto whitespace-pre-wrap break-all px-3 py-1.5 font-mono text-[11px]",
+              actionOutput.ok ? "text-success" : "text-danger",
+            )}
+          >
+            {actionOutput.output || t("deploy.stack.output.empty")}
+          </pre>
+        </div>
       ) : null}
       <div className="mb-2 rounded-md border border-border bg-bg-elevated">
         <button
@@ -631,6 +715,7 @@ function StackSection({
           ))}
         </ul>
       )}
+      <StackRerouteHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
     </section>
   );
 }

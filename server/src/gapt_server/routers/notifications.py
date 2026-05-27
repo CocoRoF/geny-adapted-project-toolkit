@@ -1,8 +1,8 @@
 """Notification feed endpoints.
 
-- `GET /api/notifications` — list the current actor's bell history
+- `GET /_gapt/api/notifications` — list the current actor's bell history
   (merged with broadcasts).
-- `POST /api/notifications/test` — emit a test notification through
+- `POST /_gapt/api/notifications/test` — emit a test notification through
   every registered channel. Operators use this to confirm Slack /
   Discord webhooks are wired correctly without waiting for a real
   deploy.
@@ -20,7 +20,7 @@ from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.notifications import NotificationKind, NotificationService
 from gapt_server.routers.auth import get_current_user
 
-router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+router = APIRouter(prefix="/_gapt/api/notifications", tags=["notifications"])
 
 
 class TestNotificationRequest(BaseModel):

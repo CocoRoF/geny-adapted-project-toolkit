@@ -24,7 +24,7 @@ describe("apiFetch", () => {
       return Promise.resolve(jsonResponse(200, { ok: true }));
     });
 
-    const out = await apiPost<{ ok: boolean }>("/api/x", { hello: "world" });
+    const out = await apiPost<{ ok: boolean }>("/_gapt/api/x", { hello: "world" });
     expect(out).toEqual({ ok: true });
     expect(captured).not.toBeNull();
     expect(captured!.method).toBe("POST");
@@ -35,7 +35,7 @@ describe("apiFetch", () => {
 
   it("returns undefined on 204", async () => {
     globalThis.fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
-    await expect(apiFetch<void>("/api/y", { method: "POST" })).resolves.toBeUndefined();
+    await expect(apiFetch<void>("/_gapt/api/y", { method: "POST" })).resolves.toBeUndefined();
   });
 
   it("normalises FastAPI error envelopes into ApiError", async () => {
@@ -45,7 +45,7 @@ describe("apiFetch", () => {
       ),
     );
 
-    await expect(apiGet("/api/forbidden")).rejects.toMatchObject({
+    await expect(apiGet("/_gapt/api/forbidden")).rejects.toMatchObject({
       status: 403,
       code: "project.forbidden",
       reason: "no access",
@@ -55,8 +55,8 @@ describe("apiFetch", () => {
   it("synthesises a code from the status when the body isn't JSON", async () => {
     globalThis.fetch = vi.fn(() => Promise.resolve(new Response("oops", { status: 500 })));
 
-    await expect(apiGet("/api/boom")).rejects.toBeInstanceOf(ApiError);
-    await expect(apiGet("/api/boom")).rejects.toMatchObject({
+    await expect(apiGet("/_gapt/api/boom")).rejects.toBeInstanceOf(ApiError);
+    await expect(apiGet("/_gapt/api/boom")).rejects.toMatchObject({
       status: 500,
       code: "http.500",
     });

@@ -24,7 +24,7 @@ export function streamTestRun(
   const ctrl = new AbortController();
   (async () => {
     try {
-      const resp = await fetch(`/api/workspaces/${workspaceId}/tests/run`, {
+      const resp = await fetch(`/_gapt/api/workspaces/${workspaceId}/tests/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify(body),

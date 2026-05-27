@@ -87,16 +87,16 @@ describe("<ProjectsIndex />", () => {
   it("renders the empty-state message when no projects exist", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
         match: (input) =>
-          pathOf(input).startsWith("/api/projects") && pathOf(input).indexOf("?") < 0,
+          pathOf(input).startsWith("/_gapt/api/projects") && pathOf(input).indexOf("?") < 0,
         handler: () => jsonResponse(200, []),
       },
       {
-        match: (input) => pathOf(input).startsWith("/api/projects?"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/projects?"),
         handler: () => jsonResponse(200, []),
       },
     ]);
@@ -111,11 +111,11 @@ describe("<ProjectsIndex />", () => {
   it("renders project cards when the list is non-empty", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
-        match: (input) => pathOf(input).startsWith("/api/projects"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/projects"),
         handler: () => jsonResponse(200, [PROJECT_A]),
       },
     ]);
@@ -132,11 +132,11 @@ describe("<ProjectsIndex />", () => {
   it("surfaces an inline alert when the list call fails", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
-        match: (input) => pathOf(input).startsWith("/api/projects"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/projects"),
         handler: () => jsonResponse(500, { detail: { code: "server.boom", reason: "database" } }),
       },
     ]);
@@ -151,16 +151,16 @@ describe("<ProjectsIndex />", () => {
   it("opens the create modal and submits a new project", async () => {
     mockFetchRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/auth/me"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
         handler: () => jsonResponse(200, ALICE_ME),
       },
       {
         match: (input, init) =>
-          pathOf(input).startsWith("/api/projects") && (init?.method ?? "GET") === "GET",
+          pathOf(input).startsWith("/_gapt/api/projects") && (init?.method ?? "GET") === "GET",
         handler: () => jsonResponse(200, []),
       },
       {
-        match: (input, init) => pathOf(input) === "/api/projects" && init?.method === "POST",
+        match: (input, init) => pathOf(input) === "/_gapt/api/projects" && init?.method === "POST",
         handler: () => jsonResponse(201, PROJECT_A),
       },
     ]);

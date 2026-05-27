@@ -1,4 +1,4 @@
-"""HTTP-level tests for /api/notifications."""
+"""HTTP-level tests for /_gapt/api/notifications."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ async def fx() -> AsyncIterator[_Fx]:
 
 async def _login_as_admin(client: AsyncClient) -> None:
     resp = await client.post(
-        "/api/auth/login", json={"id": "admin", "password": "admin"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "admin"}
     )
     assert resp.status_code == 204, resp.text
 
@@ -86,13 +86,13 @@ async def test_test_endpoint_appends_to_feed(fx: _Fx) -> None:
         await _login_as_admin(client)
 
         resp = await client.post(
-            "/api/notifications/test",
+            "/_gapt/api/notifications/test",
             json={"title": "hello", "body": "world", "severity": "warn"},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["title"] == "hello"
 
-        feed = await client.get("/api/notifications")
+        feed = await client.get("/_gapt/api/notifications")
         assert feed.status_code == 200
         body = feed.json()
         assert len(body) == 1
@@ -103,5 +103,5 @@ async def test_test_endpoint_appends_to_feed(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_unauthenticated_rejected(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        resp = await client.get("/api/notifications")
+        resp = await client.get("/_gapt/api/notifications")
         assert resp.status_code == 401

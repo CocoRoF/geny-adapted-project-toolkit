@@ -3,8 +3,8 @@ config + env file layout.
 
 Two endpoints:
 
-  `GET  /api/workspaces/{wid}/introspect`         — what we'd suggest
-  `POST /api/workspaces/{wid}/apply-introspection` — actually create
+  `GET  /_gapt/api/workspaces/{wid}/introspect`         — what we'd suggest
+  `POST /_gapt/api/workspaces/{wid}/apply-introspection` — actually create
                                                      the rows
 
 The first-open wizard in the IDE calls GET right after the
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["introspect"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["introspect"])
 
 
 class IntrospectResponse(BaseModel):

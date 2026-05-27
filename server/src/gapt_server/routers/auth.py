@@ -10,9 +10,9 @@ exposes a single admin identity configured via env vars:
                          entirely on trusted localhost deployments)
 
 Endpoints:
-  POST /api/auth/login   {id, password} → 204 + session cookie
-  POST /api/auth/logout                  → 204 + cookie cleared
-  GET  /api/auth/me                      → admin principal
+  POST /_gapt/api/auth/login   {id, password} → 204 + session cookie
+  POST /_gapt/api/auth/logout                  → 204 + cookie cleared
+  GET  /_gapt/api/auth/me                      → admin principal
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def set_session_store(store: SessionStore) -> None:
     _DEFAULT_STORE = store
 
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/_gapt/api/auth", tags=["auth"])
 
 
 class LoginRequest(BaseModel):

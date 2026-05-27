@@ -6,16 +6,16 @@ Surfaces the in-process `ServiceRegistry` so the frontend
 them through Caddy.
 
 Endpoints:
-- `GET    /api/workspaces/{wid}/services`              — list
-- `POST   /api/workspaces/{wid}/services`              — start
-- `DELETE /api/workspaces/{wid}/services/{label}`      — stop + remove
-- `POST   /api/workspaces/{wid}/services/{label}/stop` — stop, keep entry
-- `POST   /api/workspaces/{wid}/services/{label}/restart` — stop+start
-- `POST   /api/workspaces/{wid}/services/{label}/expose` — Caddy bind
-- `DELETE /api/workspaces/{wid}/services/{label}/expose` — unbind
+- `GET    /_gapt/api/workspaces/{wid}/services`              — list
+- `POST   /_gapt/api/workspaces/{wid}/services`              — start
+- `DELETE /_gapt/api/workspaces/{wid}/services/{label}`      — stop + remove
+- `POST   /_gapt/api/workspaces/{wid}/services/{label}/stop` — stop, keep entry
+- `POST   /_gapt/api/workspaces/{wid}/services/{label}/restart` — stop+start
+- `POST   /_gapt/api/workspaces/{wid}/services/{label}/expose` — Caddy bind
+- `DELETE /_gapt/api/workspaces/{wid}/services/{label}/expose` — unbind
 
 Log tail is served by the existing `GET
-/api/workspaces/{wid}/file-tail?path=...` (M2-A1) — the response
+/_gapt/api/workspaces/{wid}/file-tail?path=...` (M2-A1) — the response
 carries the absolute log path so the SPA can pass the worktree-
 relative form straight through.
 """
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["services"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["services"])
 
 
 class StartServiceRequest(BaseModel):

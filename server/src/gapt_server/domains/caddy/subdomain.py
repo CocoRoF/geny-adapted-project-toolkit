@@ -77,11 +77,15 @@ class SubdomainBinding:
     # internal docker DNS name.
     upstream_tls_insecure: bool = False
     # ── cookie pinning (path mode only) ──
-    # Path mode shares the apex domain with GAPT itself, so any
-    # root-relative URL the upstream app emits (`/projects`,
-    # `/api/v1/posts`, ...) collides with GAPT's own routes. The
-    # Referer-based fallback catches in-iframe navigations but loses
-    # the address-bar / new-tab / browser-refresh case.
+    # Path mode shares the apex domain with GAPT itself. Since
+    # `cfe55b1`'s `/_gapt/*` namespacing, root-relative URLs the
+    # upstream app emits (`/api/foo`, `/_next/static/...`,
+    # `/favicon.png`) NO LONGER hit GAPT routes — they 404 cleanly.
+    # But in-iframe NAVIGATIONS (e.g. user clicks a link to
+    # `/projects` inside the preview) still bounce to the apex root
+    # where GAPT's 302 → /_gapt/app/ would whisk them off into the
+    # IDE — confusing. The Referer + Cookie fallbacks below catch
+    # those nav cases and steer them back into the preview.
     #
     # When this is > 0, Caddy sets a short-lived
     # `gapt_preview=<slug>` cookie when the visitor first hits
@@ -436,10 +440,16 @@ class SubdomainManager:
             # the safety-net / IDE catch-all — they only need to
             # outrank those two. Header-only fallbacks (Referer +
             # cookie pinning) need to outrank EVERY other path-keyed
-            # handler (`/api/*`, `/health`, `/preview/* 404`, IDE)
-            # because the prod app emits root-relative URLs like
-            # `/api/v1/posts`, `/_next/static/...`, `/favicon.png`,
-            # etc., and those would otherwise hit the GAPT control
+            # handler (`/_gapt/api/*`, `/health`, `/preview/* 404`,
+            # IDE) so that ambiguous root-relative requests (e.g.
+            # in-iframe nav to `/projects`) are steered back to the
+            # preview upstream rather than landing on a leftover
+            # GAPT route. With `/_gapt/*` namespacing this matters
+            # less than it did — the only routes outside `/_gapt/*`
+            # on the apex are `/health`, `/preview/*` and the default
+            # 404 — but keeping the fallback ordering means upgrades
+            # that add new apex paths (e.g. `/.well-known/...`) don't
+            # accidentally hijack preview traffic.
             # plane.
             def _is_header_only(p: dict[str, Any]) -> bool:
                 m = (p.get("match") or [{}])[0]

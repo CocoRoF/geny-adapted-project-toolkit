@@ -2,12 +2,12 @@
 
 Two endpoints:
 
-  `POST /api/projects/{pid}/webhooks/secret`
+  `POST /_gapt/api/projects/{pid}/webhooks/secret`
     Mint a fresh HMAC secret. Returns it once + replaces any
     previously-minted secret on the project row. The user pastes the
     response into GitHub's webhook settings under "Secret".
 
-  `POST /api/projects/{pid}/webhooks/github`
+  `POST /_gapt/api/projects/{pid}/webhooks/github`
     Receive a push event. Verifies `X-Hub-Signature-256` against the
     project's stored `webhook_secret`, parses the push, finds every
     Environment whose `deploy_target_config.trigger.branch` matches
@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/projects", tags=["webhooks"])
+router = APIRouter(prefix="/_gapt/api/projects", tags=["webhooks"])
 
 
 # ──────────────────────────────────────────────── mint secret ──
@@ -119,7 +119,7 @@ async def mint_webhook_secret(
     await db.commit()
     return MintSecretResponse(
         secret=secret_hex,
-        webhook_url_hint=f"/api/projects/{project_id}/webhooks/github",
+        webhook_url_hint=f"/_gapt/api/projects/{project_id}/webhooks/github",
     )
 
 

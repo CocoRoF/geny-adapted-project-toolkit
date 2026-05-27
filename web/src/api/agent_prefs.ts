@@ -13,7 +13,7 @@ export interface AgentPrefs {
   updated_at?: string | null;
 }
 
-export const getAgentPrefs = () => apiGet<AgentPrefs>("/api/agent-prefs");
+export const getAgentPrefs = () => apiGet<AgentPrefs>("/_gapt/api/agent-prefs");
 
 export const putAgentPrefs = (prefs: AgentPrefs) =>
-  apiFetch<AgentPrefs>("/api/agent-prefs", { method: "PUT", json: prefs });
+  apiFetch<AgentPrefs>("/_gapt/api/agent-prefs", { method: "PUT", json: prefs });

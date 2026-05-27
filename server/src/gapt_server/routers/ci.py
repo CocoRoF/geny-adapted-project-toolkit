@@ -1,4 +1,4 @@
-"""CI surface — `GET /api/projects/{pid}/ci/runs`.
+"""CI surface — `GET /_gapt/api/projects/{pid}/ci/runs`.
 
 Wraps `GithubProvider.list_workflow_runs` so the UI can show recent
 runs + their status. `repo` is parsed from the project's
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/projects", tags=["ci"])
+router = APIRouter(prefix="/_gapt/api/projects", tags=["ci"])
 
 
 class CiRunResponse(BaseModel):

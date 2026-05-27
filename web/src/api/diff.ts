@@ -14,4 +14,4 @@ export interface WorkspaceDiff {
 }
 
 export const getWorkspaceDiff = (workspaceId: string) =>
-  apiGet<WorkspaceDiff>(`/api/workspaces/${workspaceId}/diff`);
+  apiGet<WorkspaceDiff>(`/_gapt/api/workspaces/${workspaceId}/diff`);

@@ -1,14 +1,24 @@
 # GAPT Caddy dev config — single edge, path-based routing.
 #
-# Domain model:
-#   gapt.hrletsgo.me/             → IDE (vite dev on host:35173)
-#   gapt.hrletsgo.me/api/*        → control-plane server (compose: server:8088)
-#   gapt.hrletsgo.me/health       → control-plane health
-#   gapt.hrletsgo.me/preview/<slug>/* → workspace dev / prod stacks
+# Domain model (post-namespacing — see docs/.../namespacing.md):
+#   gapt.hrletsgo.me/                  → 302 to /_gapt/app/ (IDE entry)
+#   gapt.hrletsgo.me/_gapt/app/*       → IDE (vite dev on host:35173)
+#   gapt.hrletsgo.me/_gapt/api/*       → control-plane server (host:38001)
+#   gapt.hrletsgo.me/health            → control-plane health (apex — Prometheus / k8s convention)
+#   gapt.hrletsgo.me/preview/<slug>/*  → workspace dev / prod stacks
 #       Routes for individual <slug>s are injected at runtime by the
 #       GAPT server via the Caddy admin API. This file only ships the
 #       static handles; the admin pre-pends per-slug routes ahead of
-#       the IDE fallback.
+#       the safety-net 404.
+#
+# Why namespace GAPT under `/_gapt/`?
+#   Preview apps frequently emit root-relative URLs (/api/foo,
+#   /_next/static/..., /favicon.png). Without namespacing, those
+#   collide with GAPT's own routes and we have to lean hard on
+#   Referer + Cookie fallbacks to disambiguate. With the namespace,
+#   the entire apex (except /_gapt/* and /health) belongs to the
+#   preview application by construction — collisions become
+#   impossible instead of "mostly handled by best-effort fallback".
 #
 # Port convention: GAPT infra uses the 3xxxx prefix on the host so
 # user services on 3000/5173/etc. never collide. Inside the compose
@@ -40,13 +50,34 @@
 
     encode gzip zstd
 
-    # ───── control plane ─────
-    handle /api/* {
+    # ───── control plane (namespaced) ─────
+    handle /_gapt/api/* {
         reverse_proxy host.docker.internal:38001
     }
 
+    # /health stays at apex root — Prometheus / k8s liveness probes
+    # / uptime monitors all expect /health unprefixed. Trading one
+    # apex-rooted endpoint for monitoring-tool compatibility is
+    # worth it.
     handle /health {
         reverse_proxy host.docker.internal:38001
+    }
+
+    # ───── IDE SPA (namespaced) ─────
+    # Vite dev runs on the host (uvicorn-style — not in compose).
+    # `host.docker.internal` is Docker Desktop's host bridge; on plain
+    # Linux daemons it resolves via the `extra_hosts` declaration on
+    # the caddy service (see docker-compose.dev.yml). Vite is
+    # configured with `base: "/_gapt/app/"` so asset URLs and HMR
+    # client paths line up with what Caddy forwards.
+    handle /_gapt/app/* {
+        reverse_proxy host.docker.internal:35173
+    }
+
+    # Apex root → 302 to IDE entry. Bookmarking gapt.hrletsgo.me
+    # still lands the user on the IDE; the redirect is cheap.
+    handle / {
+        redir /_gapt/app/ 302
     }
 
     # ───── per-workspace previews ─────
@@ -56,21 +87,22 @@
     # is registered. The `/preview/*` block here is the SAFETY NET
     # that catches any `/preview/...` URL whose slug isn't registered
     # (server restart before recovery completes, slug typo, unexpose
-    # race, etc.) and returns 404 — instead of falling through to the
-    # IDE catch-all and serving the GAPT SPA inside the preview
-    # iframe, which produced an "IDE renders inside iframe" recursion
-    # bug.
+    # race, etc.) and returns 404 — instead of falling through to
+    # the default handler.
     @any_preview path /preview /preview/*
     handle @any_preview {
         respond "Preview not found. Expose a service from the IDE Service tab — or wait for the workspace to finish booting." 404
     }
 
-    # ───── fallback: IDE / dashboard ─────
-    # Vite dev runs on the host (uvicorn-style — not in compose).
-    # `host.docker.internal` is Docker Desktop's host bridge; on plain
-    # Linux daemons it resolves via the `extra_hosts` declaration on
-    # the caddy service (see docker-compose.dev.yml).
+    # ───── default ─────
+    # Everything else (unknown apex paths, root-relative URLs leaked
+    # from preview apps that aren't caught by the dynamic Referer or
+    # Cookie fallbacks) returns 404 — the structural protection that
+    # the /_gapt/* namespacing buys us. Pre-namespacing this same
+    # handler used to serve the IDE SPA, which is what made every
+    # leaked /favicon.png / /_next/static/... look like a GAPT bug
+    # rather than a 404.
     handle {
-        reverse_proxy host.docker.internal:35173
+        respond "Not found." 404
     }
 }

@@ -1,6 +1,6 @@
 """Workspace working-tree diff against HEAD.
 
-Exposed via `GET /api/workspaces/{wid}/diff` so the Web IDE's
+Exposed via `GET /_gapt/api/workspaces/{wid}/diff` so the Web IDE's
 `DiffPanel` can show what the user (or the agent) has changed since
 the last commit. Backed by `SandboxBackend.exec_in` so the operation
 runs inside the same sandbox image the host clone landed in.

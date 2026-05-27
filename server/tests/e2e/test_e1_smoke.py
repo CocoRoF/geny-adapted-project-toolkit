@@ -111,7 +111,7 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
     ) as client:
         # Step 1 — project create (auth disabled in fixture).
         proj = await client.post(
-            "/api/projects",
+            "/_gapt/api/projects",
             json={
                 "slug": "e1-smoke",
                 "display_name": "E1 Smoke",
@@ -125,7 +125,7 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
 
         # Step 2 — environment create.
         env = await client.post(
-            f"/api/projects/{project_id}/environments",
+            f"/_gapt/api/projects/{project_id}/environments",
             json={
                 "name": "dev",
                 "deploy_target_kind": "local",
@@ -136,7 +136,7 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
 
         # Step 3 — secret store (response carries metadata only).
         secret = await client.post(
-            "/api/secrets",
+            "/_gapt/api/secrets",
             json={
                 "scope": "system",
                 "owner_id": e2e_fx.admin_id,
@@ -146,14 +146,14 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
         )
         assert secret.status_code == 201
         assert "value" not in secret.json()
-        listing = await client.get("/api/secrets")
+        listing = await client.get("/_gapt/api/secrets")
         assert "sk-LIVE-DO-NOT-LEAK-e1-smoke" not in listing.text
 
         # Step 4 — workspace create. Boots a MockSandbox + kicks off
         # the host-side clone in a background task. Status flips from
         # `creating` to `running` once the clone settles.
         ws = await client.post(
-            f"/api/projects/{project_id}/workspaces",
+            f"/_gapt/api/projects/{project_id}/workspaces",
             json={"branch": "main"},
         )
         assert ws.status_code == 201, ws.text
@@ -166,26 +166,26 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
         # Wait for the background clone to finish so stop/start sees a
         # settled state.
         for _ in range(60):  # ~6s ceiling
-            poll = await client.get(f"/api/workspaces/{workspace_id}")
+            poll = await client.get(f"/_gapt/api/workspaces/{workspace_id}")
             if poll.json()["status"] == "running":
                 break
             await asyncio.sleep(0.1)
 
         # Step 5 — workspace stop + start.
-        stopped = await client.post(f"/api/workspaces/{workspace_id}/stop")
+        stopped = await client.post(f"/_gapt/api/workspaces/{workspace_id}/stop")
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["status"] == "stopped"
-        started = await client.post(f"/api/workspaces/{workspace_id}/start")
+        started = await client.post(f"/_gapt/api/workspaces/{workspace_id}/start")
         assert started.status_code == 200
         assert started.json()["status"] == "running"
 
         # Step 6 — workspace delete (sandbox torn down).
-        deleted = await client.delete(f"/api/workspaces/{workspace_id}")
+        deleted = await client.delete(f"/_gapt/api/workspaces/{workspace_id}")
         assert deleted.status_code == 200
         assert deleted.json()["status"] == "archived"
 
         # Step 7 — project archive.
-        archived = await client.delete(f"/api/projects/{project_id}")
+        archived = await client.delete(f"/_gapt/api/projects/{project_id}")
         assert archived.status_code == 200
         assert archived.json()["archived_at"] is not None
 

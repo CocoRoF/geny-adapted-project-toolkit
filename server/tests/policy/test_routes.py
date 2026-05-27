@@ -1,4 +1,4 @@
-"""HTTP-level: `GET /api/policies` returns the merged table."""
+"""HTTP-level: `GET /_gapt/api/policies` returns the merged table."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ async def fx(tmp_path: Path) -> AsyncIterator[_Fx]:
 
 async def _login_as_admin(client: AsyncClient) -> None:
     resp = await client.post(
-        "/api/auth/login", json={"id": "admin", "password": "admin"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "admin"}
     )
     assert resp.status_code == 204, resp.text
 
@@ -101,7 +101,7 @@ async def _login_as_admin(client: AsyncClient) -> None:
 async def test_get_policies_returns_merged_table_with_source_layers(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _login_as_admin(client)
-        resp = await client.get("/api/policies")
+        resp = await client.get("/_gapt/api/policies")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         rows = {r["action"]: r for r in body["rows"]}
@@ -119,5 +119,5 @@ async def test_get_policies_returns_merged_table_with_source_layers(fx: _Fx) -> 
 @pytest.mark.asyncio
 async def test_get_policies_requires_auth(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        resp = await client.get("/api/policies")
+        resp = await client.get("/_gapt/api/policies")
         assert resp.status_code == 401

@@ -1,8 +1,8 @@
 """Deploy + rollback endpoints.
 
-- `POST /api/environments/{env_id}/deploy {version?, two_factor_code?, target_options?}`
-- `POST /api/environments/{env_id}/rollback {run_id, to_version, two_factor_code?}`
-- `GET  /api/environments/{env_id}/runs/{run_id}/stream` (SSE)
+- `POST /_gapt/api/environments/{env_id}/deploy {version?, two_factor_code?, target_options?}`
+- `POST /_gapt/api/environments/{env_id}/rollback {run_id, to_version, two_factor_code?}`
+- `GET  /_gapt/api/environments/{env_id}/runs/{run_id}/stream` (SSE)
 
 The router instantiates a fresh `DeployOrchestrator` per request,
 binding the right `DeployTarget` for the environment's `deploy_target_kind`.
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/environments", tags=["deploy"])
+router = APIRouter(prefix="/_gapt/api/environments", tags=["deploy"])
 
 
 # Per-environment serialisation. One lock per env_id; instantiated
@@ -706,7 +706,7 @@ class ActiveRunResponse(BaseModel):
 
 # Dedicated router under `/api` for `/deploy/runs/{id}/...` endpoints
 # that aren't scoped to an env path.
-runs_router = APIRouter(prefix="/api/deploy", tags=["deploy"])
+runs_router = APIRouter(prefix="/_gapt/api/deploy", tags=["deploy"])
 
 
 def _handle_to_active(handle: DeployRunHandle) -> ActiveRunResponse:
@@ -742,7 +742,7 @@ async def trigger_deploy_async(
 ) -> AsyncDeployAcceptedResponse:
     """Start a deploy as a process-scoped background task. Returns
     `202 Accepted` with the new run_id; the caller follows up by
-    subscribing to `GET /api/deploy/runs/{run_id}/stream` for live
+    subscribing to `GET /_gapt/api/deploy/runs/{run_id}/stream` for live
     log + status. The task keeps running even if the HTTP client
     disconnects — that's the whole point of moving away from the
     old `POST /deploy/stream` which tied the run to the request."""
@@ -1421,7 +1421,7 @@ async def stack_reroute(
             f"network_connect={'ok' if network_ok else 'failed'}"
             + (
                 "\nnote: subdomain mode needs wildcard DNS (*. on the preview "
-                "domain) + Caddy on-demand TLS approval via /api/preview/ask"
+                "domain) + Caddy on-demand TLS approval via /_gapt/api/preview/ask"
                 if mode == PreviewMode.SUBDOMAIN
                 else ""
             )

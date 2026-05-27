@@ -1,6 +1,6 @@
 """Single-admin login flow tests.
 
-Covers the MinIO/Jenkins-style POST /api/auth/login + cookie-issued
+Covers the MinIO/Jenkins-style POST /_gapt/api/auth/login + cookie-issued
 session model that replaced the old magic-link IDP. Hermetic — no
 Postgres needed, the session store is an in-memory singleton.
 """
@@ -57,7 +57,7 @@ async def test_login_with_correct_credentials_sets_cookie(
     auth_client: AsyncClient,
 ) -> None:
     resp = await auth_client.post(
-        "/api/auth/login", json={"id": "admin", "password": "admin"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "admin"}
     )
     assert resp.status_code == 204, resp.text
     assert auth_client.cookies.get("gapt_session"), "session cookie should be set"
@@ -68,7 +68,7 @@ async def test_login_with_wrong_credentials_returns_401(
     auth_client: AsyncClient,
 ) -> None:
     resp = await auth_client.post(
-        "/api/auth/login", json={"id": "admin", "password": "wrong"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "wrong"}
     )
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "auth.invalid_credentials"
@@ -76,7 +76,7 @@ async def test_login_with_wrong_credentials_returns_401(
 
 @pytest.mark.asyncio
 async def test_me_without_cookie_returns_401(auth_client: AsyncClient) -> None:
-    resp = await auth_client.get("/api/auth/me")
+    resp = await auth_client.get("/_gapt/api/auth/me")
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "auth.session.missing"
 
@@ -84,11 +84,11 @@ async def test_me_without_cookie_returns_401(auth_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_me_with_cookie_returns_admin(auth_client: AsyncClient) -> None:
     login = await auth_client.post(
-        "/api/auth/login", json={"id": "admin", "password": "admin"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "admin"}
     )
     assert login.status_code == 204
 
-    resp = await auth_client.get("/api/auth/me")
+    resp = await auth_client.get("/_gapt/api/auth/me")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["user_id"] == "admin"
@@ -99,7 +99,7 @@ async def test_me_with_cookie_returns_admin(auth_client: AsyncClient) -> None:
 async def test_me_when_auth_disabled_passes_without_cookie(
     open_client: AsyncClient,
 ) -> None:
-    resp = await open_client.get("/api/auth/me")
+    resp = await open_client.get("/_gapt/api/auth/me")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["user_id"] == "admin"
@@ -111,17 +111,17 @@ async def test_logout_clears_cookie_and_subsequent_me_is_401(
     auth_client: AsyncClient,
 ) -> None:
     login = await auth_client.post(
-        "/api/auth/login", json={"id": "admin", "password": "admin"}
+        "/_gapt/api/auth/login", json={"id": "admin", "password": "admin"}
     )
     assert login.status_code == 204
     # Sanity: while the cookie is valid the /me path works.
-    me_ok = await auth_client.get("/api/auth/me")
+    me_ok = await auth_client.get("/_gapt/api/auth/me")
     assert me_ok.status_code == 200
 
-    out = await auth_client.post("/api/auth/logout")
+    out = await auth_client.post("/_gapt/api/auth/logout")
     assert out.status_code == 204
 
-    me = await auth_client.get("/api/auth/me")
+    me = await auth_client.get("/_gapt/api/auth/me")
     assert me.status_code == 401
     # The cookie itself was cleared — /me sees no session at all.
     assert me.json()["detail"]["code"] == "auth.session.missing"

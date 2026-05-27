@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from gapt_server.domains.workspace_sandbox import WorkspaceSandbox
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["git"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["git"])
 
 
 # ─── helpers ────────────────────────────────────────────────────────

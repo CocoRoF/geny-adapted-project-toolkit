@@ -1,15 +1,15 @@
 """Workspace lifecycle endpoints.
 
-- `POST   /api/projects/{pid}/workspaces`  — create (boots sandbox)
-- `GET    /api/projects/{pid}/workspaces`  — list (member only)
-- `GET    /api/workspaces/{wid}`           — fetch
-- `POST   /api/workspaces/{wid}/stop`      — stop sandbox (≥ editor)
-- `POST   /api/workspaces/{wid}/start`     — restart sandbox (≥ editor)
-- `DELETE /api/workspaces/{wid}`           — archive + tear down (≥ admin)
-- `GET    /api/workspaces/{wid}/tree`      — list directory contents
-- `GET    /api/workspaces/{wid}/file`      — read file contents
-- `PUT    /api/workspaces/{wid}/file`      — write/overwrite a file
-- `DELETE /api/workspaces/{wid}/file`      — delete a file or empty dir
+- `POST   /_gapt/api/projects/{pid}/workspaces`  — create (boots sandbox)
+- `GET    /_gapt/api/projects/{pid}/workspaces`  — list (member only)
+- `GET    /_gapt/api/workspaces/{wid}`           — fetch
+- `POST   /_gapt/api/workspaces/{wid}/stop`      — stop sandbox (≥ editor)
+- `POST   /_gapt/api/workspaces/{wid}/start`     — restart sandbox (≥ editor)
+- `DELETE /_gapt/api/workspaces/{wid}`           — archive + tear down (≥ admin)
+- `GET    /_gapt/api/workspaces/{wid}/tree`      — list directory contents
+- `GET    /_gapt/api/workspaces/{wid}/file`      — read file contents
+- `PUT    /_gapt/api/workspaces/{wid}/file`      — write/overwrite a file
+- `DELETE /_gapt/api/workspaces/{wid}/file`      — delete a file or empty dir
 """
 
 from __future__ import annotations
@@ -104,8 +104,8 @@ def get_workspace_service(
     )
 
 
-by_project = APIRouter(prefix="/api/projects", tags=["workspaces"])
-by_id = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+by_project = APIRouter(prefix="/_gapt/api/projects", tags=["workspaces"])
+by_id = APIRouter(prefix="/_gapt/api/workspaces", tags=["workspaces"])
 
 
 # ──────────────────────────────────────────────────────── DTOs ──

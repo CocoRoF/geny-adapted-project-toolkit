@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 import App from "@/app/App";
 
-// `<AuthProvider>` calls `/api/auth/me` on mount; the result drives
+// `<AuthProvider>` calls `/_gapt/api/auth/me` on mount; the result drives
 // the router's first render. Each test stubs `fetch` to control the
 // branch under test.
 
@@ -19,7 +19,7 @@ function mockFetchOnce(handler: (input: RequestInfo | URL, init?: RequestInit) =
   globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     // The notification bell polls in the background; route it to an
     // empty array so it doesn't piggyback on the main handler.
-    if (pathOf(input).startsWith("/api/notifications")) {
+    if (pathOf(input).startsWith("/_gapt/api/notifications")) {
       return Promise.resolve(
         new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }),
       );
@@ -28,8 +28,13 @@ function mockFetchOnce(handler: (input: RequestInfo | URL, init?: RequestInit) =
   });
 }
 
+// The SPA mounts under `/_gapt/app/` (BrowserRouter basename). Every
+// test's initial URL has to be inside that subtree or react-router
+// emits an empty render.
+const APP_BASE = "/_gapt/app";
+
 beforeEach(() => {
-  window.history.replaceState({}, "", "/");
+  window.history.replaceState({}, "", `${APP_BASE}/`);
   window.localStorage.clear();
 });
 
@@ -54,11 +59,11 @@ describe("<App /> router", () => {
 
     const heading = await screen.findByRole("heading", { level: 1 });
     expect(heading).toHaveTextContent(/Sign in|로그인/);
-    expect(window.location.pathname).toBe("/login");
+    expect(window.location.pathname).toBe(`${APP_BASE}/login`);
   });
 
   it("renders the projects placeholder once `/me` resolves", async () => {
-    window.history.replaceState({}, "", "/projects");
+    window.history.replaceState({}, "", `${APP_BASE}/projects`);
     mockFetchOnce(() =>
       jsonResponse(200, { user_id: "u1", email: "alice@example.com", display_name: null }),
     );

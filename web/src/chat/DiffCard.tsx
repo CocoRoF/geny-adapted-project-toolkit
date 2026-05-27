@@ -59,7 +59,7 @@ export function DiffCard({ workspaceId, payload }: Props) {
         // Round-trip: read → swap → write. Pull the current file from
         // the workspace, do an in-memory swap, push it back.
         const current = await fetch(
-          `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(payload.path)}`,
+          `/_gapt/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(payload.path)}`,
           { credentials: "include" },
         );
         if (!current.ok) {

@@ -1,19 +1,19 @@
-"""`/api/performance` — live container stats + resource limits + GPU.
+"""`/_gapt/api/performance` — live container stats + resource limits + GPU.
 
 Endpoints:
 
-  * `GET    /api/performance/containers`            snapshot of every
+  * `GET    /_gapt/api/performance/containers`            snapshot of every
     GAPT-related container with limits + live stats + project /
     workspace / environment enrichment from the DB.
-  * `GET    /api/performance/containers/{id}`       single-container
+  * `GET    /_gapt/api/performance/containers/{id}`       single-container
     detail.
-  * `POST   /api/performance/containers/{id}/stop`  graceful SIGTERM,
+  * `POST   /_gapt/api/performance/containers/{id}/stop`  graceful SIGTERM,
     grace period, then SIGKILL.
-  * `POST   /api/performance/containers/{id}/kill`  immediate SIGKILL.
-  * `POST   /api/performance/containers/{id}/restart` restart.
-  * `GET    /api/performance/containers/{id}/logs`  text logs (tail).
-  * `GET    /api/performance/host`                  host info.
-  * `GET    /api/performance/gpu`                   GPU stats (empty
+  * `POST   /_gapt/api/performance/containers/{id}/kill`  immediate SIGKILL.
+  * `POST   /_gapt/api/performance/containers/{id}/restart` restart.
+  * `GET    /_gapt/api/performance/containers/{id}/logs`  text logs (tail).
+  * `GET    /_gapt/api/performance/host`                  host info.
+  * `GET    /_gapt/api/performance/gpu`                   GPU stats (empty
     list when no NVIDIA driver is present).
 
 All endpoints require auth. The stats endpoint joins against the DB
@@ -58,7 +58,7 @@ from gapt_server.domains.sandbox import make_default_client
 from gapt_server.routers.auth import get_current_user
 from gapt_server.settings import Settings  # noqa: TC001
 
-router = APIRouter(prefix="/api/performance", tags=["performance"])
+router = APIRouter(prefix="/_gapt/api/performance", tags=["performance"])
 
 # Module-level singleton — the docker client open is non-trivial
 # (unix socket + version negotiation), don't redo it per request.

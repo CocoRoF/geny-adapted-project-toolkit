@@ -136,7 +136,7 @@ describe("<AuditPanel />", () => {
 
     const csv = screen.getByTestId("audit-export-csv");
     const jsonl = screen.getByTestId("audit-export-jsonl");
-    expect(csv.getAttribute("href")).toContain("/api/projects/p1/audit/export?");
+    expect(csv.getAttribute("href")).toContain("/_gapt/api/projects/p1/audit/export?");
     expect(csv.getAttribute("href")).toContain("format=csv");
     expect(csv.getAttribute("href")).toContain("action_prefix=agent.");
     expect(jsonl.getAttribute("href")).toContain("format=jsonl");

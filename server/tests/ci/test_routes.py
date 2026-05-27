@@ -1,4 +1,4 @@
-"""HTTP-level tests for `GET /api/projects/{pid}/ci/runs`."""
+"""HTTP-level tests for `GET /_gapt/api/projects/{pid}/ci/runs`."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ async def fx() -> AsyncIterator[_Fx]:
 
 async def _create_project(client: AsyncClient) -> str:
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -141,7 +141,7 @@ async def test_list_ci_runs_happy_path(fx: _Fx) -> None:
     try:
         async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
             project_id = await _create_project(client)
-            resp = await client.get(f"/api/projects/{project_id}/ci/runs?limit=5")
+            resp = await client.get(f"/_gapt/api/projects/{project_id}/ci/runs?limit=5")
             assert resp.status_code == 200, resp.text
             rows = resp.json()
             assert len(rows) == 1
@@ -164,7 +164,7 @@ async def test_ci_runs_412_when_token_missing() -> None:
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             project_id = await _create_project(client)
-            resp = await client.get(f"/api/projects/{project_id}/ci/runs")
+            resp = await client.get(f"/_gapt/api/projects/{project_id}/ci/runs")
             assert resp.status_code == 412
             assert resp.json()["detail"]["code"] == "ci.no_token"
     finally:
@@ -231,7 +231,7 @@ async def test_ci_runs_uses_system_scoped_vault_token(tmp_path) -> None:  # type
                 )
                 await db.commit()
 
-            resp = await client.get(f"/api/projects/{project_id}/ci/runs")
+            resp = await client.get(f"/_gapt/api/projects/{project_id}/ci/runs")
             assert resp.status_code == 200, resp.text
 
         # The provider received the system-scoped token, not the empty

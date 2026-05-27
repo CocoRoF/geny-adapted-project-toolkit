@@ -27,7 +27,7 @@ const INITIAL: DeployStreamState = {
   error: null,
 };
 
-/** Subscribe to `/api/deploy/runs/{runId}/stream` via SSE.
+/** Subscribe to `/_gapt/api/deploy/runs/{runId}/stream` via SSE.
  *
  * - When `runId` is null, the hook is idle (no connection).
  * - When `runId` flips to a new id, the previous EventSource is
@@ -57,7 +57,7 @@ export function useDeployStream(runId: string | null): DeployStreamState {
     }
     setState({ ...INITIAL, phase: "connecting" });
 
-    const src = new EventSource(`/api/deploy/runs/${runId}/stream`, {
+    const src = new EventSource(`/_gapt/api/deploy/runs/${runId}/stream`, {
       withCredentials: true,
     });
     sourceRef.current = src;

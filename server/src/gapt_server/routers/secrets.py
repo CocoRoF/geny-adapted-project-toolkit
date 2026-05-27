@@ -1,10 +1,10 @@
 """Secret-vault routes.
 
-- `POST   /api/secrets`              — store
-- `GET    /api/secrets`              — list (metadata only)
-- `GET    /api/secrets/{sid}`        — single metadata
-- `POST   /api/secrets/{sid}/rotate` — replace value
-- `DELETE /api/secrets/{sid}`        — delete
+- `POST   /_gapt/api/secrets`              — store
+- `GET    /_gapt/api/secrets`              — list (metadata only)
+- `GET    /_gapt/api/secrets/{sid}`        — single metadata
+- `POST   /_gapt/api/secrets/{sid}/rotate` — replace value
+- `DELETE /_gapt/api/secrets/{sid}`        — delete
 
 Plaintext is NEVER returned by any endpoint. Reads happen inside
 `SecretVault.read(...)` from server-side callers (agent sandbox boot,
@@ -63,7 +63,7 @@ def set_vault(vault: SecretVault | None) -> None:
     _VAULT = vault
 
 
-router = APIRouter(prefix="/api/secrets", tags=["secrets"])
+router = APIRouter(prefix="/_gapt/api/secrets", tags=["secrets"])
 
 
 # ────────────────────────────────────────────────────── DTOs ──

@@ -18,7 +18,7 @@
 # Optional:
 #   GAPT_SLACK_WEBHOOK_URL   — wire deploy notifications to Slack
 #   GAPT_DISCORD_WEBHOOK_URL — same for Discord
-#   GAPT_CI_GITHUB_TOKEN     — server-wide GitHub PAT for /api/projects/.../ci/runs
+#   GAPT_CI_GITHUB_TOKEN     — server-wide GitHub PAT for /_gapt/api/projects/.../ci/runs
 #
 # Profiles:
 #   default  — postgres / redis / seaweedfs / server / caddy

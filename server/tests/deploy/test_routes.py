@@ -1,4 +1,4 @@
-"""HTTP-level tests for `POST /api/environments/{env_id}/deploy` and
+"""HTTP-level tests for `POST /_gapt/api/environments/{env_id}/deploy` and
 `/rollback`. Uses an injectable webhook poster so no real HTTP fires."""
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ async def fx() -> AsyncIterator[_Fx]:
 async def _create_project_env(client: AsyncClient) -> tuple[str, str]:
     """Returns (project_id, environment_id)."""
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -135,7 +135,7 @@ async def test_deploy_happy_path_returns_success(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, env_id = await _create_project_env(client)
         resp = await client.post(
-            f"/api/environments/{env_id}/deploy",
+            f"/_gapt/api/environments/{env_id}/deploy",
             json={"version": "v1"},
         )
         assert resp.status_code == 200, resp.text
@@ -150,7 +150,7 @@ async def test_deploy_webhook_failure_returns_exec_code(fx: _Fx) -> None:
         _, env_id = await _create_project_env(client)
         fx.webhook_responses[:] = [(502, {"error": "upstream"})]
         resp = await client.post(
-            f"/api/environments/{env_id}/deploy",
+            f"/_gapt/api/environments/{env_id}/deploy",
             json={"version": "v1"},
         )
         assert resp.status_code == 200, resp.text
@@ -164,7 +164,7 @@ async def test_deploy_404_when_environment_missing(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project_env(client)
         resp = await client.post(
-            "/api/environments/01KSXXXXXXXXXXXXXXXXXXXXXX/deploy",
+            "/_gapt/api/environments/01KSXXXXXXXXXXXXXXXXXXXXXX/deploy",
             json={"version": "v"},
         )
         assert resp.status_code == 404
@@ -176,7 +176,7 @@ async def test_rollback_round_trip(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         _, env_id = await _create_project_env(client)
         resp = await client.post(
-            f"/api/environments/{env_id}/rollback",
+            f"/_gapt/api/environments/{env_id}/rollback",
             json={"run_id": "rid-1", "to_version": "v0"},
         )
         assert resp.status_code == 200, resp.text

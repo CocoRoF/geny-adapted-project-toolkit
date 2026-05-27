@@ -9,8 +9,8 @@ interface ModalProps {
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
-  /** width preset — sm 360, md 480, lg 640. */
-  size?: "sm" | "md" | "lg";
+  /** width preset — sm 360, md 480, lg 640, xl 800. */
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
 /** Backdrop + centered card. Esc closes; click outside closes. */
@@ -33,7 +33,14 @@ export function Modal({
   }, [open, onClose]);
 
   if (!open) return null;
-  const width = size === "sm" ? "max-w-[360px]" : size === "lg" ? "max-w-[640px]" : "max-w-[480px]";
+  const width =
+    size === "sm"
+      ? "max-w-[360px]"
+      : size === "lg"
+        ? "max-w-[640px]"
+        : size === "xl"
+          ? "max-w-[800px]"
+          : "max-w-[480px]";
 
   return (
     <div

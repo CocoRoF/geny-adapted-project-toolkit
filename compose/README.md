@@ -32,9 +32,11 @@ docker compose -f compose/docker-compose.dev.yml down -v
 
 ```
 :8080  caddy (edge)
-       ├─ /api/*   → server:8088
-       ├─ /health  → server:8088
-       └─ /        → 200 placeholder text
+       ├─ /_gapt/api/*   → server:8088
+       ├─ /_gapt/app/*   → server:8088 (built SPA)
+       ├─ /health        → server:8088 (apex; Prometheus / k8s convention)
+       ├─ /              → 302 → /_gapt/app/
+       └─ everything else → 404
 
 :8088  server (FastAPI; bound to 127.0.0.1 on host for direct hits)
 :5432  postgres

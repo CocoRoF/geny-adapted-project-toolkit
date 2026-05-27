@@ -95,7 +95,7 @@ async def _create_project(client: AsyncClient) -> str:
     """Creates one project and returns its id. Auth is disabled in the
     fixture, so every request is already authenticated as admin."""
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -112,7 +112,7 @@ async def test_workspace_full_lifecycle(fx: _Fx) -> None:
         project_id = await _create_project(client)
 
         created = await client.post(
-            f"/api/projects/{project_id}/workspaces",
+            f"/_gapt/api/projects/{project_id}/workspaces",
             json={"branch": "main"},
         )
         assert created.status_code == 201, created.text
@@ -127,29 +127,29 @@ async def test_workspace_full_lifecycle(fx: _Fx) -> None:
         # Wait for the background clone to finish so subsequent
         # transitions (stop/start/delete) operate on a settled state.
         for _ in range(40):  # ~2s max
-            single = await client.get(f"/api/workspaces/{workspace_id}")
+            single = await client.get(f"/_gapt/api/workspaces/{workspace_id}")
             if single.json()["status"] == "running":
                 break
             await asyncio.sleep(0.05)
         else:
             raise AssertionError("workspace never flipped to running")
 
-        listed = await client.get(f"/api/projects/{project_id}/workspaces")
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/workspaces")
         assert listed.status_code == 200
         assert [w["id"] for w in listed.json()] == [workspace_id]
 
-        single = await client.get(f"/api/workspaces/{workspace_id}")
+        single = await client.get(f"/_gapt/api/workspaces/{workspace_id}")
         assert single.status_code == 200
 
-        stopped = await client.post(f"/api/workspaces/{workspace_id}/stop")
+        stopped = await client.post(f"/_gapt/api/workspaces/{workspace_id}/stop")
         assert stopped.status_code == 200
         assert stopped.json()["status"] == "stopped"
 
-        restarted = await client.post(f"/api/workspaces/{workspace_id}/start")
+        restarted = await client.post(f"/_gapt/api/workspaces/{workspace_id}/start")
         assert restarted.status_code == 200
         assert restarted.json()["status"] == "running"
 
-        deleted = await client.delete(f"/api/workspaces/{workspace_id}")
+        deleted = await client.delete(f"/_gapt/api/workspaces/{workspace_id}")
         assert deleted.status_code == 200
         assert deleted.json()["status"] == "archived"
 
@@ -175,7 +175,7 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
         ) as client:
             project_id = await _create_project(client)
             resp = await client.post(
-                f"/api/projects/{project_id}/workspaces",
+                f"/_gapt/api/projects/{project_id}/workspaces",
                 json={"branch": "main"},
             )
             assert resp.status_code == 409
@@ -203,6 +203,6 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
 async def test_workspace_not_found_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project(client)
-        resp = await client.get("/api/workspaces/01KSXXXXXXXXXXXXXXXXXXXXXX")
+        resp = await client.get("/_gapt/api/workspaces/01KSXXXXXXXXXXXXXXXXXXXXXX")
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "workspace.not_found"

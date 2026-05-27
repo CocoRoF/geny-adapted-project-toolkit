@@ -103,7 +103,7 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
 async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]:
     """Creates a project + workspace, returns `(project_id, workspace_id)`."""
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -114,7 +114,7 @@ async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]
     project_id = created.json()["id"]
 
     wks = await client.post(
-        f"/api/projects/{project_id}/workspaces",
+        f"/_gapt/api/projects/{project_id}/workspaces",
         json={"branch": "main"},
     )
     assert wks.status_code == 201, wks.text
@@ -130,7 +130,7 @@ async def test_create_session_happy_path(fx: _Fx) -> None:
         project_id, workspace_id = await _create_project_with_workspace(client)
 
         resp = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         assert resp.status_code == 201, resp.text
@@ -152,7 +152,7 @@ async def test_create_session_unknown_workspace_returns_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, _ = await _create_project_with_workspace(client)
         resp = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": "01KS90000000000000000XXXXX"},
         )
         assert resp.status_code == 404
@@ -167,17 +167,17 @@ async def test_list_and_fetch_session(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
 
-        listed = await client.get(f"/api/projects/{project_id}/sessions")
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
         assert listed.status_code == 200
         ids = [s["id"] for s in listed.json()]
         assert ids == [session_id]
 
-        one = await client.get(f"/api/sessions/{session_id}")
+        one = await client.get(f"/_gapt/api/sessions/{session_id}")
         assert one.status_code == 200
         assert one.json()["id"] == session_id
 
@@ -186,7 +186,7 @@ async def test_list_and_fetch_session(fx: _Fx) -> None:
 async def test_fetch_session_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project_with_workspace(client)
-        resp = await client.get("/api/sessions/01KS90000000000000000XXXXX")
+        resp = await client.get("/_gapt/api/sessions/01KS90000000000000000XXXXX")
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "session.not_found"
 
@@ -203,7 +203,7 @@ async def test_invoke_and_replay_messages(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
@@ -216,7 +216,7 @@ async def test_invoke_and_replay_messages(fx: _Fx) -> None:
         await runtime.invoke("hi", runner=_scripted_runner)
         await runtime.wait_done()
 
-        replay = await client.get(f"/api/sessions/{session_id}/messages")
+        replay = await client.get(f"/_gapt/api/sessions/{session_id}/messages")
         assert replay.status_code == 200
         kinds = [m["kind"] for m in replay.json()]
         assert kinds == ["text", "done"]
@@ -228,7 +228,7 @@ async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
@@ -237,7 +237,7 @@ async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
         # calls `pipeline.run_stream` — our stub generator yields nothing,
         # so the task finishes cleanly + emits `done`.
         resp = await client.post(
-            f"/api/sessions/{session_id}/invoke",
+            f"/_gapt/api/sessions/{session_id}/invoke",
             json={"message": "hello"},
         )
         assert resp.status_code == 202
@@ -248,7 +248,7 @@ async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
         runtime = await registry.get(session_id)
         await runtime.wait_done()
 
-        replay = await client.get(f"/api/sessions/{session_id}/messages")
+        replay = await client.get(f"/_gapt/api/sessions/{session_id}/messages")
         kinds = [m["kind"] for m in replay.json()]
         assert kinds == ["done"]
 
@@ -258,7 +258,7 @@ async def test_interrupt_endpoint(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
@@ -272,12 +272,12 @@ async def test_interrupt_endpoint(fx: _Fx) -> None:
         await runtime.invoke("never", runner=forever)
         await asyncio.sleep(0)  # let the task enter the sleep
 
-        resp = await client.post(f"/api/sessions/{session_id}/interrupt")
+        resp = await client.post(f"/_gapt/api/sessions/{session_id}/interrupt")
         assert resp.status_code == 200
         assert resp.json() == {"session_id": session_id, "cancelled": True}
 
         await runtime.wait_done()
-        replay = await client.get(f"/api/sessions/{session_id}/messages")
+        replay = await client.get(f"/_gapt/api/sessions/{session_id}/messages")
         kinds = [m["kind"] for m in replay.json()]
         assert "error" in kinds
 
@@ -287,7 +287,7 @@ async def test_invoke_404_when_runtime_missing(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project_with_workspace(client)
         resp = await client.post(
-            "/api/sessions/01KS90000000000000000XXXXX/invoke",
+            "/_gapt/api/sessions/01KS90000000000000000XXXXX/invoke",
             json={"message": "x"},
         )
         assert resp.status_code == 404
@@ -302,12 +302,12 @@ async def test_archive_session(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
 
-        archived = await client.post(f"/api/sessions/{session_id}/archive")
+        archived = await client.post(f"/_gapt/api/sessions/{session_id}/archive")
         assert archived.status_code == 200
         assert archived.json()["status"] == enums.AgentSessionStatus.ARCHIVED.value
 
@@ -317,7 +317,7 @@ async def test_archive_session(fx: _Fx) -> None:
             await registry.get(session_id)
 
         # Not in the active list any more.
-        listed = await client.get(f"/api/projects/{project_id}/sessions")
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
         assert listed.json() == []
 
 
@@ -329,7 +329,7 @@ async def test_stream_emits_text_and_done(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         project_id, workspace_id = await _create_project_with_workspace(client)
         created = await client.post(
-            f"/api/projects/{project_id}/sessions",
+            f"/_gapt/api/projects/{project_id}/sessions",
             json={"workspace_id": workspace_id},
         )
         session_id = created.json()["id"]
@@ -342,7 +342,7 @@ async def test_stream_emits_text_and_done(fx: _Fx) -> None:
         await runtime.invoke("hi", runner=_scripted_runner)
         await runtime.wait_done()
 
-        async with client.stream("GET", f"/api/sessions/{session_id}/stream?since=0") as resp:
+        async with client.stream("GET", f"/_gapt/api/sessions/{session_id}/stream?since=0") as resp:
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("text/event-stream")
             body = b""

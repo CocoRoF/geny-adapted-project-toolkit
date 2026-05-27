@@ -39,12 +39,12 @@ function buildWindow(window: CostWindow): string {
 }
 
 export function getCostSummary(window: CostWindow = {}): Promise<CostSummary> {
-  return apiGet<CostSummary>(`/api/cost/summary${buildWindow(window)}`);
+  return apiGet<CostSummary>(`/_gapt/api/cost/summary${buildWindow(window)}`);
 }
 
 export function getProjectCostDaily(
   projectId: string,
   window: CostWindow = {},
 ): Promise<DailyCostRow[]> {
-  return apiGet<DailyCostRow[]>(`/api/projects/${projectId}/cost/daily${buildWindow(window)}`);
+  return apiGet<DailyCostRow[]>(`/_gapt/api/projects/${projectId}/cost/daily${buildWindow(window)}`);
 }

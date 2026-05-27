@@ -9,11 +9,11 @@ release.
 
 Endpoints (project-scoped):
 
-- `GET    /api/projects/{pid}/environments`
-- `POST   /api/projects/{pid}/environments`
-- `GET    /api/environments/{eid}`
-- `PUT    /api/environments/{eid}`
-- `DELETE /api/environments/{eid}`
+- `GET    /_gapt/api/projects/{pid}/environments`
+- `POST   /_gapt/api/projects/{pid}/environments`
+- `GET    /_gapt/api/environments/{eid}`
+- `PUT    /_gapt/api/environments/{eid}`
+- `DELETE /_gapt/api/environments/{eid}`
 
 Single-admin model — every authenticated request goes through
 `fetch_project_for` purely to surface a clean 404 on bogus
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-by_project = APIRouter(prefix="/api/projects", tags=["environments"])
-by_id = APIRouter(prefix="/api/environments", tags=["environments"])
+by_project = APIRouter(prefix="/_gapt/api/projects", tags=["environments"])
+by_id = APIRouter(prefix="/_gapt/api/environments", tags=["environments"])
 
 
 class EnvironmentPayload(BaseModel):

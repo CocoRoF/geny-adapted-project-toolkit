@@ -38,18 +38,18 @@ export interface CreatePrResponse {
 }
 
 export const getGitStatus = (wid: string) =>
-  apiGet<GitStatusResponse>(`/api/workspaces/${wid}/git/status`);
+  apiGet<GitStatusResponse>(`/_gapt/api/workspaces/${wid}/git/status`);
 
 export const getGitDiff = (wid: string, path: string, staged = false) =>
   apiGet<GitDiffResponse>(
-    `/api/workspaces/${wid}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+    `/_gapt/api/workspaces/${wid}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
   );
 
 export const gitCommit = (
   wid: string,
   body: { message: string; paths?: string[] },
 ) =>
-  apiFetch<GitCommitResponse>(`/api/workspaces/${wid}/git/commit`, {
+  apiFetch<GitCommitResponse>(`/_gapt/api/workspaces/${wid}/git/commit`, {
     method: "POST",
     json: body,
   });
@@ -58,7 +58,7 @@ export const gitPush = (
   wid: string,
   body: { branch?: string | null; force_with_lease?: boolean } = {},
 ) =>
-  apiFetch<GitPushResponse>(`/api/workspaces/${wid}/git/push`, {
+  apiFetch<GitPushResponse>(`/_gapt/api/workspaces/${wid}/git/push`, {
     method: "POST",
     json: body,
   });
@@ -73,7 +73,7 @@ export const createPr = (
     draft?: boolean;
   },
 ) =>
-  apiFetch<CreatePrResponse>(`/api/workspaces/${wid}/git/create-pr`, {
+  apiFetch<CreatePrResponse>(`/_gapt/api/workspaces/${wid}/git/create-pr`, {
     method: "POST",
     json: body,
   });

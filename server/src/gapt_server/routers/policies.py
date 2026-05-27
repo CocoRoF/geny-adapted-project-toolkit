@@ -1,6 +1,6 @@
 """Policy inspection endpoint.
 
-`GET /api/policies` — read-only snapshot of the *currently effective*
+`GET /_gapt/api/policies` — read-only snapshot of the *currently effective*
 policy table (built-in defaults merged with the server-wide L2 YAML
 override that the container loaded at startup). Each row carries the
 action, the resolved decision, and the source layer.
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from gapt_server.policy.engine import PolicyEngine
 
 
-router = APIRouter(prefix="/api/policies", tags=["policies"])
+router = APIRouter(prefix="/_gapt/api/policies", tags=["policies"])
 
 
 class PolicyRow(BaseModel):

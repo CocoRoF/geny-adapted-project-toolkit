@@ -1,4 +1,4 @@
-"""HTTP-level tests for /api/workspaces/{wid}/preview + /share."""
+"""HTTP-level tests for /_gapt/api/workspaces/{wid}/preview + /share."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ async def fx() -> AsyncIterator[_Fx]:
 async def _create_workspace(client: AsyncClient) -> str:
     """Returns workspace_id."""
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -112,7 +112,7 @@ async def _create_workspace(client: AsyncClient) -> str:
     project_id = created.json()["id"]
 
     wks = await client.post(
-        f"/api/projects/{project_id}/workspaces",
+        f"/_gapt/api/projects/{project_id}/workspaces",
         json={"branch": "main"},
     )
     return wks.json()["id"]
@@ -123,7 +123,7 @@ async def test_register_preview_posts_caddy_route(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         workspace_id = await _create_workspace(client)
         resp = await client.post(
-            f"/api/workspaces/{workspace_id}/preview",
+            f"/_gapt/api/workspaces/{workspace_id}/preview",
             json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
         )
         assert resp.status_code == 200, resp.text
@@ -140,7 +140,7 @@ async def test_register_preview_posts_caddy_route(fx: _Fx) -> None:
 async def test_unregister_preview_deletes_by_id(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         workspace_id = await _create_workspace(client)
-        resp = await client.delete(f"/api/workspaces/{workspace_id}/preview")
+        resp = await client.delete(f"/_gapt/api/workspaces/{workspace_id}/preview")
         assert resp.status_code == 204
         methods = [m for (m, _, _) in fx.caddy_calls]
         assert methods == ["DELETE"]
@@ -160,7 +160,7 @@ async def test_preview_disabled_when_caddy_unset() -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             workspace_id = await _create_workspace(client)
             resp = await client.post(
-                f"/api/workspaces/{workspace_id}/preview",
+                f"/_gapt/api/workspaces/{workspace_id}/preview",
                 json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
             )
             assert resp.status_code == 412
@@ -173,7 +173,7 @@ async def test_preview_disabled_when_caddy_unset() -> None:
 async def test_share_link_round_trip(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         workspace_id = await _create_workspace(client)
-        resp = await client.post(f"/api/workspaces/{workspace_id}/share?ttl_s=600")
+        resp = await client.post(f"/_gapt/api/workspaces/{workspace_id}/share?ttl_s=600")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["expires_in_s"] == 600
@@ -188,7 +188,7 @@ async def test_share_link_ttl_cap(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         workspace_id = await _create_workspace(client)
         resp = await client.post(
-            f"/api/workspaces/{workspace_id}/share?ttl_s=999999",
+            f"/_gapt/api/workspaces/{workspace_id}/share?ttl_s=999999",
         )
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "share.ttl_too_long"
@@ -204,7 +204,7 @@ async def test_ask_approves_known_workspace_subdomain(fx: _Fx) -> None:
         domain = f"{workspace_id.lower()}.preview.gapt.example"
         # The ask endpoint must NOT require auth — Caddy calls it
         # unauthenticated.
-        resp = await client.get(f"/api/preview/ask?domain={domain}")
+        resp = await client.get(f"/_gapt/api/preview/ask?domain={domain}")
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"domain": domain}
 
@@ -214,7 +214,7 @@ async def test_ask_rejects_unknown_slug(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         # No workspace seeded — any slug should return 404 so Caddy
         # refuses to mint a certificate.
-        resp = await client.get("/api/preview/ask?domain=01k0123456789.preview.gapt.example")
+        resp = await client.get("/_gapt/api/preview/ask?domain=01k0123456789.preview.gapt.example")
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "preview.unknown"
 
@@ -222,6 +222,6 @@ async def test_ask_rejects_unknown_slug(fx: _Fx) -> None:
 @pytest.mark.asyncio
 async def test_ask_rejects_wrong_parent_domain(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        resp = await client.get("/api/preview/ask?domain=evil.elsewhere.com")
+        resp = await client.get("/_gapt/api/preview/ask?domain=evil.elsewhere.com")
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "preview.wrong_domain"

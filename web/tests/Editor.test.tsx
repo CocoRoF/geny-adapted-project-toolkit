@@ -85,7 +85,7 @@ describe("<FileEditor />", () => {
   it("loads the file and shows a Monaco surface for utf-8 content", async () => {
     mockRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/workspaces/ws1/file"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/workspaces/ws1/file"),
         handler: () =>
           jsonResponse(200, { path: "/src/foo.py", encoding: "utf-8", text: "print('hi')\n" }),
       },
@@ -103,7 +103,7 @@ describe("<FileEditor />", () => {
   it("flags binary files as non-editable", async () => {
     mockRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/workspaces/ws1/file"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/workspaces/ws1/file"),
         handler: () =>
           jsonResponse(200, { path: "/img.png", encoding: "base64", text: "iVBORw..." }),
       },
@@ -119,7 +119,7 @@ describe("<FileEditor />", () => {
   it("surfaces an error message when the load fails", async () => {
     mockRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/workspaces/ws1/file"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/workspaces/ws1/file"),
         handler: () =>
           jsonResponse(404, { detail: { code: "workspace.fs.not_found", reason: "missing" } }),
       },

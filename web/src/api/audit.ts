@@ -39,7 +39,7 @@ function buildQuery(query: AuditQuery): string {
 
 export function listProjectAudit(projectId: string, query: AuditQuery = {}): Promise<AuditEntry[]> {
   const qs = buildQuery(query);
-  return apiGet<AuditEntry[]>(`/api/projects/${projectId}/audit${qs ? `?${qs}` : ""}`);
+  return apiGet<AuditEntry[]>(`/_gapt/api/projects/${projectId}/audit${qs ? `?${qs}` : ""}`);
 }
 
 /** Returns the URL pointing at the export endpoint — the UI usually
@@ -56,5 +56,5 @@ export function exportProjectAuditUrl(
   if (query.outcome) params.set("outcome", query.outcome);
   if (query.since) params.set("since", query.since);
   if (query.until) params.set("until", query.until);
-  return `/api/projects/${projectId}/audit/export?${params.toString()}`;
+  return `/_gapt/api/projects/${projectId}/audit/export?${params.toString()}`;
 }

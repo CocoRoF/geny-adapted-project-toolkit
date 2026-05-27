@@ -1,7 +1,7 @@
 """Workspace terminal — WebSocket PTY + log file tail (SSE).
 
-- `WS  /api/workspaces/{wid}/terminal` — bidirectional PTY shell
-- `GET /api/workspaces/{wid}/file-tail?path=...&since_byte=N` — SSE
+- `WS  /_gapt/api/workspaces/{wid}/terminal` — bidirectional PTY shell
+- `GET /_gapt/api/workspaces/{wid}/file-tail?path=...&since_byte=N` — SSE
   tail of a file inside the worktree
 
 WebSocket protocol (JSON frames, both directions):
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["terminal"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["terminal"])
 
 
 # Shell choice: login bash. The container image ships bash by default.

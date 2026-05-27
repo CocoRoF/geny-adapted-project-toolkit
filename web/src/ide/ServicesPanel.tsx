@@ -400,7 +400,7 @@ function ServiceLogTail({
   useEffect(() => {
     setLines([]);
     offsetRef.current = 0;
-    const url = `/api/workspaces/${workspaceId}/file-tail?path=${encodeURIComponent(logPath)}&since_byte=${offsetRef.current}`;
+    const url = `/_gapt/api/workspaces/${workspaceId}/file-tail?path=${encodeURIComponent(logPath)}&since_byte=${offsetRef.current}`;
     const src = new EventSource(url, { withCredentials: true });
     src.onmessage = (ev) => {
       try {

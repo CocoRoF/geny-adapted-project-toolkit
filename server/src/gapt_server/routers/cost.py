@@ -2,9 +2,9 @@
 
 Two views:
 
-- `GET /api/cost/summary?since&until` — actor's projects, totals over
+- `GET /_gapt/api/cost/summary?since&until` — actor's projects, totals over
   the window. Always filtered to projects the actor is a member of.
-- `GET /api/projects/{pid}/cost/daily?since&until` — daily buckets
+- `GET /_gapt/api/projects/{pid}/cost/daily?since&until` — daily buckets
   for one project (membership gated via `fetch_project_for`).
 
 The numbers come from `agent_sessions` directly — same source the SSE
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-router = APIRouter(prefix="/api", tags=["cost"])
+router = APIRouter(prefix="/_gapt/api", tags=["cost"])
 
 
 class CostSummaryRow(BaseModel):

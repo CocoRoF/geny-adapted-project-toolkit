@@ -98,14 +98,14 @@ describe("<CostPanel />", () => {
 
     await waitFor(() => {
       // The "all" preset omits the since param.
-      expect(seen.some((p) => p === "/api/cost/summary")).toBe(true);
+      expect(seen.some((p) => p === "/_gapt/api/cost/summary")).toBe(true);
     });
   });
 
   it("expands a project row and fetches its daily breakdown", async () => {
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
       const p = pathOf(input);
-      if (p.startsWith("/api/projects/p1/cost/daily")) {
+      if (p.startsWith("/_gapt/api/projects/p1/cost/daily")) {
         return Promise.resolve(jsonResponse(200, DAILY));
       }
       return Promise.resolve(jsonResponse(200, SUMMARY));

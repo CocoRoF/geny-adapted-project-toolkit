@@ -1,9 +1,9 @@
 """Preview subdomain + share-link endpoints.
 
-- `POST /api/workspaces/{wid}/preview` — register the workspace's
+- `POST /_gapt/api/workspaces/{wid}/preview` — register the workspace's
   subdomain with Caddy and return the resolved host.
-- `DELETE /api/workspaces/{wid}/preview` — unregister.
-- `POST /api/workspaces/{wid}/share?ttl=` — mint an HMAC-signed
+- `DELETE /_gapt/api/workspaces/{wid}/preview` — unregister.
+- `POST /_gapt/api/workspaces/{wid}/share?ttl=` — mint an HMAC-signed
   share link. The recipient hits `{slug}.{preview_domain}/?share=...`
   and Caddy's request handler validates via this server (M2).
 
@@ -41,11 +41,11 @@ if TYPE_CHECKING:
     from gapt_server.settings import Settings
 
 
-router = APIRouter(prefix="/api/workspaces", tags=["preview"])
+router = APIRouter(prefix="/_gapt/api/workspaces", tags=["preview"])
 
 # Separate router with no auth — Caddy's on-demand TLS hook hits this
-# unauthenticated. Mounted under /api/preview/ask.
-ask_router = APIRouter(prefix="/api/preview", tags=["preview"])
+# unauthenticated. Mounted under /_gapt/api/preview/ask.
+ask_router = APIRouter(prefix="/_gapt/api/preview", tags=["preview"])
 
 
 @ask_router.get("/ask")

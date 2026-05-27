@@ -50,10 +50,10 @@ const TERMINAL_STATUSES = new Set(["success", "failed", "aborted", "rolled_back"
  *   - The deploy itself runs server-side as a background task in
  *     `DeployRegistry`. The HTTP request that triggers it returns
  *     immediately with the `run_id`.
- *   - The UI subscribes to `/api/deploy/runs/{run_id}/stream` via
+ *   - The UI subscribes to `/_gapt/api/deploy/runs/{run_id}/stream` via
  *     SSE. The server replays the captured log on connect, then
  *     live-tails new lines, then closes on `done`.
- *   - On mount, we poll `/api/environments/{env_id}/deploy/active`
+ *   - On mount, we poll `/_gapt/api/environments/{env_id}/deploy/active`
  *     for every env so a tab navigating back to the Deploy view
  *     sees the in-flight run already running — no state lost. */
 export function DeployWorkspace({ projectId }: Props) {

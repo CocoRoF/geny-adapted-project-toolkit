@@ -252,9 +252,9 @@ async def test_upsert_inserts_before_preview_safety_net_404() -> None:
 
 @pytest.mark.asyncio
 async def test_upsert_referer_fallback_lands_above_api_route() -> None:
-    """Prod apps emit root-relative URLs — `/api/v1/posts`, `/_next/
+    """Prod apps emit root-relative URLs — `/_gapt/api/v1/posts`, `/_next/
     static/...`, etc. The Referer-keyed `-asset` fallback must
-    outrank the GAPT control-plane `/api/*` route, otherwise those
+    outrank the GAPT control-plane `/_gapt/api/*` route, otherwise those
     XHR calls 404 against the wrong upstream. The path-keyed
     primary route can stay near the bottom (it only needs to beat
     the safety net + IDE)."""
@@ -262,7 +262,7 @@ async def test_upsert_referer_fallback_lands_above_api_route() -> None:
     existing = [
         {"handle": [{"handler": "encode"}]},
         {"match": [{"path": ["/health"]}], "handle": [{"handler": "reverse_proxy"}]},
-        {"match": [{"path": ["/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/_gapt/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
         {
             "match": [{"path": ["/preview", "/preview/*"]}],
             "handle": [{"handler": "static_response", "status_code": 404}],
@@ -293,10 +293,10 @@ async def test_upsert_referer_fallback_lands_above_api_route() -> None:
     api_idx = next(
         i
         for i, r in enumerate(posted)
-        if "/api/*" in (r.get("match") or [{}])[0].get("path", [])
+        if "/_gapt/api/*" in (r.get("match") or [{}])[0].get("path", [])
     )
     assert asset_idx < api_idx, (
-        "Referer-fallback must run BEFORE /api/* so prod XHR to /api/v1/... "
+        "Referer-fallback must run BEFORE /_gapt/api/* so prod XHR to /_gapt/api/v1/... "
         "hits the deployed app, not the GAPT control plane"
     )
     # Referer-fallback should also outrank the safety-net 404 + IDE.
@@ -495,14 +495,14 @@ async def test_switching_from_path_to_subdomain_drops_stale_fallback_routes() ->
 
 @pytest.mark.asyncio
 async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
-    """The cookie fallback has to outrank `/api/*` and the safety-
+    """The cookie fallback has to outrank `/_gapt/api/*` and the safety-
     net 404 just like the Referer fallback does — both are header-
     only matchers for catching root-relative requests that bypass
     `/preview/<slug>`."""
     calls: list[tuple[str, str, Any]] = []
     existing = [
         {"handle": [{"handler": "encode"}]},
-        {"match": [{"path": ["/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/_gapt/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
         {
             "match": [{"path": ["/preview", "/preview/*"]}],
             "handle": [{"handler": "static_response", "status_code": 404}],
@@ -527,7 +527,7 @@ async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
     )
     api_idx = next(
         i for i, r in enumerate(posted)
-        if "/api/*" in (r.get("match") or [{}])[0].get("path", [])
+        if "/_gapt/api/*" in (r.get("match") or [{}])[0].get("path", [])
     )
     assert cookie_idx < api_idx
 

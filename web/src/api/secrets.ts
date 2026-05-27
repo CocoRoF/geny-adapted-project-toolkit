@@ -25,13 +25,13 @@ export const listSecrets = (params?: { scope?: SecretOwnerScope; owner_id?: stri
   if (params?.scope) q.set("scope", params.scope);
   if (params?.owner_id) q.set("owner_id", params.owner_id);
   const suffix = q.toString();
-  return apiGet<SecretView[]>(`/api/secrets${suffix ? `?${suffix}` : ""}`);
+  return apiGet<SecretView[]>(`/_gapt/api/secrets${suffix ? `?${suffix}` : ""}`);
 };
 
 export const storeSecret = (input: StoreSecretInput) =>
-  apiFetch<SecretView>("/api/secrets", { method: "POST", json: input });
+  apiFetch<SecretView>("/_gapt/api/secrets", { method: "POST", json: input });
 
 export const rotateSecret = (secretId: string, value: string) =>
-  apiPost<SecretView>(`/api/secrets/${secretId}/rotate`, { value });
+  apiPost<SecretView>(`/_gapt/api/secrets/${secretId}/rotate`, { value });
 
-export const deleteSecret = (secretId: string) => apiDelete<void>(`/api/secrets/${secretId}`);
+export const deleteSecret = (secretId: string) => apiDelete<void>(`/_gapt/api/secrets/${secretId}`);

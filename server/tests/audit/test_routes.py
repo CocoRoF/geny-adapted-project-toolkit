@@ -1,4 +1,4 @@
-"""HTTP-level tests for `GET /api/projects/{pid}/audit`."""
+"""HTTP-level tests for `GET /_gapt/api/projects/{pid}/audit`."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ async def fx() -> AsyncIterator[_Fx]:
 
 async def _create_project(client: AsyncClient) -> str:
     created = await client.post(
-        "/api/projects",
+        "/_gapt/api/projects",
         json={
             "slug": "demo",
             "display_name": "Demo",
@@ -105,7 +105,7 @@ async def test_audit_lists_project_events(fx: _Fx) -> None:
         project_id = await _create_project(client)
         await _seed_audit(fx.app, project_id, count=3)
 
-        resp = await client.get(f"/api/projects/{project_id}/audit")
+        resp = await client.get(f"/_gapt/api/projects/{project_id}/audit")
         assert resp.status_code == 200
         body = resp.json()
         # InMemoryAuditSink (the fixture's choice) keeps the
@@ -124,7 +124,7 @@ async def test_audit_filters_by_action_prefix(fx: _Fx) -> None:
         await _seed_audit(fx.app, project_id, count=2)
 
         resp = await client.get(
-            f"/api/projects/{project_id}/audit?action_prefix=test.event."
+            f"/_gapt/api/projects/{project_id}/audit?action_prefix=test.event."
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -138,7 +138,7 @@ async def test_audit_export_csv_round_trip(fx: _Fx) -> None:
         project_id = await _create_project(client)
         await _seed_audit(fx.app, project_id, count=3)
 
-        resp = await client.get(f"/api/projects/{project_id}/audit/export?format=csv")
+        resp = await client.get(f"/_gapt/api/projects/{project_id}/audit/export?format=csv")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/csv")
         assert "attachment" in resp.headers["content-disposition"]
@@ -154,7 +154,7 @@ async def test_audit_export_jsonl_round_trip(fx: _Fx) -> None:
         project_id = await _create_project(client)
         await _seed_audit(fx.app, project_id, count=2)
 
-        resp = await client.get(f"/api/projects/{project_id}/audit/export?format=jsonl")
+        resp = await client.get(f"/_gapt/api/projects/{project_id}/audit/export?format=jsonl")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/x-ndjson")
         lines = resp.text.strip().splitlines()
@@ -173,7 +173,7 @@ async def test_audit_export_respects_action_prefix(fx: _Fx) -> None:
         await _seed_audit(fx.app, project_id, count=4)
 
         resp = await client.get(
-            f"/api/projects/{project_id}/audit/export"
+            f"/_gapt/api/projects/{project_id}/audit/export"
             "?format=jsonl&action_prefix=test.event.1"
         )
         assert resp.status_code == 200

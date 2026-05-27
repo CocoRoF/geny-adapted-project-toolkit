@@ -19,25 +19,25 @@ export interface CreateWorkspaceInput {
 }
 
 export const listWorkspaces = (projectId: string): Promise<WorkspaceResponse[]> =>
-  apiGet<WorkspaceResponse[]>(`/api/projects/${projectId}/workspaces`);
+  apiGet<WorkspaceResponse[]>(`/_gapt/api/projects/${projectId}/workspaces`);
 
 export const createWorkspace = (
   projectId: string,
   input: CreateWorkspaceInput,
 ): Promise<WorkspaceResponse> =>
-  apiPost<WorkspaceResponse>(`/api/projects/${projectId}/workspaces`, input);
+  apiPost<WorkspaceResponse>(`/_gapt/api/projects/${projectId}/workspaces`, input);
 
 export const getWorkspace = (workspaceId: string): Promise<WorkspaceResponse> =>
-  apiGet<WorkspaceResponse>(`/api/workspaces/${workspaceId}`);
+  apiGet<WorkspaceResponse>(`/_gapt/api/workspaces/${workspaceId}`);
 
 export const stopWorkspace = (workspaceId: string): Promise<WorkspaceResponse> =>
-  apiPost<WorkspaceResponse>(`/api/workspaces/${workspaceId}/stop`);
+  apiPost<WorkspaceResponse>(`/_gapt/api/workspaces/${workspaceId}/stop`);
 
 export const startWorkspace = (workspaceId: string): Promise<WorkspaceResponse> =>
-  apiPost<WorkspaceResponse>(`/api/workspaces/${workspaceId}/start`);
+  apiPost<WorkspaceResponse>(`/_gapt/api/workspaces/${workspaceId}/start`);
 
 export const deleteWorkspace = (workspaceId: string): Promise<void> =>
-  apiDelete<void>(`/api/workspaces/${workspaceId}`);
+  apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}`);
 
 /** Fetch the live git-clone log tail (plain text). The runner streams
  * `git clone --progress` stdout/stderr to a file in the worktree so
@@ -47,7 +47,7 @@ export async function getWorkspaceCloneLog(
   tailBytes = 16384,
 ): Promise<string> {
   const resp = await fetch(
-    `/api/workspaces/${workspaceId}/clone-log?tail_bytes=${tailBytes}`,
+    `/_gapt/api/workspaces/${workspaceId}/clone-log?tail_bytes=${tailBytes}`,
     { credentials: "include" },
   );
   if (!resp.ok) return "";

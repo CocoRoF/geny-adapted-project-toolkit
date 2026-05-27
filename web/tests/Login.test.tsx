@@ -28,7 +28,7 @@ describe("<Login />", () => {
   it("submits the email and surfaces the magic link sent state", async () => {
     const sequence: Array<(input: RequestInfo | URL) => Response> = [
       () => jsonResponse(401, { detail: { code: "auth.session.invalid", reason: "" } }), // /me
-      () => jsonResponse(200, { delivered: true }), // /api/auth/magic-link
+      () => jsonResponse(200, { delivered: true }), // /_gapt/api/auth/magic-link
     ];
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
       const handler = sequence.shift();

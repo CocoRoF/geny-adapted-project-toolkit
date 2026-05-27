@@ -7,6 +7,12 @@
 #      the empty container that Cycle 4.4's SubdomainManager
 #      appends routes into.
 #
+# Namespacing: GAPT lives under `/_gapt/` on the apex so preview
+# apps in path mode can freely emit /api/foo, /_next/static/..., or
+# /favicon.png without ever hitting a GAPT route. The single reserved
+# prefix replaces the previous per-feature carve-outs (/api/*, IDE
+# catch-all) — see the dev Caddyfile for the rationale.
+#
 # On-demand TLS lets Caddy mint certificates lazily so the operator
 # doesn't pre-register every preview subdomain. The `ask` endpoint
 # points at GAPT — it returns 200 only for slugs that match an
@@ -20,7 +26,7 @@
     # with `tls { on_demand }` consults `ask` before requesting a
     # cert.
     on_demand_tls {
-        ask http://server:8088/api/preview/ask
+        ask http://server:8088/_gapt/api/preview/ask
         interval 2m
         burst 5
     }
@@ -35,7 +41,8 @@
         format json
     }
 
-    handle /api/* {
+    # ── control plane (namespaced) ──
+    handle /_gapt/api/* {
         reverse_proxy server:8088
     }
 
@@ -45,14 +52,28 @@
         respond 403
     }
 
+    # /health stays at apex root — Prometheus / k8s liveness probes
+    # / uptime monitors all expect it unprefixed.
     handle /health {
         reverse_proxy server:8088
     }
 
-    # Web bundle is served by the same FastAPI app in M1 (no separate
-    # static server). Future cycles may add a CDN here.
-    handle {
+    # ── IDE SPA (namespaced) ──
+    # The FastAPI app is expected to mount the built SPA under
+    # `/_gapt/app/*`. M1 hasn't wired StaticFiles yet — that goes
+    # in the deploy hardening cycle.
+    handle /_gapt/app/* {
         reverse_proxy server:8088
+    }
+
+    # Apex root → 302 to IDE entry.
+    handle / {
+        redir /_gapt/app/ 302
+    }
+
+    # Default 404 — structural protection from leaked preview URLs.
+    handle {
+        respond "Not found." 404
     }
 }
 
@@ -66,6 +87,6 @@
 
     # The admin API will inject the actual reverse_proxy directives.
     # Without an injected route this responder catches the host so
-    # the request doesn't blow up before /api/preview/ask runs.
+    # the request doesn't blow up before /_gapt/api/preview/ask runs.
     respond "GAPT preview not registered" 404
 }

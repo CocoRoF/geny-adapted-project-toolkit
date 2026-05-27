@@ -119,7 +119,7 @@ describe("<ChatPanel />", () => {
   it("shows the empty-state with a Start session button", async () => {
     mockRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/projects/p1/sessions"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/projects/p1/sessions"),
         handler: () => jsonResponse(200, []),
       },
     ]);
@@ -135,13 +135,13 @@ describe("<ChatPanel />", () => {
     mockRoutes([
       {
         match: (input, init) =>
-          pathOf(input).startsWith("/api/projects/p1/sessions") &&
+          pathOf(input).startsWith("/_gapt/api/projects/p1/sessions") &&
           (init?.method ?? "GET") === "GET",
         handler: () => jsonResponse(200, []),
       },
       {
         match: (input, init) =>
-          pathOf(input) === "/api/projects/p1/sessions" && init?.method === "POST",
+          pathOf(input) === "/_gapt/api/projects/p1/sessions" && init?.method === "POST",
         handler: () => jsonResponse(201, SESSION),
       },
     ]);
@@ -161,7 +161,7 @@ describe("<ChatPanel />", () => {
   it("auto-attaches to an existing active session on mount", async () => {
     mockRoutes([
       {
-        match: (input) => pathOf(input).startsWith("/api/projects/p1/sessions"),
+        match: (input) => pathOf(input).startsWith("/_gapt/api/projects/p1/sessions"),
         handler: () => jsonResponse(200, [SESSION]),
       },
     ]);

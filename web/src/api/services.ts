@@ -35,32 +35,32 @@ export interface ExposeResponse {
 }
 
 export const listServices = (workspaceId: string) =>
-  apiGet<WorkspaceService[]>(`/api/workspaces/${workspaceId}/services`);
+  apiGet<WorkspaceService[]>(`/_gapt/api/workspaces/${workspaceId}/services`);
 
 export const startService = (workspaceId: string, input: StartServiceInput) =>
-  apiFetch<WorkspaceService>(`/api/workspaces/${workspaceId}/services`, {
+  apiFetch<WorkspaceService>(`/_gapt/api/workspaces/${workspaceId}/services`, {
     method: "POST",
     json: input,
   });
 
 export const stopService = (workspaceId: string, label: string) =>
-  apiPost<WorkspaceService>(`/api/workspaces/${workspaceId}/services/${label}/stop`);
+  apiPost<WorkspaceService>(`/_gapt/api/workspaces/${workspaceId}/services/${label}/stop`);
 
 export const restartService = (workspaceId: string, label: string) =>
-  apiPost<WorkspaceService>(`/api/workspaces/${workspaceId}/services/${label}/restart`);
+  apiPost<WorkspaceService>(`/_gapt/api/workspaces/${workspaceId}/services/${label}/restart`);
 
 export const deleteService = (workspaceId: string, label: string) =>
-  apiDelete<void>(`/api/workspaces/${workspaceId}/services/${label}`);
+  apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}/services/${label}`);
 
 export const exposeService = (
   workspaceId: string,
   label: string,
   body?: { port?: number; upstream_host?: string },
 ) =>
-  apiFetch<ExposeResponse>(`/api/workspaces/${workspaceId}/services/${label}/expose`, {
+  apiFetch<ExposeResponse>(`/_gapt/api/workspaces/${workspaceId}/services/${label}/expose`, {
     method: "POST",
     json: body ?? {},
   });
 
 export const unexposeService = (workspaceId: string, label: string) =>
-  apiDelete<void>(`/api/workspaces/${workspaceId}/services/${label}/expose`);
+  apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}/services/${label}/expose`);

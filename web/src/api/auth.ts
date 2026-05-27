@@ -14,8 +14,8 @@ export interface LoginRequest {
   password: string;
 }
 
-export const fetchMe = () => apiGet<MeResponse>("/api/auth/me");
+export const fetchMe = () => apiGet<MeResponse>("/_gapt/api/auth/me");
 
-export const login = (body: LoginRequest) => apiPost<void>("/api/auth/login", body);
+export const login = (body: LoginRequest) => apiPost<void>("/_gapt/api/auth/login", body);
 
-export const logout = () => apiPost<void>("/api/auth/logout");
+export const logout = () => apiPost<void>("/_gapt/api/auth/logout");

@@ -26,7 +26,7 @@ export interface Notification {
 }
 
 export function listNotifications(limit = 50): Promise<Notification[]> {
-  return apiGet<Notification[]>(`/api/notifications?limit=${limit}`);
+  return apiGet<Notification[]>(`/_gapt/api/notifications?limit=${limit}`);
 }
 
 export function emitTestNotification(payload: {
@@ -34,5 +34,5 @@ export function emitTestNotification(payload: {
   body?: string;
   severity?: NotificationSeverity;
 }): Promise<Notification> {
-  return apiPost<Notification>("/api/notifications/test", payload);
+  return apiPost<Notification>("/_gapt/api/notifications/test", payload);
 }

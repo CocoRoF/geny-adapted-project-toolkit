@@ -13,7 +13,7 @@ interface UseContainersStreamResult {
   tickCount: number;
 }
 
-/** Subscribes to `/api/performance/stream` (SSE) while:
+/** Subscribes to `/_gapt/api/performance/stream` (SSE) while:
  *   1. the component is mounted, AND
  *   2. `document.visibilityState === "visible"`.
  *
@@ -54,7 +54,7 @@ export function useContainersStream(): UseContainersStreamResult {
       // Same-origin SSE; the session cookie ships automatically.
       // EventSource does *not* let us set headers, so cookie auth
       // is the only sensible option (matches the rest of the API).
-      const src = new EventSource("/api/performance/stream", {
+      const src = new EventSource("/_gapt/api/performance/stream", {
         withCredentials: true,
       });
       sourceRef.current = src;

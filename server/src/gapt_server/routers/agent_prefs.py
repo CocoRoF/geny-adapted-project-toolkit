@@ -1,7 +1,7 @@
 """Admin-global Agent / manifest preferences.
 
-- `GET  /api/agent-prefs`  — current admin prefs (empty record if unset)
-- `PUT  /api/agent-prefs`  — upsert; every field optional, null = clear
+- `GET  /_gapt/api/agent-prefs`  — current admin prefs (empty record if unset)
+- `PUT  /_gapt/api/agent-prefs`  — upsert; every field optional, null = clear
 
 These overrides are read by `ProjectAwareSessionManager.create_session`
 and `rehydrate_session` and patched into the loaded manifest via
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 _ADMIN_PREFS_ID = "admin"
 
 
-router = APIRouter(prefix="/api/agent-prefs", tags=["agent-prefs"])
+router = APIRouter(prefix="/_gapt/api/agent-prefs", tags=["agent-prefs"])
 
 
 # Lower bounds keep obvious abuse out (0 tokens = no response,
