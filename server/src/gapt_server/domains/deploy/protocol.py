@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class DeployTargetError(RuntimeError):
@@ -103,6 +103,14 @@ class DeployResult:
     # routing happened (no SubdomainManager wired / no published port
     # to expose / non-local target without an external URL convention).
     bound_url: str | None = None
+    # Diff of target_options that the deploy auto-tuned (post-deploy
+    # HEAD probe detected a TLS-terminator nginx, etc.). The router
+    # merges these back into `Environment.deploy_target_config` so the
+    # next deploy starts from corrected settings instead of re-
+    # discovering them every time. None means "no tuning happened" or
+    # "target doesn't auto-tune"; an empty dict would have the same
+    # effect but None is more explicit.
+    tuned_target_options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

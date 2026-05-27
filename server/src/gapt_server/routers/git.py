@@ -98,6 +98,15 @@ async def _read_github_token(
         return None
 
 
+def _is_gapt_managed_path(path: str) -> bool:
+    """`.gapt/` is GAPT's runtime scratch dir inside every workspace —
+    service log tails, session caches, etc. The user never writes
+    there; we never want them to see (or stage) any of it. Single
+    check used by both `git status` and the diff endpoint so the UI
+    is consistent across both surfaces."""
+    return path.startswith(".gapt/") or path == ".gapt"
+
+
 async def _git_exec(
     sandbox: WorkspaceSandbox,
     argv: list[str],
@@ -203,6 +212,17 @@ async def git_status(
         elif line.startswith("? "):
             # Untracked: `? path/to/file`
             entries.append(GitStatusEntry(status="??", path=line[2:].strip()))
+
+    # Strip GAPT-managed runtime files from the changes list. These
+    # live under `.gapt/` (service stdout/stderr logs, session caches,
+    # etc.) and have no business showing up in the Source Control
+    # panel — they're noise that clutters the operator's commit flow
+    # and tempts them to accidentally stage `.gapt/services/dev.log`.
+    # Filter is applied AFTER `git status` rather than via
+    # `.gitignore` so we don't mutate the user's repo on workspace
+    # boot — `.gitignore` belongs to the user, GAPT-internal paths
+    # are GAPT's concern alone.
+    entries = [e for e in entries if not _is_gapt_managed_path(e.path)]
 
     rc, out, _ = await _git_exec(
         sandbox,
@@ -556,6 +576,342 @@ async def create_pr(
     except ValueError:
         pass
     return CreatePrResponse(url=url, number=number, log=stdout)
+
+
+# ─── fetch / pull / sync / discard ──────────────────────────────────
+
+
+class GitSyncResponse(BaseModel):
+    """Outcome of a fetch / pull / sync run. `actions` lists the
+    sub-operations the server performed (`fetch`, `pull`, `push`) so
+    the UI can show "Synced — fetched, pulled 3 commits, pushed 2"
+    without a second status round-trip."""
+
+    ok: bool
+    actions: list[str]
+    ahead: int = 0
+    behind: int = 0
+    output: str = ""
+    error: str | None = None
+
+
+async def _git_fetch(sandbox: WorkspaceSandbox, token: str | None) -> tuple[int, str]:
+    """`git fetch origin` — refreshes remote-tracking refs without
+    touching the worktree. Token (when supplied) is injected via the
+    same `http.extraHeader` mechanism the clone path uses so private
+    repos work transparently."""
+    env = {}
+    argv: list[str] = ["fetch", "origin", "--prune"]
+    if token:
+        # Embed the Basic auth via `-c http.extraHeader=...`. Same
+        # pattern as `_default_clone_runner_with_creds` in the
+        # workspace boot path — keeps the token off disk and out of
+        # the URL.
+        import base64  # noqa: PLC0415
+
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        argv = [
+            "-c",
+            f"http.extraHeader=Authorization: Basic {basic}",
+            *argv,
+        ]
+    rc, out, err = await _git_exec(sandbox, argv, env=env, timeout_s=60.0)
+    return rc, (out + err).strip()
+
+
+@router.post(
+    "/{workspace_id}/git/fetch", response_model=GitSyncResponse
+)
+async def git_fetch(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+) -> GitSyncResponse:
+    """Fetch refs from origin. No worktree mutation, no merge — purely
+    refreshes ahead/behind counts. The cheap version of sync, runs in
+    ~1s on small repos."""
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    token = await _read_github_token(
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+    )
+    rc, output = await _git_fetch(sandbox, token)
+    if rc != 0:
+        return GitSyncResponse(
+            ok=False, actions=["fetch"], output=output, error=output[-400:]
+        )
+    ahead, behind = await _ahead_behind(sandbox)
+    return GitSyncResponse(
+        ok=True, actions=["fetch"], ahead=ahead, behind=behind, output=output
+    )
+
+
+@router.post(
+    "/{workspace_id}/git/pull", response_model=GitSyncResponse
+)
+async def git_pull(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+) -> GitSyncResponse:
+    """Fetch + fast-forward merge. Refuses non-fast-forward to keep
+    the operator from accidentally creating a merge commit they
+    didn't want — they can resolve manually via terminal if needed.
+
+    Sequence: fetch → check fast-forward possible → ff-merge. Skips
+    the merge step when already up-to-date (behind=0)."""
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    token = await _read_github_token(
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+    )
+    actions: list[str] = []
+
+    rc, fetch_out = await _git_fetch(sandbox, token)
+    actions.append("fetch")
+    if rc != 0:
+        return GitSyncResponse(
+            ok=False, actions=actions, output=fetch_out, error=fetch_out[-400:]
+        )
+    ahead, behind = await _ahead_behind(sandbox)
+    if behind == 0:
+        return GitSyncResponse(
+            ok=True,
+            actions=actions,
+            ahead=ahead,
+            behind=0,
+            output=fetch_out + "\n(already up to date)",
+        )
+
+    rc, pull_out, pull_err = await _git_exec(
+        sandbox, ["pull", "--ff-only", "--no-rebase"], timeout_s=60.0
+    )
+    actions.append("pull")
+    combined = (fetch_out + "\n" + pull_out + pull_err).strip()
+    if rc != 0:
+        return GitSyncResponse(
+            ok=False,
+            actions=actions,
+            ahead=ahead,
+            behind=behind,
+            output=combined,
+            error=(pull_err or pull_out)[-400:],
+        )
+    new_ahead, new_behind = await _ahead_behind(sandbox)
+    return GitSyncResponse(
+        ok=True,
+        actions=actions,
+        ahead=new_ahead,
+        behind=new_behind,
+        output=combined,
+    )
+
+
+@router.post(
+    "/{workspace_id}/git/sync", response_model=GitSyncResponse
+)
+async def git_sync(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+) -> GitSyncResponse:
+    """VS Code-style "Sync" — combines fetch + pull (ff-only) + push.
+    Each sub-step is best-effort: pull failure (non-ff) stops the
+    chain, push failure with nothing to push is a no-op success.
+    Status flag distinguishes "ahead=0 + behind=0 + nothing pushed"
+    (already synced) from real action."""
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    token = await _read_github_token(
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+    )
+    actions: list[str] = []
+    log_parts: list[str] = []
+
+    rc, out = await _git_fetch(sandbox, token)
+    actions.append("fetch")
+    log_parts.append(f"$ git fetch\n{out}")
+    if rc != 0:
+        return GitSyncResponse(
+            ok=False, actions=actions, output="\n".join(log_parts), error=out[-400:]
+        )
+
+    ahead, behind = await _ahead_behind(sandbox)
+    if behind > 0:
+        rc, p_out, p_err = await _git_exec(
+            sandbox, ["pull", "--ff-only", "--no-rebase"], timeout_s=60.0
+        )
+        actions.append("pull")
+        log_parts.append(f"$ git pull --ff-only\n{(p_out + p_err).strip()}")
+        if rc != 0:
+            return GitSyncResponse(
+                ok=False,
+                actions=actions,
+                ahead=ahead,
+                behind=behind,
+                output="\n\n".join(log_parts),
+                error=(p_err or p_out)[-400:],
+            )
+        ahead, behind = await _ahead_behind(sandbox)
+
+    if ahead > 0:
+        push_env: dict[str, str] = {}
+        push_argv: list[str] = ["push", "origin", "HEAD"]
+        if token:
+            import base64  # noqa: PLC0415
+
+            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            push_argv = [
+                "-c",
+                f"http.extraHeader=Authorization: Basic {basic}",
+                *push_argv,
+            ]
+        rc, p_out, p_err = await _git_exec(
+            sandbox, push_argv, env=push_env, timeout_s=60.0
+        )
+        actions.append("push")
+        log_parts.append(f"$ git push\n{(p_out + p_err).strip()}")
+        if rc != 0:
+            return GitSyncResponse(
+                ok=False,
+                actions=actions,
+                ahead=ahead,
+                behind=behind,
+                output="\n\n".join(log_parts),
+                error=(p_err or p_out)[-400:],
+            )
+        ahead, _ = await _ahead_behind(sandbox)
+
+    return GitSyncResponse(
+        ok=True,
+        actions=actions,
+        ahead=ahead,
+        behind=behind,
+        output="\n\n".join(log_parts),
+    )
+
+
+async def _ahead_behind(sandbox: WorkspaceSandbox) -> tuple[int, int]:
+    """Re-derive ahead/behind via `git status --porcelain=v2 -b` —
+    cheap, matches the same logic as `git_status` so the numbers
+    don't disagree across endpoints."""
+    rc, out, _ = await _git_exec(
+        sandbox, ["status", "--porcelain=v2", "-b"], timeout_s=10.0
+    )
+    if rc != 0:
+        return (0, 0)
+    for line in out.splitlines():
+        if line.startswith("# branch.ab "):
+            parts = line[len("# branch.ab ") :].split()
+            a, b = 0, 0
+            for p in parts:
+                try:
+                    v = int(p)
+                except ValueError:
+                    continue
+                if p.startswith("+"):
+                    a = v
+                elif p.startswith("-"):
+                    b = abs(v)
+            return (a, b)
+    return (0, 0)
+
+
+class GitDiscardRequest(BaseModel):
+    """Paths to revert in the worktree. Tracked files: `git restore
+    --worktree <paths>` (drops uncommitted edits). Untracked files:
+    `rm -- <paths>` (only inside the worktree). Refuses absolute
+    paths + parent-dir traversal to keep this from being a generic
+    fs-delete primitive."""
+
+    paths: list[str] = Field(min_length=1)
+
+
+class GitDiscardResponse(BaseModel):
+    ok: bool
+    discarded: list[str]
+    skipped: list[dict[str, str]]
+
+
+@router.post(
+    "/{workspace_id}/git/discard", response_model=GitDiscardResponse
+)
+async def git_discard(
+    workspace_id: str,
+    payload: GitDiscardRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitDiscardResponse:
+    """Revert unstaged changes per file. For tracked files this is
+    `git restore --worktree <path>` (drops working-tree changes,
+    leaves any staged copy in the index). For untracked files we
+    fall back to `git clean -f -- <path>` so the panel's discard
+    button is one-click regardless of whether the row is `M` or `??`.
+
+    Path-safety: each path must be a non-absolute, non-traversing
+    relative path. The workspace's `/workspace` is the cwd so any
+    `..` segment is rejected outright.
+    """
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+
+    safe: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for p in payload.paths:
+        if not p or p.startswith("/") or ".." in p.split("/") or _is_gapt_managed_path(p):
+            skipped.append({"path": p, "reason": "path rejected by safety filter"})
+            continue
+        safe.append(p)
+    if not safe:
+        return GitDiscardResponse(ok=False, discarded=[], skipped=skipped)
+
+    # `git restore --worktree` works for tracked files; for untracked
+    # files it errors with "fatal: pathspec ... did not match any
+    # file(s) known to git". Run restore first (tracked branch) then
+    # `git clean -f` for whatever's left (untracked branch). Two-pass
+    # keeps the user from needing to know the distinction.
+    rc, restore_out, restore_err = await _git_exec(
+        sandbox, ["restore", "--worktree", "--", *safe], timeout_s=15.0
+    )
+    discarded: list[str] = []
+    still_present: list[str] = []
+    if rc == 0:
+        discarded.extend(safe)
+    else:
+        # Partial success: parse the failures and try clean -f for
+        # those. The error format is one per line: `error: pathspec
+        # '<p>' did not match any file(s) known to git`.
+        import re as _re  # noqa: PLC0415
+
+        unknown = set(_re.findall(r"pathspec '([^']+)'", restore_err))
+        for p in safe:
+            if p in unknown:
+                still_present.append(p)
+            else:
+                discarded.append(p)
+    if still_present:
+        rc, clean_out, clean_err = await _git_exec(
+            sandbox, ["clean", "-f", "--", *still_present], timeout_s=15.0
+        )
+        if rc == 0:
+            discarded.extend(still_present)
+        else:
+            for p in still_present:
+                skipped.append({"path": p, "reason": (clean_err or clean_out)[:200]})
+    return GitDiscardResponse(
+        ok=len(skipped) == 0, discarded=discarded, skipped=skipped
+    )
 
 
 # Anchor for static analysers — the BaseModel imports below are

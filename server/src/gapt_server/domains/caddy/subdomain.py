@@ -27,11 +27,17 @@ unexpose time.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
+import httpx
+import structlog
+
 from gapt_server.domains.caddy.admin_api import CaddyAdminClient, CaddyAdminError
+
+logger = structlog.get_logger(__name__)
 
 
 class PreviewMode(StrEnum):
@@ -539,3 +545,155 @@ class SubdomainManager:
         if not isinstance(body, list):
             return []
         return body
+
+
+# ────────────────────────────────────────────────── auto-tune ──
+
+
+# Pattern: nginx's `return 301 https://$host$request_uri;` produces
+# `Location: https://<domain>/` (or `<domain>/<path>`) where <domain>
+# is whatever `server_name` is configured for. We use this to detect
+# a TLS-terminator upstream + extract the domain it expects in the
+# Host header.
+_LOCATION_HTTPS_HOST_RE = re.compile(r"^https://([^/]+)/?")
+
+
+@dataclass(frozen=True)
+class AutoTuneResult:
+    """Outcome of probing a freshly-registered preview URL. Surfaced
+    in the deploy log so the operator can see what GAPT decided to
+    change, and (when `was_tuned`) propagated back to
+    `Environment.deploy_target_config` so the next deploy starts
+    from the corrected settings instead of re-discovering them every
+    time."""
+
+    final_binding: SubdomainBinding
+    log_lines: list[str]
+    was_tuned: bool
+
+
+async def auto_tune_preview_route(
+    *,
+    initial_binding: SubdomainBinding,
+    bound_url: str,
+    manager: SubdomainManager,
+    max_attempts: int = 2,
+    timeout_s: float = 5.0,
+) -> AutoTuneResult:
+    """Probe `bound_url` and, when the response matches a known
+    misconfiguration pattern, re-register the binding with corrected
+    upstream transport options.
+
+    Today the only pattern auto-tuned is the **TLS-terminator nginx**:
+    user's prod stack ships its own nginx that 301s every HTTP request
+    to HTTPS on the cert's domain (typical Cloudflare-origin-cert
+    setup). Without auto-tune the preview URL silently bounces the
+    operator's browser to the apex root, which then 302s to the IDE —
+    very confusing first-time experience.
+
+    Detection:
+      * status 301/302/307/308 + `Location: https://<domain>/`
+        with `<domain>` not the GAPT preview domain → assume nginx is
+        a TLS terminator that wants HTTPS + Host=<domain>. Re-register
+        with `scheme=https, port=443, tls_insecure=True,
+        host_header=<domain>`.
+
+    We re-probe after each tune; max `max_attempts` iterations so we
+    never loop forever. `was_tuned` is True when the final binding
+    differs from the initial — callers persist it back to env config.
+
+    Probe failures (timeout / connection error / DNS) leave the
+    binding alone; the operator can fix it manually via the Re-route
+    modal. Auto-tune is purely additive — it never makes things worse.
+    """
+    log_lines: list[str] = []
+    current = initial_binding
+    probe_url = bound_url if bound_url.endswith("/") else bound_url + "/"
+
+    # `verify=False` because the GAPT preview domain's cert chain
+    # isn't necessarily what we're probing — we're probing what nginx
+    # responds with, regardless of TLS chain validity. The probe is
+    # advisory; we don't need to trust the response payload.
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with httpx.AsyncClient(
+                verify=False,
+                follow_redirects=False,
+                timeout=timeout_s,
+            ) as client:
+                resp = await client.head(probe_url)
+        except Exception as exc:  # noqa: BLE001
+            log_lines.append(f"[auto-tune {attempt}] probe failed: {exc}")
+            break
+
+        status = resp.status_code
+        location = resp.headers.get("location", "")
+        log_lines.append(
+            f"[auto-tune {attempt}] HEAD {probe_url} → {status}"
+            + (f" Location: {location[:120]}" if location else "")
+        )
+
+        # 2xx + 3xx-to-app-path means the preview is reachable; nothing
+        # to tune. Anything in (200, 399] except the TLS-terminator
+        # 301-to-apex pattern is considered "working".
+        if 200 <= status < 300:
+            log_lines.append("[auto-tune] preview is reachable — no tuning needed")
+            break
+
+        if status in (301, 302, 307, 308):
+            m = _LOCATION_HTTPS_HOST_RE.match(location)
+            if m:
+                detected_host = m.group(1)
+                # Already-tuned safeguard: if scheme is already https
+                # and we still get this pattern, the upstream might be
+                # in a redirect loop. Bail rather than re-tune to the
+                # same values.
+                if current.upstream_scheme == "https" and (
+                    current.upstream_host_header == detected_host
+                ):
+                    log_lines.append(
+                        "[auto-tune] already tuned but still 30x — upstream may "
+                        "have an internal redirect loop, giving up"
+                    )
+                    break
+                tuned = replace(
+                    current,
+                    upstream_port=443,
+                    upstream_scheme="https",
+                    upstream_tls_insecure=True,
+                    upstream_host_header=detected_host,
+                )
+                log_lines.append(
+                    f"[auto-tune] TLS terminator detected → re-registering with "
+                    f"scheme=https port=443 tls=skip-verify host={detected_host}"
+                )
+                try:
+                    await manager.register(tuned)
+                except Exception as exc:  # noqa: BLE001
+                    log_lines.append(
+                        f"[auto-tune] re-register failed: {exc} — keeping original binding"
+                    )
+                    break
+                current = tuned
+                # Brief settle — give Caddy admin a moment to publish.
+                await asyncio.sleep(0.3)
+                continue
+            log_lines.append(
+                f"[auto-tune] 3xx Location doesn't match known pattern — giving up"
+            )
+            break
+
+        # 502 / 503 / 504 / 5xx — likely upstream not yet ready, OR
+        # cert verify failed (Caddy returns 502 on TLS verify failure).
+        # We don't have enough signal to tune blindly; log and bail.
+        log_lines.append(
+            f"[auto-tune] unhandled status {status} — operator action needed "
+            f"(open the Re-route modal)"
+        )
+        break
+
+    return AutoTuneResult(
+        final_binding=current,
+        log_lines=log_lines,
+        was_tuned=current != initial_binding,
+    )

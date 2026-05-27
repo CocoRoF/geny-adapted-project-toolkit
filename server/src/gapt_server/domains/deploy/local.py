@@ -39,7 +39,7 @@ import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gapt_server.domains.deploy.protocol import (
     DeployContext,
@@ -230,10 +230,12 @@ class LocalComposeTarget:
         project: str,
         request: DeployRequest,
         env: dict[str, str],
-    ) -> str | None:
+    ) -> "tuple[Any, str] | None":
         """Connect the primary service container to gapt-net and
-        register a Caddy preview subdomain. Returns the bound URL
-        (`https://prod-<env>.<preview-domain>`) or None when routing
+        register a Caddy preview subdomain. Returns
+        `(initial_binding, bound_url)` on success — the caller uses
+        the binding to drive `auto_tune_preview_route` post-deploy.
+        Returns None when routing
         was skipped (no SubdomainManager wired) / impossible (no
         published ports / can't find primary service).
 
@@ -252,12 +254,39 @@ class LocalComposeTarget:
         if not rows:
             return None
 
-        # Resolve primary service.
+        # Resolve primary service. Priority mirrors
+        # `routers/deploy.stack_reroute` so deploy + reroute pick the
+        # same container without the operator having to manually
+        # specify primary_service each time:
+        #   1. `target_options.primary_service` — explicit win.
+        #   2. Reverse-proxy service names (nginx / proxy / gateway
+        #      / traefik / caddy / envoy). Stacks that ship one of
+        #      these almost always use it as the fan-out point — any
+        #      `/api/*` XHR the SPA makes assumes same-origin, so
+        #      bypassing nginx to hit the frontend container directly
+        #      breaks the app.
+        #   3. Frontend service names (frontend / web / app).
+        #   4. First service with a published port.
+        #   5. First service at all (last resort).
         wanted_service = request.target_options.get("primary_service")
+        reverse_proxy_names = {
+            "nginx", "proxy", "gateway", "traefik", "caddy", "envoy"
+        }
+        frontend_names = {"frontend", "web", "app"}
         primary_row: dict[str, object] | None = None
         if isinstance(wanted_service, str) and wanted_service:
             for row in rows:
                 if row.get("Service") == wanted_service or row.get("Name") == wanted_service:
+                    primary_row = row
+                    break
+        if primary_row is None:
+            for row in rows:
+                if row.get("Service") in reverse_proxy_names:
+                    primary_row = row
+                    break
+        if primary_row is None:
+            for row in rows:
+                if row.get("Service") in frontend_names:
                     primary_row = row
                     break
         if primary_row is None:
@@ -293,6 +322,12 @@ class LocalComposeTarget:
                             primary_port = None
                         if primary_port:
                             break
+        # Reverse-proxy container without a published port — happens
+        # when the user only exposes nginx via the wider stack's
+        # networking. Default to 80 (HTTP) — auto-tune will flip it
+        # to 443 if the upstream is TLS-terminating.
+        if primary_port is None and primary_row.get("Service") in reverse_proxy_names:
+            primary_port = 80
         if primary_port is None:
             # No port to route — leave it; the deploy still succeeded.
             return None
@@ -371,7 +406,7 @@ class LocalComposeTarget:
             upstream_tls_insecure=upstream_tls_insecure,
         )
         host = await self.subdomain_manager.register(binding)
-        return f"https://{host}"
+        return (binding, f"https://{host}")
 
     async def deploy(self, ctx: DeployContext) -> DeployResult:
         request = ctx.request
@@ -440,18 +475,64 @@ class LocalComposeTarget:
             # the deploy (the stack is up; routing is the cherry on
             # top). We log the failure into log_tail so the user sees
             # it in the SSE stream.
+            tuned_options: dict[str, Any] | None = None
             try:
-                bound_url = await self._route_primary_service(
+                routed = await self._route_primary_service(
                     project=project,
                     request=request,
                     env=env,
                 )
-                state.bound_url = bound_url
-                if bound_url:
+                if routed is not None:
+                    initial_binding, bound_url = routed
+                    state.bound_url = bound_url
                     state.log_tail = (
                         state.log_tail
                         + f"\n[gapt] routed prod stack → {bound_url}\n"
                     )[-2000:]
+                    # Auto-tune: HEAD-probe the URL we just registered
+                    # and re-register with corrected upstream transport
+                    # if the response matches a known misconfiguration
+                    # (TLS-terminator nginx, etc.). Without this the
+                    # operator's first deploy of a Cloudflare-origin-
+                    # cert stack silently 301s to the apex and the
+                    # preview URL appears broken until they discover
+                    # the Re-route modal.
+                    from gapt_server.domains.caddy.subdomain import (  # noqa: PLC0415
+                        auto_tune_preview_route,
+                    )
+
+                    try:
+                        result = await auto_tune_preview_route(
+                            initial_binding=initial_binding,
+                            bound_url=bound_url,
+                            manager=self.subdomain_manager,
+                        )
+                        for line in result.log_lines:
+                            state.log_tail = (state.log_tail + line + "\n")[-2000:]
+                        if result.was_tuned:
+                            # Propagate the tuned upstream-* fields so
+                            # the router can persist them to
+                            # `Environment.deploy_target_config`. The
+                            # set mirrors the SubdomainBinding fields
+                            # the StackRerouteBody / config knows about.
+                            b = result.final_binding
+                            tuned_options = {
+                                "upstream_scheme": b.upstream_scheme,
+                                "upstream_port": b.upstream_port,
+                                "primary_port": b.upstream_port,
+                                "upstream_tls_insecure": b.upstream_tls_insecure,
+                                "upstream_host_header": b.upstream_host_header,
+                            }
+                            state.log_tail = (
+                                state.log_tail
+                                + f"[gapt] auto-tune persisted to env config: {tuned_options}\n"
+                            )[-2000:]
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("deploy.auto_tune_failed", exc_info=exc)
+                        state.log_tail = (
+                            state.log_tail
+                            + f"\n[gapt] auto-tune skipped: {exc}\n"
+                        )[-2000:]
             except Exception as exc:
                 logger.warning("deploy.routing_failed", exc_info=exc)
                 state.log_tail = (
@@ -465,6 +546,7 @@ class LocalComposeTarget:
                 status=state.status,
                 log=state.log_tail,
                 bound_url=state.bound_url,
+                tuned_target_options=tuned_options,
             )
         finally:
             # Zeroize the secret dict so a heap dump can't surface it.

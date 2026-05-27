@@ -230,6 +230,23 @@ interface EditorState {
   configText: string;
   require2fa: boolean;
   costMultiplier: string;
+  // "TLS terminator nginx" assist — structured fields encoded into
+  // the config JSON. When enabled, GAPT pre-fills the upstream-*
+  // overrides that match the typical Cloudflare-origin-cert nginx
+  // pattern so the user doesn't have to figure out from a failed
+  // deploy that they need HTTPS + skip-verify + Host rewrite.
+  tlsTerminator: boolean;
+  tlsDomain: string;
+  tlsService: string;
+  tlsPort: string;
+}
+
+/** Heuristic: a config that already has scheme=https + tls_insecure
+ * = true is almost certainly the TLS-terminator pattern. Surfacing
+ * it via the structured fields on edit means the operator sees their
+ * past choice as a checkbox + fields, not a JSON blob. */
+function detectTlsTerminator(cfg: Record<string, unknown>): boolean {
+  return cfg.upstream_scheme === "https" && cfg.upstream_tls_insecure === true;
 }
 
 function envToEditorState(env: EnvironmentResponse | null): EditorState {
@@ -240,14 +257,24 @@ function envToEditorState(env: EnvironmentResponse | null): EditorState {
       configText: JSON.stringify({ compose_path: "docker-compose.yml" }, null, 2),
       require2fa: false,
       costMultiplier: "1.0",
+      tlsTerminator: false,
+      tlsDomain: "",
+      tlsService: "nginx",
+      tlsPort: "443",
     };
   }
+  const cfg = env.deploy_target_config ?? {};
+  const tlsOn = detectTlsTerminator(cfg);
   return {
     name: env.name,
     kind: env.deploy_target_kind,
-    configText: JSON.stringify(env.deploy_target_config, null, 2),
+    configText: JSON.stringify(cfg, null, 2),
     require2fa: env.require_2fa ?? false,
     costMultiplier: String(env.cost_multiplier ?? 1),
+    tlsTerminator: tlsOn,
+    tlsDomain: typeof cfg.upstream_host_header === "string" ? cfg.upstream_host_header : "",
+    tlsService: typeof cfg.primary_service === "string" ? cfg.primary_service : "nginx",
+    tlsPort: typeof cfg.primary_port === "number" ? String(cfg.primary_port) : "443",
   };
 }
 
@@ -277,6 +304,35 @@ function EnvironmentEditorModal({
     if (typeof config !== "object" || config === null) {
       setErr("config must be a JSON object");
       return;
+    }
+    // Merge TLS-terminator structured fields back into the config
+    // JSON. We OVERWRITE the matching keys (the structured fields
+    // are the source of truth when the checkbox is on) so the user
+    // can't accidentally leave stale JSON values. When the checkbox
+    // is OFF we clear the upstream-* keys so a previously-tuned env
+    // can be reverted to plain HTTP via the UI.
+    if (state.kind === "local") {
+      if (state.tlsTerminator) {
+        const port = Number.parseInt(state.tlsPort, 10);
+        config.upstream_scheme = "https";
+        config.upstream_tls_insecure = true;
+        config.upstream_host_header = state.tlsDomain.trim();
+        config.primary_service = state.tlsService.trim() || "nginx";
+        config.primary_port = Number.isFinite(port) && port > 0 ? port : 443;
+        // strip_prefix=true is the right default for nginx that
+        // doesn't know about /preview/<slug> — see the
+        // StackRerouteHelpModal scenarios table.
+        if (config.strip_prefix === undefined) {
+          config.strip_prefix = true;
+        }
+      } else {
+        // Toggle off: clean up the TLS-terminator keys. Keep
+        // primary_service / primary_port as-is in case the user set
+        // them deliberately for a non-TLS upstream.
+        delete config.upstream_scheme;
+        delete config.upstream_tls_insecure;
+        delete config.upstream_host_header;
+      }
     }
     const payload: EnvironmentPayload = {
       name: state.name.trim(),
@@ -341,6 +397,79 @@ function EnvironmentEditorModal({
             </Select>
           </Field>
         </div>
+
+        {state.kind === "local" ? (
+          <div className="rounded-md border border-border bg-bg-subtle/40 p-3">
+            <label className="flex cursor-pointer items-start gap-2 text-[12.5px]">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5"
+                checked={state.tlsTerminator}
+                onChange={(e) =>
+                  setState((s) => ({ ...s, tlsTerminator: e.target.checked }))
+                }
+                disabled={busy}
+              />
+              <span>
+                <span className="font-medium text-fg">
+                  This stack ships its own TLS-terminator nginx (Cloudflare-origin-cert pattern)
+                </span>
+                <span className="block text-[11px] text-fg-muted">
+                  Check this when your prod stack has an internal nginx that
+                  forces HTTP→HTTPS and routes by <code>server_name</code>.
+                  GAPT will dial it over HTTPS (skip-verify, since the
+                  internal docker DNS name won't match the public cert) and
+                  rewrite the Host header to the domain you specify.
+                </span>
+              </span>
+            </label>
+            {state.tlsTerminator ? (
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <Field
+                  label="Public domain"
+                  hint="nginx server_name (e.g. example.com)"
+                >
+                  <Input
+                    value={state.tlsDomain}
+                    onChange={(e) =>
+                      setState((s) => ({ ...s, tlsDomain: e.target.value }))
+                    }
+                    placeholder="example.com"
+                    disabled={busy}
+                  />
+                </Field>
+                <Field
+                  label="nginx service"
+                  hint="compose service name"
+                >
+                  <Input
+                    value={state.tlsService}
+                    onChange={(e) =>
+                      setState((s) => ({ ...s, tlsService: e.target.value }))
+                    }
+                    placeholder="nginx"
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="HTTPS port" hint="nginx container's TLS port">
+                  <Input
+                    value={state.tlsPort}
+                    onChange={(e) =>
+                      setState((s) => ({ ...s, tlsPort: e.target.value }))
+                    }
+                    placeholder="443"
+                    inputMode="numeric"
+                    disabled={busy}
+                  />
+                </Field>
+              </div>
+            ) : null}
+            <p className="mt-2 text-[10.5px] text-fg-subtle">
+              Not sure? Leave unchecked and deploy — GAPT auto-detects this
+              pattern on the first probe and offers to apply it.
+            </p>
+          </div>
+        ) : null}
 
         <Field
           label="Target config (JSON)"

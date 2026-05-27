@@ -37,8 +37,47 @@ export interface CreatePrResponse {
   log: string;
 }
 
+/** Outcome of a fetch / pull / sync run. `actions` lists each
+ * sub-operation that ran so the UI can render "Synced — fetched +
+ * pulled 3 + pushed 2" with one round-trip. */
+export interface GitSyncResponse {
+  ok: boolean;
+  actions: string[];
+  ahead: number;
+  behind: number;
+  output: string;
+  error: string | null;
+}
+
+export interface GitDiscardResponse {
+  ok: boolean;
+  discarded: string[];
+  skipped: { path: string; reason: string }[];
+}
+
 export const getGitStatus = (wid: string) =>
   apiGet<GitStatusResponse>(`/_gapt/api/workspaces/${wid}/git/status`);
+
+export const gitFetch = (wid: string) =>
+  apiFetch<GitSyncResponse>(`/_gapt/api/workspaces/${wid}/git/fetch`, {
+    method: "POST",
+  });
+
+export const gitPull = (wid: string) =>
+  apiFetch<GitSyncResponse>(`/_gapt/api/workspaces/${wid}/git/pull`, {
+    method: "POST",
+  });
+
+export const gitSync = (wid: string) =>
+  apiFetch<GitSyncResponse>(`/_gapt/api/workspaces/${wid}/git/sync`, {
+    method: "POST",
+  });
+
+export const gitDiscard = (wid: string, paths: string[]) =>
+  apiFetch<GitDiscardResponse>(`/_gapt/api/workspaces/${wid}/git/discard`, {
+    method: "POST",
+    json: { paths },
+  });
 
 export const getGitDiff = (wid: string, path: string, staged = false) =>
   apiGet<GitDiffResponse>(

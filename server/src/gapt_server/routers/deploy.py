@@ -333,6 +333,11 @@ async def trigger_deploy(
         actor_id=user.id,
         trigger_kind="manual",
     )
+    # Persist auto-tuned upstream options back to the env so the next
+    # deploy starts from the corrected settings instead of probing +
+    # re-tuning every time. The probe is fast (~5s) but it adds noise
+    # to the deploy log and slows down the URL-reachable transition.
+    _persist_tuned_options(env_row, result.tuned_target_options)
     await db.commit()
 
     return DeployResultResponse(
@@ -342,6 +347,34 @@ async def trigger_deploy(
         log=result.log,
         bound_url=result.bound_url,
     )
+
+
+def _persist_tuned_options(
+    env_row: "models.Environment", tuned: dict[str, Any] | None
+) -> None:
+    """Merge auto-tuned upstream-* options into the env's stored
+    `deploy_target_config`. Idempotent — same values written twice
+    don't churn the row. Skipped when nothing was tuned."""
+    if not tuned:
+        return
+    current = (
+        env_row.deploy_target_config
+        if isinstance(env_row.deploy_target_config, dict)
+        else {}
+    )
+    merged = dict(current)
+    changed = False
+    for key, value in tuned.items():
+        if merged.get(key) != value:
+            merged[key] = value
+            changed = True
+    if changed:
+        env_row.deploy_target_config = merged
+        logger.info(
+            "deploy.tuned_options_persisted",
+            env_id=env_row.id,
+            tuned=tuned,
+        )
 
 
 @router.post(
