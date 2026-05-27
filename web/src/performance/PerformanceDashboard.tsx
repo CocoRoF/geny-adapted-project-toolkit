@@ -30,6 +30,7 @@ import {
   type HostInfo,
   type ProjectRow,
   type WorkspaceRow,
+  type WorkspaceServiceRow,
   getGpuInfo,
   getHostInfo,
   killContainer,
@@ -171,6 +172,17 @@ function buildTree(resp: ContainersResponse): {
     ensureProject(s.summary.project_id).unbucketed.push(s);
   }
 
+  // Inject placeholder rows for envs in the DB that DON'T currently
+  // have any running container — without this an env whose stack
+  // is down disappears entirely from the dashboard and the operator
+  // can't tell whether it was ever deployed. `ensureEnv` is a no-op
+  // when the env already has containers from the loop above.
+  for (const e of resp.environments) {
+    if (!e.project_id) continue;
+    const proj = ensureProject(e.project_id);
+    ensureEnv(proj, e.id);
+  }
+
   // Sort workspaces by branch and envs by name within each project.
   for (const p of projects.values()) {
     p.workspaces.sort((a, b) =>
@@ -184,16 +196,26 @@ function buildTree(resp: ContainersResponse): {
       ),
     );
   }
-  // Split real (has DB row) from orphan (project_id was null OR id
-  // didn't resolve to a row). Real first, both sorted alpha by
-  // display name; orphan id slug as the tiebreaker.
+  // Split real from orphan. A project is "real" only when its DB row
+  // exists AND isn't archived. Archived projects join the orphan
+  // bucket so the operator notices they're holding leftover
+  // containers — but we keep the row reference around so the header
+  // can still show the human-readable name + an "archived" badge.
   const all = Array.from(projects.values());
   const realProjects = all
-    .filter((p) => p.project !== null)
+    .filter((p) => p.project !== null && !p.project.archived_at)
     .sort((a, b) => a.display_name.localeCompare(b.display_name));
   const orphanProjects = all
-    .filter((p) => p.project === null)
-    .sort((a, b) => (a.project_id ?? "").localeCompare(b.project_id ?? ""));
+    .filter((p) => p.project === null || !!p.project?.archived_at)
+    .sort((a, b) => {
+      // Archived (has name) sorts before fully-orphan (no name).
+      const aArchived = !!a.project?.archived_at;
+      const bArchived = !!b.project?.archived_at;
+      if (aArchived !== bArchived) return aArchived ? -1 : 1;
+      return (a.display_name || a.project_id || "").localeCompare(
+        b.display_name || b.project_id || "",
+      );
+    });
   return { realProjects, orphanProjects, infra, other };
 }
 
@@ -742,10 +764,21 @@ function ProjectGroup({
   const cpu = allSamples.reduce((s, c) => s + (c.stats?.cpu_pct ?? 0), 0);
   const mem = allSamples.reduce((s, c) => s + (c.stats?.mem_bytes ?? 0), 0);
   const running = allSamples.filter((c) => c.summary.status === "running").length;
+  const isArchived = !!tree.project?.archived_at;
   return (
-    <section className="overflow-hidden rounded-md border border-border bg-bg-elevated">
+    <section
+      className={cn(
+        "overflow-hidden rounded-md border bg-bg-elevated",
+        isArchived ? "border-warn/40" : "border-border",
+      )}
+    >
       <header
-        className="flex cursor-pointer items-center gap-2 border-b border-border bg-bg-subtle px-3 py-2"
+        className={cn(
+          "flex cursor-pointer flex-wrap items-center gap-2 border-b px-3 py-2",
+          isArchived
+            ? "border-warn/30 bg-warn/5"
+            : "border-border bg-bg-subtle",
+        )}
         onClick={() => setOpen((x) => !x)}
       >
         {open ? (
@@ -753,10 +786,36 @@ function ProjectGroup({
         ) : (
           <ChevronRight className="h-4 w-4 text-fg-muted" />
         )}
-        <FolderOpen className="h-4 w-4 text-accent" strokeWidth={1.5} />
-        <strong className="text-[13px] text-fg">{tree.display_name}</strong>
+        <FolderOpen
+          className={cn("h-4 w-4", isArchived ? "text-warn" : "text-accent")}
+          strokeWidth={1.5}
+        />
+        <strong
+          className={cn(
+            "text-[13px]",
+            isArchived ? "text-fg-muted line-through decoration-warn/60" : "text-fg",
+          )}
+        >
+          {tree.display_name}
+        </strong>
         {tree.project ? (
           <code className="text-[10.5px] text-fg-subtle">{tree.project.slug}</code>
+        ) : null}
+        {isArchived ? (
+          <Badge tone="warn" className="text-[9.5px]">
+            {t("performance.project.archived")}
+          </Badge>
+        ) : null}
+        {isArchived && allSamples.length > 0 ? (
+          <span
+            className="text-[10px] text-warn"
+            title={t("performance.project.archived_hint_title")}
+          >
+            {t("performance.project.archived_hint").replace(
+              "{n}",
+              String(allSamples.length),
+            )}
+          </span>
         ) : null}
         <span className="ml-auto flex items-center gap-3 text-[11px] tabular-nums text-fg-muted">
           <span>{running} {t("performance.running_lower")}</span>
@@ -791,10 +850,11 @@ function ProjectGroup({
 function WorkspaceGroup({ ws, ...rest }: { ws: TreeWorkspace } & RowHelpers) {
   const { t } = useI18n();
   const [open, setOpen] = useState(true);
+  const services = ws.workspace?.services ?? [];
   return (
     <div className="bg-bg-elevated">
       <header
-        className="flex cursor-pointer items-center gap-2 border-b border-border bg-bg px-4 py-1.5"
+        className="flex cursor-pointer flex-wrap items-center gap-2 border-b border-border bg-bg px-4 py-1.5"
         onClick={() => setOpen((x) => !x)}
       >
         {open ? (
@@ -818,6 +878,9 @@ function WorkspaceGroup({ ws, ...rest }: { ws: TreeWorkspace } & RowHelpers) {
         <code className="text-[10px] text-fg-subtle">
           {ws.workspace_id.slice(0, 12).toLowerCase()}…
         </code>
+        {services.map((s) => (
+          <ServiceBadge key={s.label} service={s} />
+        ))}
       </header>
       {open
         ? ws.containers.map((s) => <ContainerRow key={s.summary.id} sample={s} {...rest} />)
@@ -826,16 +889,71 @@ function WorkspaceGroup({ ws, ...rest }: { ws: TreeWorkspace } & RowHelpers) {
   );
 }
 
+/** Compact pill summarising one ServiceRegistry entry running inside
+ * a workspace. Without these, the dashboard can show CPU load on the
+ * workspace container but not WHICH service is driving it. */
+function ServiceBadge({ service }: { service: WorkspaceServiceRow }) {
+  const { t } = useI18n();
+  const tone =
+    service.state === "running"
+      ? "success"
+      : service.state === "starting"
+        ? "accent"
+        : service.state === "failed"
+          ? "danger"
+          : "neutral";
+  const port = service.port ?? service.auto_port ?? null;
+  return (
+    <span
+      title={service.cmd}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[9.5px]",
+        tone === "success" && "border-success/40 bg-success/10 text-success",
+        tone === "accent" && "border-accent/40 bg-accent/10 text-accent",
+        tone === "danger" && "border-danger/40 bg-danger/10 text-danger",
+        tone === "neutral" && "border-border bg-bg-subtle text-fg-muted",
+      )}
+    >
+      <ServerCog className="h-2.5 w-2.5" strokeWidth={1.5} />
+      <span>{service.label}</span>
+      {port ? <span className="opacity-70">:{port}</span> : null}
+      <span className="opacity-70">
+        · {t(`performance.svc.state.${service.state}` as never)}
+      </span>
+      {service.bound_url ? (
+        <a
+          href={service.bound_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="ml-0.5 underline decoration-dotted underline-offset-2"
+          title={t("performance.svc.exposed")}
+        >
+          ↗
+        </a>
+      ) : null}
+    </span>
+  );
+}
+
 function EnvironmentGroup({
   env,
   ...rest
 }: { env: TreeEnvironment } & RowHelpers) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(true);
+  const isStopped = env.containers.length === 0;
+  const [open, setOpen] = useState(!isStopped);
+  const lastStatus = env.environment?.last_deploy_status;
+  const lastAt = env.environment?.last_deploy_at;
+  const lastVersion = env.environment?.last_deploy_version;
+  const lastBoundUrl = env.environment?.last_bound_url;
   return (
-    <div className="bg-bg-elevated">
+    <div className={cn("bg-bg-elevated", isStopped && "opacity-75")}>
       <header
-        className="flex cursor-pointer items-center gap-2 border-b border-border bg-bg px-4 py-1.5"
+        className={cn(
+          "flex cursor-pointer flex-wrap items-center gap-2 border-b border-border px-4 py-1.5",
+          isStopped ? "bg-bg-subtle/40" : "bg-bg",
+        )}
         onClick={() => setOpen((x) => !x)}
       >
         {open ? (
@@ -843,17 +961,79 @@ function EnvironmentGroup({
         ) : (
           <ChevronRight className="h-3.5 w-3.5 text-fg-muted" />
         )}
-        <Rocket className="h-3.5 w-3.5 text-warn" strokeWidth={1.5} />
-        <span className="text-[12px] font-medium text-fg">
+        <Rocket
+          className={cn(
+            "h-3.5 w-3.5",
+            isStopped ? "text-fg-subtle" : "text-warn",
+          )}
+          strokeWidth={1.5}
+        />
+        <span
+          className={cn(
+            "text-[12px] font-medium",
+            isStopped ? "text-fg-muted" : "text-fg",
+          )}
+        >
           {env.environment?.name ?? env.environment_id} ({t("performance.prod_stack")})
         </span>
+        {isStopped ? (
+          <Badge tone="neutral" className="text-[9.5px]">
+            {t("performance.env.stopped")}
+          </Badge>
+        ) : null}
+        {lastStatus ? (
+          <Badge
+            tone={
+              lastStatus === "success"
+                ? "success"
+                : lastStatus === "failed"
+                  ? "danger"
+                  : lastStatus === "rolled_back" || lastStatus === "aborted"
+                    ? "warn"
+                    : "accent"
+            }
+            className="text-[9.5px]"
+          >
+            {t("performance.env.last_deploy")} · {lastStatus}
+          </Badge>
+        ) : null}
+        {lastVersion ? (
+          <code className="text-[10px] text-fg-subtle" title={lastVersion}>
+            {lastVersion}
+          </code>
+        ) : null}
+        {lastAt ? (
+          <span className="text-[10px] text-fg-subtle">
+            {new Date(lastAt).toLocaleString()}
+          </span>
+        ) : null}
         <code className="text-[10px] text-fg-subtle">
           {env.environment_id.slice(0, 12).toLowerCase()}…
         </code>
+        {isStopped && lastBoundUrl ? (
+          <a
+            href={lastBoundUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="ml-auto text-[10px] text-fg-subtle underline decoration-dotted underline-offset-2 hover:text-fg"
+            title={t("performance.env.last_url")}
+          >
+            ↗ {lastBoundUrl.replace(/^https?:\/\//, "")}
+          </a>
+        ) : null}
       </header>
-      {open
-        ? env.containers.map((s) => <ContainerRow key={s.summary.id} sample={s} {...rest} />)
-        : null}
+      {open ? (
+        isStopped ? (
+          <p className="px-4 py-2 text-[11px] text-fg-subtle">
+            {t("performance.env.stopped_hint")}
+          </p>
+        ) : (
+          env.containers.map((s) => (
+            <ContainerRow key={s.summary.id} sample={s} {...rest} />
+          ))
+        )
+      ) : null}
     </div>
   );
 }

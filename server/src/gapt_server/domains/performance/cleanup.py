@@ -114,13 +114,20 @@ def _is_orphan(
     sample: ContainerSample,
     workspaces_by_id: dict[str, "models.Workspace"],
     environments_by_id: dict[str, "models.Environment"],
+    archived_project_ids: set[str],
 ) -> bool:
     """A sample is orphan when its workspace_id / environment_id
-    don't resolve to a live DB row.
+    don't resolve to a live DB row, OR when its owning project has
+    been archived.
 
     Edge cases:
-      * Archived workspace → row exists but `archived_at != null`
+      * Archived workspace → row exists but `status == ARCHIVED`
         → treated as orphan (the user already said "stop using this").
+      * Archived parent project → the cascade should have flipped
+        the workspace status, but if it failed mid-way OR the project
+        was archived before the cascade existed, the workspace row
+        still says RUNNING. Cross-check the project's archived state
+        as a backstop so the dashboard never leaves zombies behind.
       * agent-runtime `gapt-<ULID>` containers (no workspace_id label
         and not workspace category) → orphan unless project_id
         somehow resolves.
@@ -134,14 +141,23 @@ def _is_orphan(
             return True
         from gapt_server.db import enums  # noqa: PLC0415 — avoid module cycle
 
-        # `Workspace` doesn't carry a soft-delete timestamp; status
-        # is the source of truth for archived state.
-        return row.status == enums.WorkspaceStatus.ARCHIVED
+        if row.status == enums.WorkspaceStatus.ARCHIVED:
+            return True
+        # Project-level backstop: the workspace status might still be
+        # RUNNING because the cascade failed on this row, but the
+        # project itself was archived → no point keeping the container.
+        return row.project_id in archived_project_ids
     if sample.summary.category == ContainerCategory.PROD:
         env_id = sample.summary.environment_id
         if env_id is None:
             return True
-        return environments_by_id.get(env_id) is None
+        env = environments_by_id.get(env_id)
+        if env is None:
+            return True
+        # Same project-level backstop as workspaces — a prod stack
+        # whose owning project is archived has no legitimate reason
+        # to keep running.
+        return env.project_id in archived_project_ids
     # Infra (`gapt-dev-*`) is never orphan — those are control-plane.
     if sample.summary.category == ContainerCategory.INFRA:
         return False
@@ -155,14 +171,18 @@ async def build_plan(
     workspaces_by_id: dict[str, "models.Workspace"],
     environments_by_id: dict[str, "models.Environment"],
     caddy_manager: "SubdomainManager | None",
+    archived_project_ids: set[str] | None = None,
 ) -> OrphanPlan:
     """Snapshot the host + DB state once, return the cleanup target
     list. The same function backs both the dry-run preview and the
     real cleanup — we never trust the client's idea of "this is an
     orphan", we recompute it server-side."""
     samples = await sampler.sample_all()
+    archived = archived_project_ids or set()
     orphan_samples = [
-        s for s in samples if _is_orphan(s, workspaces_by_id, environments_by_id)
+        s
+        for s in samples
+        if _is_orphan(s, workspaces_by_id, environments_by_id, archived)
     ]
 
     targets: list[OrphanTarget] = []

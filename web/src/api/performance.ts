@@ -58,6 +58,25 @@ export interface ProjectRow {
   id: string;
   slug: string;
   display_name: string;
+  /** ISO timestamp if archived, otherwise null. Frontend uses this to
+   * route the project's containers into the archived/orphan bucket
+   * (so the user can clean them up) while still showing the human-
+   * readable name in the dashboard. */
+  archived_at?: string | null;
+}
+
+/** Dev-server process running inside a workspace container.
+ * Sourced from ServiceRegistry — `npm run dev`, `python -m http.server`,
+ * etc. These don't surface as separate docker containers (they run via
+ * `docker exec`), so the dashboard needs this side-channel to show
+ * what's actually live inside a workspace. */
+export interface WorkspaceServiceRow {
+  label: string;
+  cmd: string;
+  port: number | null;
+  auto_port: number | null;
+  state: string;
+  bound_url: string | null;
 }
 
 export interface WorkspaceRow {
@@ -65,12 +84,20 @@ export interface WorkspaceRow {
   project_id: string;
   branch: string;
   status: string;
+  services?: WorkspaceServiceRow[];
 }
 
 export interface EnvironmentRow {
   id: string;
   project_id: string;
   name: string;
+  /** Snapshot of the most recent DeployRun for this env. Populated even
+   * when the stack is currently down — lets the dashboard render a
+   * "stopped · last deployed X ago" placeholder. */
+  last_deploy_status?: string | null;
+  last_deploy_at?: string | null;
+  last_deploy_version?: string | null;
+  last_bound_url?: string | null;
 }
 
 export interface ContainersResponse {

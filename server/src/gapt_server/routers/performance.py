@@ -85,9 +85,12 @@ def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
         broadcaster = PerformanceBroadcaster(sampler=_get_sampler())
 
         async def _build_payload(samples: list[ContainerSample]) -> dict:
-            projects, workspaces, environments = await _load_db_context_isolated(
-                container
+            db_ctx, last_deploys = await asyncio.gather(
+                _load_db_context_isolated(container),
+                _load_last_deploys(container),
             )
+            projects, workspaces, environments = db_ctx
+            svc_by_workspace = _snapshot_workspace_services(container)
             enriched: list[ContainerSample] = []
             for s in samples:
                 enriched.append(
@@ -105,21 +108,22 @@ def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
             return {
                 "samples": [_sample_dto(s).model_dump() for s in enriched],
                 "projects": [
-                    {"id": p.id, "slug": p.slug, "display_name": p.display_name}
+                    {
+                        "id": p.id,
+                        "slug": p.slug,
+                        "display_name": p.display_name,
+                        "archived_at": (
+                            p.archived_at.isoformat() if p.archived_at else None
+                        ),
+                    }
                     for p in projects.values()
                 ],
                 "workspaces": [
-                    {
-                        "id": w.id,
-                        "project_id": w.project_id,
-                        "branch": w.branch,
-                        "status": w.status.value,
-                    }
-                    for w in workspaces.values()
+                    w.model_dump()
+                    for w in _build_workspace_dtos(workspaces, svc_by_workspace)
                 ],
                 "environments": [
-                    {"id": e.id, "project_id": e.project_id, "name": e.name}
-                    for e in environments.values()
+                    e.model_dump() for e in _build_env_dtos(environments, last_deploys)
                 ],
                 "total_containers": len(enriched),
                 "running_containers": running,
@@ -191,6 +195,26 @@ class ProjectDto(BaseModel):
     id: str
     slug: str
     display_name: str
+    # ISO timestamp when the project was archived (or None if still
+    # live). Lets the frontend visually downrank archived projects +
+    # offer a cleanup CTA without filtering them out entirely (which
+    # would lose the human-readable name for orphan containers).
+    archived_at: str | None = None
+
+
+class WorkspaceServiceDto(BaseModel):
+    """A managed dev-server process running INSIDE a workspace
+    container. These don't show up as separate docker rows (they
+    run via `docker exec` inside the workspace), so without this
+    field the Performance dashboard can't tell whether a workspace
+    is actively serving anything."""
+
+    label: str
+    cmd: str
+    port: int | None
+    auto_port: int | None
+    state: str
+    bound_url: str | None
 
 
 class WorkspaceDto(BaseModel):
@@ -198,12 +222,20 @@ class WorkspaceDto(BaseModel):
     project_id: str
     branch: str
     status: str
+    services: list[WorkspaceServiceDto] = []
 
 
 class EnvironmentDto(BaseModel):
     id: str
     project_id: str
     name: str
+    # Latest DeployRun snapshot — lets the dashboard render a
+    # placeholder for environments whose stack is currently down so
+    # the operator knows the env exists + when it was last touched.
+    last_deploy_status: str | None = None
+    last_deploy_at: str | None = None
+    last_deploy_version: str | None = None
+    last_bound_url: str | None = None
 
 
 class ContainersResponse(BaseModel):
@@ -462,6 +494,103 @@ async def _load_db_context_isolated(
         return await _load_db_context(db)
 
 
+def _snapshot_workspace_services(
+    container: AppContainer,
+) -> dict[str, list[WorkspaceServiceDto]]:
+    """Take a snapshot of every ServiceRegistry entry, keyed by the
+    workspace_id (uppercase to match `workspaces` keys). Empty dict
+    when the registry is empty — same shape as the no-services case
+    so the caller doesn't need to branch."""
+    bucket: dict[str, list[WorkspaceServiceDto]] = {}
+    # Iterate without taking the registry lock — entries are dicts of
+    # dataclass instances; reading the fields we expose is benign even
+    # if a concurrent start/stop is racing (worst case is a slightly
+    # stale state value, which the next 3-s poll corrects).
+    for svc in container.services:
+        wid = svc.workspace_id.upper()
+        bucket.setdefault(wid, []).append(
+            WorkspaceServiceDto(
+                label=svc.label,
+                cmd=svc.cmd,
+                port=svc.port,
+                auto_port=svc.auto_port,
+                state=svc.state.value,
+                bound_url=svc.bound_url,
+            )
+        )
+    return bucket
+
+
+async def _load_last_deploys(
+    container: AppContainer,
+) -> dict[str, dict[str, str | None]]:
+    """Fetch the most recent DeployRun per environment so the
+    dashboard can render a placeholder row for envs whose stack is
+    currently down. Solo-hobbyist scale (a few envs × a few hundred
+    runs) makes the "fetch all and reduce in Python" approach fine —
+    if the table grows large enough to matter, swap for a window
+    function. Returns `{env_id: {status, started_at, version,
+    bound_url}}`."""
+    if container.session_factory is None:
+        return {}
+    async with container.session_factory() as db:
+        rows = (
+            (await db.execute(select(models.DeployRun))).scalars().all()
+        )
+    latest: dict[str, models.DeployRun] = {}
+    for r in rows:
+        prev = latest.get(r.environment_id)
+        if prev is None or r.started_at > prev.started_at:
+            latest[r.environment_id] = r
+    return {
+        env_id: {
+            "status": r.status,
+            "started_at": (
+                (r.finished_at or r.started_at).isoformat()
+                if (r.finished_at or r.started_at)
+                else None
+            ),
+            "version": r.version,
+            "bound_url": r.bound_url,
+        }
+        for env_id, r in latest.items()
+    }
+
+
+def _build_workspace_dtos(
+    workspaces: dict[str, models.Workspace],
+    svc_by_workspace: dict[str, list[WorkspaceServiceDto]],
+) -> list[WorkspaceDto]:
+    return [
+        WorkspaceDto(
+            id=w.id,
+            project_id=w.project_id,
+            branch=w.branch,
+            status=w.status.value,
+            services=svc_by_workspace.get(w.id, []),
+        )
+        for w in workspaces.values()
+    ]
+
+
+def _build_env_dtos(
+    environments: dict[str, models.Environment],
+    last_deploys: dict[str, dict[str, str | None]],
+) -> list[EnvironmentDto]:
+    return [
+        EnvironmentDto(
+            id=e.id,
+            project_id=e.project_id,
+            name=e.name,
+            last_deploy_status=(last_deploys.get(e.id, {}).get("status")),
+            last_deploy_at=(last_deploys.get(e.id, {}).get("started_at")),
+            last_deploy_version=(last_deploys.get(e.id, {}).get("version")),
+            last_bound_url=(last_deploys.get(e.id, {}).get("bound_url")),
+        )
+        for e in environments.values()
+    ]
+
+
 @router.get("/containers", response_model=ContainersResponse)
 async def list_containers(
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -471,11 +600,14 @@ async def list_containers(
     # DB read uses its own short-lived session (released before the
     # slow docker sampling begins / in parallel with it). The
     # request-scoped session dependency is intentionally NOT used.
-    samples, db_ctx = await asyncio.gather(
+    samples, db_ctx, last_deploys = await asyncio.gather(
         sampler.sample_all(),
         _load_db_context_isolated(container),
+        _load_last_deploys(container),
     )
     projects, workspaces, environments = db_ctx
+    # In-memory registry — no IO, take in the same thread.
+    svc_by_workspace = _snapshot_workspace_services(container)
     enriched: list[ContainerSample] = []
     for s in samples:
         enriched.append(
@@ -491,22 +623,16 @@ async def list_containers(
     return ContainersResponse(
         samples=[_sample_dto(s) for s in enriched],
         projects=[
-            ProjectDto(id=p.id, slug=p.slug, display_name=p.display_name)
+            ProjectDto(
+                id=p.id,
+                slug=p.slug,
+                display_name=p.display_name,
+                archived_at=(p.archived_at.isoformat() if p.archived_at else None),
+            )
             for p in projects.values()
         ],
-        workspaces=[
-            WorkspaceDto(
-                id=w.id,
-                project_id=w.project_id,
-                branch=w.branch,
-                status=w.status.value,
-            )
-            for w in workspaces.values()
-        ],
-        environments=[
-            EnvironmentDto(id=e.id, project_id=e.project_id, name=e.name)
-            for e in environments.values()
-        ],
+        workspaces=_build_workspace_dtos(workspaces, svc_by_workspace),
+        environments=_build_env_dtos(environments, last_deploys),
         total_containers=len(enriched),
         running_containers=running,
         total_cpu_pct=total_cpu,
@@ -682,13 +808,33 @@ def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
 
 async def _orphan_db_context(
     container: AppContainer,
-) -> tuple[dict[str, models.Workspace], dict[str, models.Environment]]:
+) -> tuple[
+    dict[str, models.Workspace],
+    dict[str, models.Environment],
+    set[str],
+]:
+    """Tables needed for orphan classification: workspaces +
+    environments + the set of archived project IDs. The archived set
+    is the backstop that catches workspaces whose project was
+    archived but whose own status wasn't cascaded — see
+    `cleanup._is_orphan`."""
     if container.session_factory is None:
-        return ({}, {})
+        return ({}, {}, set())
     async with container.session_factory() as db:
         ws_rows = (await db.execute(select(models.Workspace))).scalars().all()
         env_rows = (await db.execute(select(models.Environment))).scalars().all()
-    return ({w.id: w for w in ws_rows}, {e.id: e for e in env_rows})
+        archived_proj_rows = (
+            await db.execute(
+                select(models.Project.id).where(
+                    models.Project.archived_at.is_not(None)
+                )
+            )
+        ).all()
+    return (
+        {w.id: w for w in ws_rows},
+        {e.id: e for e in env_rows},
+        {row[0] for row in archived_proj_rows},
+    )
 
 
 def _target_dto(t) -> OrphanTargetDto:  # type: ignore[no-untyped-def]
@@ -722,13 +868,14 @@ async def preview_orphan_cleanup(
     can see the blast radius before clicking the destructive
     button."""
     sampler = _get_sampler()
-    workspaces, environments = await _orphan_db_context(container)
+    workspaces, environments, archived_projects = await _orphan_db_context(container)
     caddy_manager = _build_subdomain_manager(settings)
     plan = await build_orphan_plan(
         sampler,
         workspaces_by_id=workspaces,
         environments_by_id=environments,
         caddy_manager=caddy_manager,
+        archived_project_ids=archived_projects,
     )
     return _plan_dto(plan)
 
@@ -746,13 +893,14 @@ async def cleanup_orphans(
     the live container list + DB rows — the client cannot trick
     this into deleting a live workspace."""
     sampler = _get_sampler()
-    workspaces, environments = await _orphan_db_context(container)
+    workspaces, environments, archived_projects = await _orphan_db_context(container)
     caddy_manager = _build_subdomain_manager(settings)
     plan = await build_orphan_plan(
         sampler,
         workspaces_by_id=workspaces,
         environments_by_id=environments,
         caddy_manager=caddy_manager,
+        archived_project_ids=archived_projects,
     )
     report = await execute_cleanup(
         plan,
