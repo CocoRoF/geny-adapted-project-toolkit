@@ -153,6 +153,33 @@ def _is_orphan(
         somehow resolves.
     """
     if sample.summary.category == ContainerCategory.WORKSPACE:
+        # Agent sandbox vs long-lived workspace container — both
+        # carry the `gapt.workspace_id` label (so the classifier
+        # buckets them together) but they have very different
+        # lifecycles:
+        #
+        #   * `gapt-ws-<wid>` — long-lived workspace runtime. Stays
+        #     running as long as the workspace itself is. Should
+        #     ONLY be orphan-classified when the workspace row is
+        #     gone / archived.
+        #   * `gapt-<sandbox_id>` — transient agent-session sandbox
+        #     created by a one-shot run. Exits naturally when its
+        #     work is done. Stays as `exited` clutter until cleanup
+        #     removes it. If it's not running anymore there's no
+        #     reason to keep it around — its workspace's liveness
+        #     is irrelevant to whether we should remove the exited
+        #     remains of a finished agent run.
+        #
+        # Distinguishing them by NAME pattern keeps the rule narrow:
+        # only containers that don't have the `-ws-` infix qualify
+        # as "agent sandbox" for the auto-cleanup-on-exit rule.
+        name = sample.summary.name
+        is_agent_sandbox = name.startswith("gapt-") and not name.startswith(
+            "gapt-ws-"
+        )
+        if is_agent_sandbox and sample.summary.status != "running":
+            return True
+
         ws_id = sample.summary.workspace_id
         if ws_id is None:
             return True

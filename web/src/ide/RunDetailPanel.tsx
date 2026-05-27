@@ -56,6 +56,11 @@ export function RunDetailPanel({ runId }: Props) {
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Lifted from StackSection so the header can react to live stack
+  // state too — without this the top banner shows the historical
+  // "success" + the bound URL chip even when the stack has been
+  // stopped, making the URL look clickable when it actually 502s.
+  const [liveStack, setLiveStack] = useState<StackStatusType | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,17 +143,51 @@ export function RunDetailPanel({ runId }: Props) {
             ? new Date(run.finished_at).toLocaleString()
             : new Date(run.started_at).toLocaleString()}
         </span>
-        {run.bound_url ? (
-          <a
-            href={run.bound_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 rounded-md border border-success/40 bg-success/10 px-2.5 py-1 text-[11.5px] font-medium text-success hover:bg-success/20"
-          >
-            <ExternalLink className="h-3 w-3" />
-            {run.bound_url}
-          </a>
+        {/* Live stack indicator — separates the historical "deploy
+            succeeded" claim from the "is the stack currently up?"
+            question. Before this, a stopped stack still showed a
+            green URL chip that 502'd on click. */}
+        {environment.deploy_target_kind === "local" && liveStack ? (
+          liveStack.total_count === 0 ? (
+            <Badge tone="warn" className="text-[10px]" title={t("deploy.detail.stack_down.title")}>
+              {t("deploy.detail.stack_down.badge")}
+            </Badge>
+          ) : liveStack.running_count < liveStack.total_count ? (
+            <Badge tone="warn" className="text-[10px]" title={t("deploy.detail.stack_partial.title")}>
+              {t("deploy.detail.stack_partial.badge").replace(
+                "{r}",
+                String(liveStack.running_count),
+              ).replace("{t}", String(liveStack.total_count))}
+            </Badge>
+          ) : null
         ) : null}
+        {run.bound_url ? (() => {
+          const stackDown =
+            environment.deploy_target_kind === "local" &&
+            liveStack !== null &&
+            liveStack.total_count === 0;
+          return (
+            <a
+              href={run.bound_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "ml-auto inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11.5px] font-medium",
+                stackDown
+                  ? "border-warn/40 bg-warn/10 text-warn line-through decoration-warn/40 hover:bg-warn/20"
+                  : "border-success/40 bg-success/10 text-success hover:bg-success/20",
+              )}
+              title={
+                stackDown
+                  ? t("deploy.detail.url.stack_down")
+                  : t("deploy.detail.url.live")
+              }
+            >
+              <ExternalLink className="h-3 w-3" />
+              {run.bound_url}
+            </a>
+          );
+        })() : null}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-rows-[auto_auto_1fr] overflow-hidden">
@@ -215,6 +254,7 @@ export function RunDetailPanel({ runId }: Props) {
               ...detail,
               environment: { ...environment, deploy_target_config: updated },
             })}
+            onStatusChange={setLiveStack}
           />
         ) : (
           <div />
@@ -245,12 +285,14 @@ function StackSection({
   isSuccessRun,
   targetConfig,
   onConfigChange,
+  onStatusChange,
 }: {
   environmentId: string;
   envName: string;
   isSuccessRun: boolean;
   targetConfig: Record<string, unknown>;
   onConfigChange: (updated: Record<string, unknown>) => void;
+  onStatusChange?: (status: StackStatusType | null) => void;
 }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<StackStatusType | null>(null);
@@ -304,11 +346,12 @@ function StackSection({
     try {
       const s = await getStackStatus(environmentId);
       setStatus(s);
+      onStatusChange?.(s);
       setErr(null);
     } catch (e) {
       setErr(e instanceof ApiError ? e.reason : String(e));
     }
-  }, [environmentId]);
+  }, [environmentId, onStatusChange]);
 
   useEffect(() => {
     void refresh();
