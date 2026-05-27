@@ -183,19 +183,20 @@ export function DeployWorkspace({ projectId }: Props) {
     }
   }, [stream.log]);
 
+  // `loadHistoryRef` lets stopEnvStack call into loadHistory
+  // without referencing the const before it's initialised. The
+  // useCallback for stopEnvStack runs at line 186; loadHistory is
+  // declared later (line 263). React deps would otherwise trip the
+  // TDZ and blow up component init.
+  const loadHistoryRef = useRef<((envId: string) => Promise<void>) | null>(null);
   const stopEnvStack = useCallback(
     async (envId: string) => {
       setStackBusyEnvId(envId);
       try {
         await stopStack(envId);
-        // Refresh both envs and the per-env history so the just-
-        // stopped run shows up in the history tab immediately
-        // (backend marks env.last_run.status="stopped"; the run
-        // itself stays as "success" in DeployRun, but the UI
-        // re-tags it via env.last_run pointer).
         await refreshEnvs();
-        if (tabFor(envId) === "history") {
-          void loadHistory(envId);
+        if (tabFor(envId) === "history" && loadHistoryRef.current) {
+          void loadHistoryRef.current(envId);
         }
       } catch (e) {
         console.warn("stopStack failed", e);
@@ -205,7 +206,7 @@ export function DeployWorkspace({ projectId }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabFor, loadHistory],
+    [tabFor],
   );
 
   const startDeploy = useCallback(
@@ -271,6 +272,10 @@ export function DeployWorkspace({ projectId }: Props) {
       setHistoryLoading(false);
     }
   }, []);
+  // Expose loadHistory through the ref so stopEnvStack (declared
+  // earlier in the file) can invoke it without forming a forward
+  // reference at hook-init time.
+  loadHistoryRef.current = loadHistory;
 
   const selectTab = useCallback(
     (envId: string, tab: "deploy" | "history") => {
