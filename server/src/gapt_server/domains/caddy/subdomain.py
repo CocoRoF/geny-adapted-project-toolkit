@@ -229,6 +229,18 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
             {"handler": "rewrite", "uri": prefix + "{http.request.uri}"}
         )
     fallback_handlers.append(upstream_handler)
+    # Critical safety: the header-only fallbacks are SPLICED ABOVE
+    # the static `/_gapt/*` / `/health` / `/preview/*` routes (see
+    # `_upsert`), so without a `not` clause they would happily
+    # hijack the operator's clicks back to the GAPT IDE just because
+    # the cookie/Referer is still set from a previous preview visit
+    # — the "I deployed a preview and now my dashboard 502s" bug we
+    # hit in dogfood. Excluding the GAPT-reserved namespace keeps
+    # the fallback narrow: only paths the preview app would emit
+    # (`/api/foo`, `/_next/static/...`, `/favicon.png`, the app's
+    # own routes) are caught; anything under `/_gapt/`, `/preview/`,
+    # or `/health` always falls through to the static routes.
+    _RESERVED_PATHS = ["/_gapt/*", "/preview", "/preview/*", "/health"]
     asset_fallback = {
         "@id": _route_id(binding.workspace_slug) + "-asset",
         "match": [
@@ -237,7 +249,8 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
                     "Referer": {
                         "pattern": f"://[^/]+{prefix}(/|$|\\?)",
                     }
-                }
+                },
+                "not": [{"path": _RESERVED_PATHS}],
             }
         ],
         "handle": fallback_handlers,
@@ -259,6 +272,11 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
         # cross-site nav (`cross-site`) and top-level typed URLs
         # (`none`), which would otherwise hijack legitimate fresh
         # visits to the GAPT UI in another tab.
+        #
+        # The `not` clause is the second layer of defence: even within
+        # a same-origin click, never catch GAPT's own namespace —
+        # otherwise the dashboard becomes unreachable for the entire
+        # cookie TTL (5 min default) after one preview visit.
         cookie_fallback = {
             "@id": _route_id(binding.workspace_slug) + "-cookie",
             "match": [
@@ -269,6 +287,7 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
                         }
                     },
                     "header": {"Sec-Fetch-Site": ["same-origin"]},
+                    "not": [{"path": _RESERVED_PATHS}],
                 }
             ],
             "handle": fallback_handlers,

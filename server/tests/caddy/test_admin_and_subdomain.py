@@ -533,6 +533,52 @@ async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fallback_routes_exclude_gapt_reserved_paths() -> None:
+    """Both the Referer-fallback and Cookie-fallback routes must carry
+    a `not: [{path: [/_gapt/*, /preview, /preview/*, /health]}]` clause.
+
+    Without this guard, ONE preview visit poisoned the user's browser
+    with `gapt_preview=<slug>` cookie + the preview's Referer, and
+    every subsequent same-origin click on a GAPT path (the dashboard,
+    /_gapt/api/* XHRs, /health probes) got hijacked to the preview
+    upstream — surfacing as 502s when the preview stack had stopped.
+
+    The `not` clause keeps the fallback narrow: only requests outside
+    GAPT's reserved namespace fall through to the preview upstream."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+        )
+    )
+    posted = calls[2][2]
+    expected_reserved = ["/_gapt/*", "/preview", "/preview/*", "/health"]
+    for rid_suffix in ("-asset", "-cookie"):
+        route = next(
+            (r for r in posted if r.get("@id") == f"gapt-preview-01kws{rid_suffix}"),
+            None,
+        )
+        assert route is not None, f"{rid_suffix} route missing"
+        match = route["match"][0]
+        assert "not" in match, f"{rid_suffix} route missing `not` clause"
+        not_paths = match["not"][0].get("path") or []
+        assert not_paths == expected_reserved, (
+            f"{rid_suffix} `not.path` mismatch: got {not_paths}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_subdomain_manager_http_upstream_omits_transport() -> None:
     """Default HTTP upstream — no `transport`, no `headers` keys on
     the reverse_proxy handler. Keeps the route payload compact and
