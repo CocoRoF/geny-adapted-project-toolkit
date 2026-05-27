@@ -34,6 +34,7 @@ from gapt_server.domains.projects.service import (
     ProjectError,
     ProjectService,
     ProjectView,
+    fetch_project_for,
 )
 from gapt_server.routers.auth import get_current_user
 
@@ -459,15 +460,43 @@ async def create_environment(
     return EnvironmentResponse.from_view(view)
 
 
-@router.get("/{project_id}/environments", response_model=list[EnvironmentResponse])
+@router.get("/{project_id}/environments")
 async def list_environments(
     project_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    svc: ProjectService = Depends(get_project_service),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
-) -> list[EnvironmentResponse]:
+) -> list[dict[str, Any]]:
+    """The canonical env-list endpoint the UI consumes. Returns the
+    richer `EnvironmentResponse` shape from `routers.environments`
+    (which includes `last_run`) instead of the legacy bare shape
+    defined above in this file. The import is lazy because
+    `environments.py` imports `http_from_project_error` from us —
+    a top-level import here would close the circle.
+
+    `_env_with_fallback` populates `last_run` from the most-recent
+    successful DeployRun when the cached blob is empty, which is
+    critical for the sidebar's LIVE card to show up after a stack
+    is running."""
+    # Lazy import to break the circular dep (environments → projects).
+    from gapt_server.routers.environments import (  # noqa: PLC0415
+        _env_with_fallback,
+    )
+
     try:
-        views = await svc.list_environments(db, actor=user, project_id=project_id)
+        await fetch_project_for(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    return [EnvironmentResponse.from_view(v) for v in views]
+    rows = (
+        await db.execute(
+            select(models.Environment)
+            .where(models.Environment.project_id == project_id)
+            .order_by(models.Environment.created_at.asc())
+        )
+    ).scalars().all()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        resp = await _env_with_fallback(db, r)
+        # `model_dump(mode="json")` so dates serialise to ISO strings
+        # exactly like FastAPI's normal response pipeline would.
+        out.append(resp.model_dump(mode="json"))
+    return out

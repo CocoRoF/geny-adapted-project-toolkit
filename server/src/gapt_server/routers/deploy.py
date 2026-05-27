@@ -124,24 +124,175 @@ class RollbackResultResponse(BaseModel):
 # ──────────────────────────────────────────── target factory ──
 
 
-def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
-    """Same lazy-construction as `routers/services.py` — when the
-    Caddy admin URL + preview domain are configured, hand a wired
-    manager to the LocalComposeTarget for post-up routing. Otherwise
-    the deploy still works; it just won't auto-expose a URL."""
-    if not settings.caddy_admin_url or not settings.caddy_preview_domain:
+import re as _re
+
+# Slugs become DNS labels (`<slug>.<preview-domain>`) and Caddy
+# route IDs — so they must be ASCII alphanumeric + hyphen + period,
+# 1-63 chars per label, no leading/trailing hyphen. We accept the
+# operator's `preview_slug` only when it matches this strict form;
+# anything else falls back to the auto-generated default.
+_SLUG_RE = _re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _resolve_preview_slug(env_row: models.Environment) -> str:
+    """Single source of truth for the slug that ends up in
+    `<slug>.<preview-domain>` and the Caddy route id. Order:
+
+    1. `deploy_target_config.preview_slug` — operator override
+       (validated to be DNS-safe).
+    2. Auto-generated `prod-<env-name>-<project-id>` lowercased
+       (preserved for backwards compat — every existing env keeps
+       its current URL).
+    """
+    cfg = env_row.deploy_target_config if isinstance(env_row.deploy_target_config, dict) else {}
+    override = cfg.get("preview_slug")
+    if isinstance(override, str):
+        candidate = override.strip().lower()
+        if candidate and _SLUG_RE.match(candidate):
+            return candidate
+    return f"prod-{env_row.name}-{env_row.project_id}".lower()
+
+
+async def _resolve_effective_preview_domain(
+    db: AsyncSession, settings: Settings
+) -> str | None:
+    """The runtime preview-domain GAPT actually uses to emit URLs.
+
+    Provider config wins when set — that's how Settings → Providers →
+    Cloudflare preview_domain becomes effective WITHOUT restarting the
+    server (the historical UX required setting `GAPT_CADDY_PREVIEW_DOMAIN`
+    env var + bouncing uvicorn). Falls back to the env var so existing
+    installs keep working unchanged.
+
+    Returns None when neither source has a value — caller treats this
+    as "subdomain mode unavailable"."""
+    row = await db.get(models.ProviderConfig, "cloudflare")
+    if row is not None and isinstance(row.config, dict):
+        cfg_domain = row.config.get("preview_domain")
+        if isinstance(cfg_domain, str) and cfg_domain.strip():
+            return cfg_domain.strip().lower()
+    return settings.caddy_preview_domain
+
+
+async def _build_subdomain_manager(
+    settings: Settings, db: AsyncSession
+) -> SubdomainManager | None:
+    """When the Caddy admin URL + an effective preview domain are
+    available, hand a wired manager to the LocalComposeTarget for
+    post-up routing. Otherwise the deploy still works; it just
+    won't auto-expose a URL."""
+    if not settings.caddy_admin_url:
+        return None
+    domain = await _resolve_effective_preview_domain(db, settings)
+    if not domain:
         return None
     transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
     client = CaddyAdminClient(transport=transport)
-    return SubdomainManager(client=client, preview_domain=settings.caddy_preview_domain)
+    return SubdomainManager(client=client, preview_domain=domain)
 
 
-def _build_target(kind: enums.DeployTargetKind, settings: Settings) -> DeployTarget:
+async def _maybe_ensure_cf_wildcard(db: AsyncSession) -> str:
+    """Best-effort: if a Cloudflare provider is configured in
+    remote-managed mode and the wildcard ingress for the preview
+    domain is missing, add it. Returns a single-line status note
+    suitable for embedding in the reroute response output. Never
+    raises — the Caddy register has already succeeded by the time
+    we get here, and a CF-side hiccup shouldn't fail the
+    user-visible action."""
+    try:
+        # Local imports keep deploy.py's import graph thin and break
+        # an otherwise circular dep (providers.py imports caddy types).
+        from gapt_server.db import models as _models  # noqa: PLC0415
+        from gapt_server.domains.providers.cloudflare.client import (  # noqa: PLC0415
+            CloudflareApiError,
+            CloudflareClient,
+        )
+        from gapt_server.domains.providers.cloudflare.service import (  # noqa: PLC0415
+            CloudflareService,
+        )
+        from gapt_server.routers.providers import _read_token  # noqa: PLC0415
+        from gapt_server.routers.secrets import get_vault as _get_vault  # noqa: PLC0415
+        from gapt_server.container import get_app_settings  # noqa: PLC0415
+        from gapt_server.domains.audit.sink import NullAuditSink  # noqa: PLC0415
+        from gapt_server.domains.secrets.backend import (  # noqa: PLC0415
+            EncryptedSqliteBackend,
+        )
+        from gapt_server.domains.secrets.vault import SecretVault  # noqa: PLC0415
+
+        row = await db.get(_models.ProviderConfig, "cloudflare")
+        if row is None or not row.token_secret_id:
+            return "cf: provider not configured (skipping wildcard ensure)"
+        cfg = row.config or {}
+        account_id = cfg.get("account_id")
+        tunnel_id = cfg.get("tunnel_id")
+        preview_domain = cfg.get("preview_domain")
+        if not (account_id and tunnel_id):
+            return "cf: provider missing account/tunnel selection (skipping)"
+
+        # Build a vault on demand — _read_token expects the FastAPI-
+        # DI-resolved singleton, but the wider request already holds
+        # a vault dep; we re-build cheaply rather than thread it
+        # through to keep this helper standalone. `get_app_settings`
+        # is a Depends factory (only works inside DI), so we go
+        # straight to `get_settings()` for the raw Settings object.
+        from gapt_server.settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        backend = EncryptedSqliteBackend(
+            db_path=settings.vault_sqlite_path,
+            master_key=settings.vault_master_key,
+        )
+        vault = SecretVault(backend, audit_sink=NullAuditSink())
+        token = await _read_token(db, vault)
+        if not token:
+            return "cf: token missing from vault (skipping)"
+
+        if not preview_domain:
+            preview_domain = settings.caddy_preview_domain
+        if not preview_domain:
+            return "cf: preview_domain unknown (skipping)"
+
+        wildcard = f"*.{preview_domain}"
+        upstream = cfg.get("upstream") or "http://localhost:38080"
+
+        client = CloudflareClient(token)
+        svc = CloudflareService(client)
+        snap = await svc.snapshot(account_id, tunnel_id)
+        if snap.mode != "remote_managed":
+            return (
+                f"cf: tunnel mode is `{snap.mode}` — skipping wildcard "
+                "ensure (run Migration wizard to convert)"
+            )
+        already = any(e.hostname == wildcard for e in snap.ingress)
+        if already:
+            return f"cf: wildcard `{wildcard}` already in tunnel ingress"
+        await svc.ensure_wildcard_ingress(
+            account_id,
+            tunnel_id,
+            wildcard_hostname=wildcard,
+            upstream=upstream,
+        )
+        return f"cf: added wildcard `{wildcard}` → {upstream}"
+    except CloudflareApiError as exc:
+        return f"cf: API error ({exc}) — wildcard ingress NOT updated"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("deploy.cf_wildcard_ensure_failed", error=str(exc))
+        return f"cf: ensure failed ({exc})"
+
+
+async def _build_target(
+    kind: enums.DeployTargetKind, settings: Settings, db: AsyncSession
+) -> DeployTarget:
     if kind == enums.DeployTargetKind.LOCAL:
         # LocalComposeTarget gets the SubdomainManager when Caddy is
         # wired; that's what makes the prod stack externally
-        # reachable after a successful `up -d`.
-        return LocalComposeTarget(subdomain_manager=_build_subdomain_manager(settings))
+        # reachable after a successful `up -d`. The manager carries
+        # the *effective* preview_domain (provider config > env var)
+        # so changes in Settings → Providers take effect without a
+        # server restart.
+        return LocalComposeTarget(
+            subdomain_manager=await _build_subdomain_manager(settings, db)
+        )
     if kind == enums.DeployTargetKind.REMOTE_SSH:
         return RemoteSshTarget()
     if kind == enums.DeployTargetKind.WEBHOOK:
@@ -249,7 +400,7 @@ async def trigger_deploy(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind, settings)
+    target = await _build_target(env_row.deploy_target_kind, settings, db)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -340,11 +491,19 @@ async def trigger_deploy(
     _persist_tuned_options(env_row, result.tuned_target_options)
     await db.commit()
 
+    # Best-effort: when the env is configured for subdomain mode and
+    # a Cloudflare provider is wired, make sure the wildcard ingress
+    # exists in the tunnel. Append the outcome to the deploy log so
+    # the operator sees what happened. Never raises.
+    cf_note = ""
+    if (env_row.deploy_target_config or {}).get("preview_mode") == "subdomain":
+        cf_note = await _maybe_ensure_cf_wildcard(db)
+
     return DeployResultResponse(
         run_id=result.run_id,
         status=result.status.value,
         exec_code=result.exec_code,
-        log=result.log,
+        log=result.log + (f"\n[cf-wildcard] {cf_note}" if cf_note else ""),
         bound_url=result.bound_url,
     )
 
@@ -398,7 +557,7 @@ async def trigger_rollback(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind, settings)
+    target = await _build_target(env_row.deploy_target_kind, settings, db)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -502,7 +661,7 @@ async def trigger_deploy_stream(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind, settings)
+    target = await _build_target(env_row.deploy_target_kind, settings, db)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -785,7 +944,7 @@ async def trigger_deploy_async(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    target = _build_target(env_row.deploy_target_kind, settings)
+    target = await _build_target(env_row.deploy_target_kind, settings, db)
     orchestrator = DeployOrchestrator(
         policy_engine=policy_engine,
         target=target,
@@ -1171,6 +1330,49 @@ async def stack_status(
     )
 
 
+class StackLogsResponse(BaseModel):
+    """Output of `docker compose logs --tail N` for the env's stack.
+    Lines are newest-at-bottom (compose CLI convention). UI polls
+    this every few seconds while the operator is watching."""
+
+    environment_id: str
+    project: str
+    output: str
+    bytes: int
+
+
+@router.get("/{env_id}/stack/logs", response_model=StackLogsResponse)
+async def stack_logs(
+    env_id: str,
+    tail: int = 200,
+    since: str | None = None,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> StackLogsResponse:
+    """Live `docker compose logs --tail N` for the env's stack.
+
+    Frontend polls this every ~3 s while the operator is on the
+    deploy detail panel. `tail` caps the response (default 200 lines,
+    max 2000); `since` (`5s`, `2026-05-27T...`) filters to events
+    after that point so incremental polls stay cheap once the UI has
+    bootstrapped."""
+    env_row = await _resolve_env(db, env_id=env_id)
+    try:
+        await fetch_project_for(db, actor=user, project_id=env_row.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    bounded_tail = max(1, min(int(tail), 2000))
+    result = await _get_stack_manager().logs(
+        env_row.project_id, tail=bounded_tail, since=since
+    )
+    return StackLogsResponse(
+        environment_id=env_id,
+        project=result.project,
+        output=result.output,
+        bytes=len(result.output.encode("utf-8")),
+    )
+
+
 @router.post("/{env_id}/stack/down", response_model=StackOpResponse)
 async def stack_down(
     env_id: str,
@@ -1201,14 +1403,15 @@ async def stack_down(
     # failures into the output but don't fail the whole down on
     # them; the stack is already stopped.
     caddy_status = "skipped (no caddy admin configured)"
-    if settings.caddy_admin_url and settings.caddy_preview_domain:
+    effective_domain = await _resolve_effective_preview_domain(db, settings)
+    if settings.caddy_admin_url and effective_domain:
         try:
             transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
             manager = SubdomainManager(
                 client=CaddyAdminClient(transport=transport),
-                preview_domain=settings.caddy_preview_domain,
+                preview_domain=effective_domain,
             )
-            slug = f"prod-{env_row.name}-{env_row.project_id}".lower()
+            slug = _resolve_preview_slug(env_row)
             await manager.unregister(slug)
             caddy_status = f"unregistered {slug}"
         except Exception as exc:  # noqa: BLE001
@@ -1252,6 +1455,12 @@ class StackRerouteBody(BaseModel):
     # preview gets `<slug>.<preview_domain>` — architecturally robust
     # but requires wildcard DNS + on-demand TLS at Caddy).
     preview_mode: str | None = None
+    # Operator-controlled URL slug. When set, becomes both the path
+    # segment (`/preview/<slug>/*`) and subdomain label
+    # (`<slug>.<preview_domain>`). Must be DNS-safe (a-z, 0-9, -;
+    # 1–63 chars; no leading/trailing hyphen) or it falls back to
+    # the auto-generated `prod-<env>-<project>` default.
+    preview_slug: str | None = None
 
 
 @router.post("/{env_id}/stack/reroute", response_model=StackOpResponse)
@@ -1291,7 +1500,8 @@ async def stack_reroute(
         SubdomainManager,
     )
 
-    if not settings.caddy_admin_url or not settings.caddy_preview_domain:
+    effective_preview_domain = await _resolve_effective_preview_domain(db, settings)
+    if not settings.caddy_admin_url or not effective_preview_domain:
         raise HTTPException(
             status_code=status.HTTP_412_PRECONDITION_FAILED,
             detail={"code": "caddy.not_configured", "reason": "caddy admin url unset"},
@@ -1361,7 +1571,7 @@ async def stack_reroute(
     transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
     manager = SubdomainManager(
         client=CaddyAdminClient(transport=transport),
-        preview_domain=settings.caddy_preview_domain,
+        preview_domain=effective_preview_domain,
     )
     mode_str = str(
         override.preview_mode
@@ -1421,7 +1631,32 @@ async def stack_reroute(
             err=connect_err[:300],
         )
 
-    slug = f"prod-{env_row.name}-{env_row.project_id}".lower()
+    # Resolve the effective slug applying any inline override —
+    # `env_row.deploy_target_config` won't be updated until later in
+    # the function, so we can't rely on _resolve_preview_slug yet.
+    # Falls back through: body.preview_slug → saved config → auto-
+    # generated default. Same validation regex as the persist site.
+    old_slug = _resolve_preview_slug(env_row)
+    slug = old_slug
+    if override.preview_slug is not None:
+        raw_slug = override.preview_slug.strip().lower()
+        if raw_slug == "":
+            # Operator cleared the override → revert to auto-generated.
+            slug = f"prod-{env_row.name}-{env_row.project_id}".lower()
+        elif _SLUG_RE.match(raw_slug):
+            slug = raw_slug
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "deploy.invalid_preview_slug",
+                    "reason": (
+                        "preview_slug must be lowercase a-z / 0-9 / hyphen, "
+                        "1-63 chars, no leading or trailing hyphen."
+                    ),
+                },
+            )
+
     binding = SubdomainBinding(
         workspace_slug=slug,
         upstream_host=chosen.container_name,
@@ -1439,6 +1674,34 @@ async def stack_reroute(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"code": "caddy.register_failed", "reason": str(exc)},
         ) from exc
+
+    # When the operator changed the slug, the old slug's Caddy
+    # route family is orphaned and would keep responding under the
+    # legacy URL. Drop it now so the new URL is the only live one.
+    # Best-effort — failures are logged but don't break the reroute.
+    if old_slug != slug:
+        try:
+            await manager.unregister(old_slug)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "deploy.reroute.old_slug_unregister_failed",
+                env_id=env_id,
+                old_slug=old_slug,
+                error=str(exc),
+            )
+
+    # When subdomain mode is in play AND a Cloudflare provider is
+    # configured in remote-managed mode, make sure the wildcard
+    # ingress is in the tunnel before declaring victory. This is
+    # what binds `<slug>.<preview-domain>` to our Caddy through
+    # cloudflared — without it, the URL Caddy just registered
+    # would never be reached from the public internet. Best-effort:
+    # any failure (provider not configured, local-config tunnel,
+    # API auth issue, ...) is logged into the output but does NOT
+    # fail the reroute. The operator still got the Caddy route.
+    cf_note = ""
+    if mode == PreviewMode.SUBDOMAIN:
+        cf_note = await _maybe_ensure_cf_wildcard(db)
 
     # Persist the operator's choice back to the env so the next
     # deploy picks the same upstream + the next reroute (from a
@@ -1467,9 +1730,54 @@ async def stack_reroute(
         new_config["preview_mode"] = (
             "subdomain" if str(override.preview_mode).lower() == "subdomain" else "path"
         )
+    if override.preview_slug is not None:
+        # Empty string clears the override (back to auto-generated).
+        # Otherwise we validate the same regex used at deploy time
+        # so the operator sees the failure here, before re-routing.
+        raw = override.preview_slug.strip().lower()
+        if raw == "":
+            new_config.pop("preview_slug", None)
+        elif _SLUG_RE.match(raw):
+            new_config["preview_slug"] = raw
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "deploy.invalid_preview_slug",
+                    "reason": (
+                        "preview_slug must be lowercase a-z / 0-9 / hyphen, "
+                        "1-63 chars, no leading or trailing hyphen."
+                    ),
+                },
+            )
     if new_config != target_config:
         env_row.deploy_target_config = new_config
-        await db.commit()
+
+    # Reroute changes the live URL even though no new deploy ran —
+    # the env's `last_run.bound_url` was the URL emitted by the
+    # most recent deploy, and would now be stale. Refresh both that
+    # JSONB blob and the matching DeployRun row so every surface
+    # (env list, deploy detail, sidebar links) reflects what Caddy
+    # is actually serving right now. The historical run record is
+    # still correct in the sense that this deploy's stack is what
+    # binds — the URL just got re-pointed.
+    new_url = f"https://{host}"
+    last_run = dict(env_row.last_run or {})
+    if last_run.get("bound_url") != new_url:
+        last_run["bound_url"] = new_url
+        env_row.last_run = last_run
+        run_id = last_run.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            from sqlalchemy import select as _select  # noqa: PLC0415
+
+            run_row = (
+                await db.execute(
+                    _select(models.DeployRun).where(models.DeployRun.id == run_id)
+                )
+            ).scalar_one_or_none()
+            if run_row is not None:
+                run_row.bound_url = new_url
+    await db.commit()
 
     return StackOpResponse(
         environment_id=env_id,
@@ -1485,6 +1793,7 @@ async def stack_reroute(
             f"host_header={upstream_host_header or '(passthrough)'} "
             f"tls_insecure={upstream_tls_insecure}\n"
             f"network_connect={'ok' if network_ok else 'failed'}"
+            + (f"\n{cf_note}" if cf_note else "")
             + (
                 "\nnote: subdomain mode needs wildcard DNS (*. on the preview "
                 "domain) + Caddy on-demand TLS approval via /_gapt/api/preview/ask"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Box,
@@ -8,6 +8,8 @@ import {
   ExternalLink,
   HelpCircle,
   Loader2,
+  Pause,
+  Play,
   Route,
   RotateCcw,
   Square,
@@ -20,6 +22,7 @@ import {
   type StackRerouteBody,
   type StackStatus as StackStatusType,
   getDeployRunDetail,
+  getStackLogs,
   getStackStatus,
   restartStack,
   rerouteStack,
@@ -260,7 +263,16 @@ export function RunDetailPanel({ runId }: Props) {
           <div />
         )}
 
-        {/* Log */}
+        {/* Live stack logs — polled every 3 s while the stack is
+            running. Auto-scrolls to the latest line; pause button
+            stops the poll so the operator can read a stable window. */}
+        {environment.deploy_target_kind === "local" && run.status === "success" ? (
+          <LiveStackLogsSection environmentId={environment.id} />
+        ) : null}
+
+        {/* Captured deploy log — static snapshot from when the
+            deploy ran. Stays below the live stream as historical
+            context. */}
         <section className="flex min-h-0 flex-col overflow-hidden">
           <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-4 py-1.5 text-[11px] uppercase tracking-wider text-fg-muted">
             {t("deploy.detail.log")}
@@ -906,5 +918,138 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
         {v}
       </span>
     </div>
+  );
+}
+
+/** Live `docker compose logs` for the env's stack, polled every 3 s.
+ *
+ * Mirrors the argocd pod-log pane experience — auto-scroll to the
+ * latest line, freeze on user scroll-up, pause/resume button so the
+ * operator can read a stable window. The poll is bounded (200 lines
+ * per call) and uses an HTTP fetch rather than SSE because compose
+ * doesn't expose an event-stream out of the box and the 3 s cadence
+ * is plenty granular for human debugging. */
+function LiveStackLogsSection({ environmentId }: { environmentId: string }) {
+  const { t } = useI18n();
+  const [output, setOutput] = useState<string>("");
+  const [paused, setPaused] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const preRef = useRef<HTMLPreElement | null>(null);
+  // Track whether the user scrolled up — if so, we stop auto-scrolling
+  // to the bottom so they don't lose their reading position when new
+  // lines arrive.
+  const stuckToBottomRef = useRef(true);
+
+  const fetchOnce = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await getStackLogs(environmentId, { tail: 200 });
+      setOutput(r.output);
+      setErr(null);
+    } catch (e) {
+      setErr(
+        e instanceof ApiError
+          ? e.reason
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [environmentId]);
+
+  // Initial fetch + 3 s poll while not paused.
+  useEffect(() => {
+    if (paused) return;
+    let cancelled = false;
+    const run = async () => {
+      if (cancelled) return;
+      await fetchOnce();
+    };
+    void run();
+    const id = window.setInterval(() => {
+      if (!cancelled) void run();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [fetchOnce, paused]);
+
+  // Auto-scroll to bottom when new content arrives, but only when
+  // the user is already pinned at the bottom.
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    if (stuckToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [output]);
+
+  const onScroll = (e: React.UIEvent<HTMLPreElement>) => {
+    const el = e.currentTarget;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    stuckToBottomRef.current = atBottom;
+  };
+
+  return (
+    <section className="flex min-h-0 flex-col overflow-hidden border-b border-border">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-elevated px-4 py-1.5 text-[11px] uppercase tracking-wider text-fg-muted">
+        <div className="flex items-center gap-1.5">
+          <span className="relative inline-flex h-2 w-2">
+            {!paused ? (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
+            ) : null}
+            <span
+              className={cn(
+                "relative inline-flex h-2 w-2 rounded-full",
+                paused ? "bg-fg-subtle" : "bg-success",
+              )}
+            />
+          </span>
+          {t("deploy.detail.live_logs")}
+          {loading ? <Loader2 className="h-3 w-3 animate-spin text-fg-subtle" /> : null}
+          <span className="text-[10px] normal-case text-fg-subtle">
+            {paused
+              ? t("deploy.detail.live_logs.paused")
+              : t("deploy.detail.live_logs.streaming")}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setPaused((p) => !p)}
+          className="inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted hover:bg-bg-subtle hover:text-fg"
+          title={paused ? t("deploy.detail.live_logs.resume") : t("deploy.detail.live_logs.pause")}
+        >
+          {paused ? (
+            <>
+              <Play className="h-3 w-3" />
+              {t("deploy.detail.live_logs.resume")}
+            </>
+          ) : (
+            <>
+              <Pause className="h-3 w-3" />
+              {t("deploy.detail.live_logs.pause")}
+            </>
+          )}
+        </button>
+      </header>
+      {err ? (
+        <p className="bg-danger/5 px-4 py-1 text-[11px] text-danger">{err}</p>
+      ) : null}
+      <pre
+        ref={preRef}
+        onScroll={onScroll}
+        className="max-h-[420px] min-h-[140px] overflow-auto whitespace-pre-wrap break-all bg-bg px-4 py-3 font-mono text-[11px] leading-relaxed text-fg-muted"
+      >
+        {output || (
+          <span className="text-fg-subtle">
+            {t("deploy.detail.live_logs.empty")}
+          </span>
+        )}
+      </pre>
+    </section>
   );
 }

@@ -562,8 +562,29 @@ class SubdomainManager:
                 )
                 return has_header_match and not m.get("path")
 
-            referer_payloads = [p for p in payloads if _is_header_only(p)]
-            path_payloads = [p for p in payloads if not _is_header_only(p)]
+            # Host-matched routes (subdomain mode) must outrank
+            # every path-only handler in the Caddyfile — otherwise
+            # `/_gapt/app/*`, `/health`, `/preview/*` etc. happily
+            # claim requests addressed to `<slug>.<preview-domain>`
+            # because they ignore the Host header. Splicing them at
+            # index 0 with `terminal=True` makes them fire first
+            # and short-circuit further evaluation.
+            def _is_host_only(p: dict[str, Any]) -> bool:
+                m = (p.get("match") or [{}])[0]
+                return bool(m.get("host")) and not m.get("path")
+
+            host_payloads = [p for p in payloads if _is_host_only(p)]
+            referer_payloads = [
+                p for p in payloads
+                if _is_header_only(p) and not _is_host_only(p)
+            ]
+            path_payloads = [
+                p for p in payloads
+                if not _is_header_only(p) and not _is_host_only(p)
+            ]
+
+            for offset, payload in enumerate(host_payloads):
+                arr.insert(offset, payload)
 
             # Anchor for the path-keyed routes: the safety-net 404 or
             # the IDE catch-all, whichever comes first.

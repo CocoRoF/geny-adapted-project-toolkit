@@ -66,9 +66,12 @@
         reverse_proxy server:8088
     }
 
-    # Apex root → 302 to IDE entry.
+    # Apex root → 302 to IDE entry. `header + respond` form (not
+    # `redir`) because `redir /a 302` inside a `handle` parses
+    # ambiguously and produces a broken Location header.
     handle / {
-        redir /_gapt/app/ 302
+        header Location "/_gapt/app/"
+        respond 302
     }
 
     # Default 404 — structural protection from leaked preview URLs.

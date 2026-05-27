@@ -390,3 +390,46 @@ class AuditEvent(Base):
         Index("ix_audit_events_ts", "ts"),
         Index("ix_audit_events_action_ts", "action", "ts"),
     )
+
+
+# ──────────────────────────────────────────────────────── provider_configs ──
+
+
+class ProviderConfig(Base):
+    """Single-row-per-provider integration config (Cloudflare, etc.).
+
+    Non-secret config only — selected account_id / zone_id / tunnel_id,
+    discovered domain, last-verified timestamp, free-form metadata.
+    The credential itself (API token) is in the secret vault under
+    SYSTEM scope, key_name = `provider.<kind>.api_token`; only the
+    secret_id is referenced here so the row carries no plaintext.
+
+    `kind` is the primary key — one config per provider kind. This is
+    the same singleton-row pattern as `admin_agent_prefs`.
+    """
+
+    __tablename__ = "provider_configs"
+
+    kind: Mapped[str] = mapped_column(String(40), primary_key=True)
+    """Provider kind, e.g. "cloudflare". Lowercase, snake_case."""
+
+    token_secret_id: Mapped[str | None] = mapped_column(String(ULID_LEN))
+    """Vault row id holding the API token. None when not configured."""
+
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    """Free-form per-provider config — for Cloudflare: account_id,
+    zone_id, tunnel_id, preview_domain, last verification result."""
+
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Last successful API roundtrip. UI shows this so the operator
+    knows the token still works."""
+
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

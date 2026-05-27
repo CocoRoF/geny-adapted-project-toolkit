@@ -1,6 +1,6 @@
 import { apiDelete, apiFetch, apiGet, apiPost } from "@/api/client";
 
-export type SecretOwnerScope = "user" | "project" | "environment" | "org";
+export type SecretOwnerScope = "system" | "project" | "environment";
 export type SecretBackendName = "keyring" | "encrypted_sqlite" | "sops" | "infisical";
 
 export interface SecretView {

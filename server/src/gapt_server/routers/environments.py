@@ -84,6 +84,48 @@ class EnvironmentResponse(EnvironmentPayload):
         )
 
 
+async def _env_with_fallback(
+    db: AsyncSession, row: models.Environment
+) -> EnvironmentResponse:
+    """`EnvironmentResponse.from_row` plus a "best available
+    `last_run`" backfill: when the cached `env.last_run` blob is
+    empty or missing a success run id, fall back to the most-recent
+    successful `DeployRun` row. Without this the UI shows "no
+    deploys" even though the stack is still serving — happens for
+    envs that pre-date the cache or after an earlier code path
+    forgot to write the cache."""
+    resp = EnvironmentResponse.from_row(row)
+    has_run = (
+        bool(resp.last_run.get("run_id"))
+        and resp.last_run.get("status") == "success"
+    )
+    if has_run:
+        return resp
+    latest = (
+        await db.execute(
+            select(models.DeployRun)
+            .where(
+                models.DeployRun.environment_id == row.id,
+                models.DeployRun.status == "success",
+            )
+            .order_by(models.DeployRun.finished_at.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest is not None:
+        resp.last_run = {
+            "run_id": latest.id,
+            "status": latest.status,
+            "bound_url": latest.bound_url,
+            "version": latest.version,
+            "deployed_at": (
+                latest.finished_at.isoformat() if latest.finished_at else None
+            ),
+            "trigger_kind": latest.trigger_kind,
+        }
+    return resp
+
+
 async def _row_or_404(db: AsyncSession, env_id: str) -> models.Environment:
     row = (
         await db.execute(
@@ -117,7 +159,10 @@ async def list_environments(
             .order_by(models.Environment.created_at.asc())
         )
     ).scalars().all()
-    return [EnvironmentResponse.from_row(r) for r in rows]
+    out: list[EnvironmentResponse] = []
+    for r in rows:
+        out.append(await _env_with_fallback(db, r))
+    return out
 
 
 @by_project.post(
@@ -197,7 +242,7 @@ async def get_environment(
         await fetch_project_for(db, actor=user, project_id=row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    return EnvironmentResponse.from_row(row)
+    return await _env_with_fallback(db, row)
 
 
 @by_id.put("/{env_id}", response_model=EnvironmentResponse)

@@ -145,6 +145,33 @@ class StackManager:
             output=output[-4096:],
         )
 
+    async def logs(
+        self, project_id: str, *, tail: int = 200, since: str | None = None
+    ) -> StackOpResult:
+        """`docker compose -p <project> logs --tail N [--since S]`.
+
+        Used by the UI to surface live stack output, polled every
+        few seconds while the operator watches. `tail` caps the
+        response size (200 lines ~ a few KB); `since` filters to
+        events after the given timestamp/duration string (e.g.
+        `5s`, `2026-05-27T14:00:00Z`).
+
+        Returns the raw merged stdout+stderr from `docker compose
+        logs` — caller renders it verbatim. Newest lines are at the
+        bottom; that's the compose-CLI convention, not flipped."""
+        project = self.project_for(project_id)
+        args = ["-p", project, "logs", "--no-color", "--tail", str(tail)]
+        if since:
+            args.extend(["--since", since])
+        rc, output = await self._compose_cli(args)
+        return StackOpResult(
+            project=project,
+            action="logs",
+            ok=rc == 0,
+            affected=0,
+            output=output,
+        )
+
     async def restart(self, project_id: str) -> StackOpResult:
         """`docker compose -p <project> restart` — leaves the network
         + volumes in place, just bounces each container. Fast (~few

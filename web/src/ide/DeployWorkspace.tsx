@@ -8,6 +8,7 @@ import {
   RotateCcw,
   Rocket,
   Settings,
+  Square,
   Undo2,
 } from "lucide-react";
 
@@ -20,9 +21,11 @@ import {
   getActiveDeploy,
   listDeployRuns,
   listEnvironments,
+  stopStack,
   triggerDeployAsync,
   triggerRollback,
 } from "@/api/environments";
+import { ConfirmDialog } from "@/ui/ConfirmDialog";
 import { useI18n } from "@/app/providers/i18n-context";
 import { EnvSettingsModal } from "@/ide/EnvSettingsModal";
 import { RunDetailPanel } from "@/ide/RunDetailPanel";
@@ -72,7 +75,22 @@ export function DeployWorkspace({ projectId }: Props) {
   const viewRunId = viewEnvId ? activeByEnv[viewEnvId]?.run_id ?? null : null;
   const stream = useDeployStream(viewRunId);
 
-  const [historyEnvId, setHistoryEnvId] = useState<string | null>(null);
+  // Per-env tab selection. The env card switches between the
+  // "deploy" pane (which shows the LIVE state or the in-progress
+  // deploy — at most one thing at a time) and the "history" pane
+  // (past runs only, excluding the live one). Settings is a modal,
+  // not a tab content, but the button lives in the same tab strip
+  // for visual symmetry.
+  const [tabByEnv, setTabByEnv] = useState<Record<string, "deploy" | "history">>({});
+  const tabFor = useCallback(
+    (envId: string): "deploy" | "history" => tabByEnv[envId] ?? "deploy",
+    [tabByEnv],
+  );
+  const setTab = useCallback(
+    (envId: string, tab: "deploy" | "history") =>
+      setTabByEnv((m) => ({ ...m, [envId]: tab })),
+    [],
+  );
   const [historyRuns, setHistoryRuns] = useState<DeployRunRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [rollbackBusyRunId, setRollbackBusyRunId] = useState<string | null>(null);
@@ -85,6 +103,12 @@ export function DeployWorkspace({ projectId }: Props) {
   const [settingsEnv, setSettingsEnv] = useState<EnvironmentResponse | null>(
     null,
   );
+  // Pending confirmations for destructive / disruptive stack ops.
+  const [confirmStopEnvId, setConfirmStopEnvId] = useState<string | null>(null);
+  const [confirmRedeployEnvId, setConfirmRedeployEnvId] = useState<string | null>(
+    null,
+  );
+  const [stackBusyEnvId, setStackBusyEnvId] = useState<string | null>(null);
 
   const logScrollRef = useRef<HTMLPreElement | null>(null);
 
@@ -144,7 +168,7 @@ export function DeployWorkspace({ projectId }: Props) {
     // Clear the env's active mapping; the run is over.
     setActiveByEnv((cur) => ({ ...cur, [viewEnvId]: null }));
     void refreshEnvs();
-    if (historyEnvId === viewEnvId) {
+    if (tabFor(viewEnvId) === "history") {
       void loadHistory(viewEnvId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,6 +182,29 @@ export function DeployWorkspace({ projectId }: Props) {
       el.scrollTop = el.scrollHeight;
     }
   }, [stream.log]);
+
+  const stopEnvStack = useCallback(
+    async (envId: string) => {
+      setStackBusyEnvId(envId);
+      try {
+        await stopStack(envId);
+        // Refresh envs so the LIVE card disappears (last_run still
+        // references the stopped deploy, but the stack section in
+        // the right pane reflects the new "no containers running"
+        // reality).
+        await refreshEnvs();
+      } catch (e) {
+        console.warn("stopStack failed", e);
+      } finally {
+        setStackBusyEnvId(null);
+        setConfirmStopEnvId(null);
+      }
+    },
+    // refreshEnvs is defined below — TS hoists the const ref via
+    // closure, eslint's exhaustive-deps doesn't need it here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const startDeploy = useCallback(
     async (env: EnvironmentResponse) => {
@@ -223,17 +270,14 @@ export function DeployWorkspace({ projectId }: Props) {
     }
   }, []);
 
-  const toggleHistory = useCallback(
-    (envId: string) => {
-      if (historyEnvId === envId) {
-        setHistoryEnvId(null);
-        setHistoryRuns([]);
-        return;
+  const selectTab = useCallback(
+    (envId: string, tab: "deploy" | "history") => {
+      setTab(envId, tab);
+      if (tab === "history") {
+        void loadHistory(envId);
       }
-      setHistoryEnvId(envId);
-      void loadHistory(envId);
     },
-    [historyEnvId, loadHistory],
+    [setTab, loadHistory],
   );
 
   const rollbackToRun = useCallback(
@@ -246,14 +290,14 @@ export function DeployWorkspace({ projectId }: Props) {
           two_factor_code: "ui-click",
         });
         await refreshEnvs();
-        if (historyEnvId === envId) await loadHistory(envId);
+        if (tabFor(envId) === "history") await loadHistory(envId);
       } catch (e) {
         setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
       } finally {
         setRollbackBusyRunId(null);
       }
     },
-    [historyEnvId, loadHistory, refreshEnvs],
+    [tabFor, loadHistory, refreshEnvs],
   );
 
   const viewEnv = viewEnvId ? envs.find((e) => e.id === viewEnvId) : null;
@@ -301,6 +345,13 @@ export function DeployWorkspace({ projectId }: Props) {
               {envs.map((env) => {
                 const active = activeByEnv[env.id];
                 const envRunning = !!active && !TERMINAL_STATUSES.has(active.status);
+                const tab = tabFor(env.id);
+                const liveRunId = env.last_run?.run_id ?? null;
+                // History pane filters out the live run — it represents
+                // "what's serving traffic right now", not "past deploys".
+                const pastRuns = liveRunId
+                  ? historyRuns.filter((r) => r.id !== liveRunId)
+                  : historyRuns;
                 return (
                   <li
                     key={env.id}
@@ -310,119 +361,246 @@ export function DeployWorkspace({ projectId }: Props) {
                       <span className="font-semibold text-fg">{env.name}</span>
                       <Badge tone="neutral">{env.deploy_target_kind}</Badge>
                     </div>
-                    {envRunning ? (
-                      <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-                        <Badge tone="accent">
-                          <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
-                          {active.status}
-                        </Badge>
-                        <span className="font-mono text-fg-subtle">
-                          run {active.run_id.slice(-6)}
-                        </span>
-                      </div>
-                    ) : env.last_run?.status ? (
-                      // Clickable summary of the most recent run.
-                      // Clicking the row opens the run detail in the
-                      // right pane — including stack actions
-                      // (Stop/Restart) for live local-compose runs.
-                      // The external-URL link stops propagation so
-                      // it still opens a new tab without triggering
-                      // the detail view.
+
+                    {/* Tab strip — three buttons that look identical
+                        but two are toggle ("deploy" / "history") and
+                        the third opens the settings modal. */}
+                    <div
+                      role="tablist"
+                      className="mt-2 flex items-center gap-1 rounded-md border border-border bg-bg-subtle p-0.5"
+                    >
                       <button
                         type="button"
-                        onClick={() => {
-                          if (env.last_run?.run_id) {
-                            setDetailRunId(env.last_run.run_id);
-                            setViewEnvId(null);
-                          }
-                        }}
-                        disabled={!env.last_run?.run_id}
-                        title={
-                          env.last_run?.run_id
-                            ? t("deploy.history.click_to_view")
-                            : undefined
-                        }
+                        role="tab"
+                        aria-selected={tab === "deploy"}
+                        onClick={() => selectTab(env.id, "deploy")}
                         className={cn(
-                          "mt-1 w-full rounded-md border border-transparent px-1.5 py-1 text-left transition-colors",
-                          env.last_run?.run_id && "cursor-pointer hover:border-border hover:bg-surface-hover",
-                          detailRunId === env.last_run?.run_id &&
-                            "border-accent/40 bg-accent/10",
+                          "flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                          tab === "deploy"
+                            ? "bg-accent/15 text-accent"
+                            : "text-fg-muted hover:bg-bg hover:text-fg",
                         )}
                       >
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted">
-                          <Badge tone={STATUS_TONE[env.last_run.status] ?? "neutral"}>
-                            {env.last_run.status}
-                          </Badge>
-                          {env.last_run.version ? (
-                            <span className="font-mono text-fg-subtle">
-                              {env.last_run.version}
-                            </span>
-                          ) : null}
-                          {env.last_run.deployed_at ? (
-                            <span className="font-mono text-fg-subtle">
-                              {new Date(env.last_run.deployed_at).toLocaleString()}
-                            </span>
-                          ) : null}
-                        </div>
-                        {env.last_run.bound_url ? (
-                          <a
-                            href={env.last_run.bound_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-accent hover:underline"
-                          >
-                            <ExternalLink className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{env.last_run.bound_url}</span>
-                          </a>
-                        ) : null}
+                        <Rocket className="h-3 w-3" />
+                        {t("deploy.tab.deploy")}
                       </button>
-                    ) : null}
-                    <div className="mt-2 flex items-center gap-1">
-                      <Button
-                        variant="primary"
-                        onClick={() => void startDeploy(env)}
-                        disabled={envRunning}
-                      >
-                        {envRunning ? (
-                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                        ) : (
-                          <Rocket className="mr-1 h-3 w-3" />
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === "history"}
+                        onClick={() => selectTab(env.id, "history")}
+                        className={cn(
+                          "flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                          tab === "history"
+                            ? "bg-accent/15 text-accent"
+                            : "text-fg-muted hover:bg-bg hover:text-fg",
                         )}
-                        {t("deploy.deploy")}
-                      </Button>
-                      {envRunning ? (
-                        <Button variant="secondary" onClick={() => setViewEnvId(env.id)}>
-                          {t("deploy.view_logs")}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => toggleHistory(env.id)}
-                        title={t("deploy.history.toggle")}
                       >
-                        <History className="mr-1 h-3 w-3" />
-                        {t("deploy.history.toggle")}
-                      </Button>
-                      <Button
-                        variant="ghost"
+                        <History className="h-3 w-3" />
+                        {t("deploy.tab.history")}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setSettingsEnv(env)}
                         title={t("env_settings.button_title")}
+                        className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-fg-muted transition-colors hover:bg-bg hover:text-fg"
                       >
-                        <Settings className="mr-1 h-3 w-3" />
-                        {t("env_settings.button")}
-                      </Button>
+                        <Settings className="h-3 w-3" />
+                        {t("deploy.tab.settings")}
+                      </button>
                     </div>
-                    {historyEnvId === env.id ? (
+                    {/* ── DEPLOY tab — live state OR in-progress
+                         deploy. Shows at most ONE card representing
+                         "what's serving / what's deploying now". The
+                         visual stops looking like a list of equivalent
+                         success entries that were the old confusion
+                         source. */}
+                    {tab === "deploy" ? (
+                      <div className="mt-2 space-y-2">
+                        {envRunning ? (
+                          // Active deploy: clickable card → opens live
+                          // streaming pane on the right.
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setViewEnvId(env.id);
+                              setDetailRunId(null);
+                            }}
+                            className={cn(
+                              "w-full rounded-md border border-accent/40 bg-accent/5 px-2 py-1.5 text-left transition-colors hover:bg-accent/10",
+                              viewEnvId === env.id && "ring-1 ring-accent/40",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                              <Badge tone="accent">
+                                <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+                                {active.status}
+                              </Badge>
+                              <span className="font-semibold uppercase tracking-wider text-accent">
+                                {t("deploy.in_progress")}
+                              </span>
+                              <span className="font-mono text-fg-subtle">
+                                run {active.run_id.slice(-6)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-fg-muted">
+                              {t("deploy.click_to_view_logs")}
+                            </p>
+                          </button>
+                        ) : env.last_run?.status === "success" ? (
+                          // LIVE — the only success card visible in
+                          // this tab. Click → right pane opens the
+                          // RunDetailPanel with live stack logs.
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (env.last_run?.run_id) {
+                                setDetailRunId(env.last_run.run_id);
+                                setViewEnvId(null);
+                              }
+                            }}
+                            disabled={!env.last_run?.run_id}
+                            className={cn(
+                              "w-full rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-left transition-colors hover:bg-success/10",
+                              env.last_run?.run_id && "cursor-pointer",
+                              detailRunId === env.last_run?.run_id &&
+                                "ring-1 ring-success/40",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                              <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-success">
+                                <span className="relative inline-flex h-2 w-2">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                                </span>
+                                {t("deploy.live")}
+                              </span>
+                              {env.last_run.version ? (
+                                <span className="font-mono text-fg-subtle">
+                                  {env.last_run.version}
+                                </span>
+                              ) : null}
+                              {env.last_run.deployed_at ? (
+                                <span className="font-mono text-fg-subtle">
+                                  {new Date(env.last_run.deployed_at).toLocaleString()}
+                                </span>
+                              ) : null}
+                            </div>
+                            {env.last_run.bound_url ? (
+                              <a
+                                href={env.last_run.bound_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-accent hover:underline"
+                              >
+                                <ExternalLink className="h-3 w-3 shrink-0" />
+                                <span className="truncate">{env.last_run.bound_url}</span>
+                              </a>
+                            ) : null}
+                            <p className="mt-0.5 text-[11px] text-fg-muted">
+                              {t("deploy.click_to_view_logs")}
+                            </p>
+                          </button>
+                        ) : env.last_run?.status === "failed" ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (env.last_run?.run_id) {
+                                setDetailRunId(env.last_run.run_id);
+                                setViewEnvId(null);
+                              }
+                            }}
+                            className={cn(
+                              "w-full rounded-md border border-danger/40 bg-danger/5 px-2 py-1.5 text-left transition-colors hover:bg-danger/10",
+                              detailRunId === env.last_run?.run_id &&
+                                "ring-1 ring-danger/40",
+                            )}
+                          >
+                            <Badge tone="danger">{env.last_run.status}</Badge>
+                            <p className="mt-0.5 text-[11px] text-fg-muted">
+                              {env.last_run.deployed_at
+                                ? new Date(env.last_run.deployed_at).toLocaleString()
+                                : ""}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-fg-muted">
+                              {t("deploy.click_to_view_logs")}
+                            </p>
+                          </button>
+                        ) : (
+                          <p className="rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-fg-subtle">
+                            {t("deploy.idle_empty")}
+                          </p>
+                        )}
+                        {/* Action row — varies by state so the
+                            operator can't accidentally launch a
+                            redeploy on top of a running stack. The
+                            in-progress branch is the only one with
+                            a single disabled button; the LIVE
+                            branch forces a confirm before redeploy
+                            AND surfaces "stop first" as the
+                            primary path. */}
+                        {envRunning ? (
+                          <Button
+                            variant="primary"
+                            disabled
+                            className="w-full"
+                          >
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            {t("deploy.in_progress")}
+                          </Button>
+                        ) : env.last_run?.status === "success" ? (
+                          <div className="flex gap-1">
+                            <Button
+                              variant="danger"
+                              onClick={() => setConfirmStopEnvId(env.id)}
+                              disabled={stackBusyEnvId === env.id}
+                              className="flex-1"
+                            >
+                              {stackBusyEnvId === env.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Square className="mr-1 h-3 w-3" />
+                              )}
+                              {t("deploy.stop_stack")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              onClick={() => setConfirmRedeployEnvId(env.id)}
+                              disabled={stackBusyEnvId === env.id}
+                              className="flex-1"
+                              title={t("deploy.redeploy_hint")}
+                            >
+                              <RotateCcw className="mr-1 h-3 w-3" />
+                              {t("deploy.redeploy")}
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="primary"
+                            onClick={() => void startDeploy(env)}
+                            className="w-full"
+                          >
+                            <Rocket className="mr-1 h-3 w-3" />
+                            {env.last_run?.status === "failed"
+                              ? t("deploy.redeploy")
+                              : t("deploy.deploy")}
+                          </Button>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {/* ── HISTORY tab — past runs ONLY (live one
+                         excluded). Click any → opens its detail in
+                         the right pane. */}
+                    {tab === "history" ? (
                       <HistoryPane
-                        runs={historyRuns}
+                        runs={pastRuns}
                         loading={historyLoading}
                         busyRunId={rollbackBusyRunId}
                         selectedRunId={detailRunId}
+                        liveRunId={liveRunId}
                         onView={(run) => {
-                          // Show this past run's detail in the right
-                          // pane — clears the live-stream view if
-                          // there was one.
                           setDetailRunId(run.id);
                           setViewEnvId(null);
                         }}
@@ -535,6 +713,34 @@ export function DeployWorkspace({ projectId }: Props) {
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={confirmStopEnvId !== null}
+        onCancel={() => setConfirmStopEnvId(null)}
+        onConfirm={() => {
+          if (confirmStopEnvId) void stopEnvStack(confirmStopEnvId);
+        }}
+        title={t("deploy.confirm_stop.title")}
+        description={t("deploy.confirm_stop.body")}
+        confirmLabel={t("deploy.stop_stack")}
+        cancelLabel={t("deploy.confirm.cancel")}
+        tone="danger"
+        busy={stackBusyEnvId !== null}
+      />
+      <ConfirmDialog
+        open={confirmRedeployEnvId !== null}
+        onCancel={() => setConfirmRedeployEnvId(null)}
+        onConfirm={() => {
+          const id = confirmRedeployEnvId;
+          setConfirmRedeployEnvId(null);
+          const env = envs.find((e) => e.id === id);
+          if (env) void startDeploy(env);
+        }}
+        title={t("deploy.confirm_redeploy.title")}
+        description={t("deploy.confirm_redeploy.body")}
+        confirmLabel={t("deploy.redeploy")}
+        cancelLabel={t("deploy.confirm.cancel")}
+        tone="neutral"
+      />
     </div>
   );
 }
@@ -545,6 +751,7 @@ function HistoryPane({
   loading,
   busyRunId,
   selectedRunId,
+  liveRunId,
   onView,
   onRollback,
 }: {
@@ -552,6 +759,7 @@ function HistoryPane({
   loading: boolean;
   busyRunId: string | null;
   selectedRunId: string | null;
+  liveRunId: string | null;
   onView: (run: DeployRunRow) => void;
   onRollback: (run: DeployRunRow) => void;
 }) {
@@ -575,6 +783,7 @@ function HistoryPane({
       {runs.map((r) => {
         const success = r.status === "success";
         const isSelected = selectedRunId === r.id;
+        const isLive = liveRunId !== null && r.id === liveRunId;
         return (
           <li
             key={r.id}
@@ -583,12 +792,25 @@ function HistoryPane({
               "cursor-pointer transition-colors",
               isSelected
                 ? "bg-accent/10 ring-1 ring-accent/40"
-                : "bg-bg-elevated hover:bg-surface-hover",
+                : isLive
+                  ? "bg-success/5 ring-1 ring-success/40"
+                  : "bg-bg-elevated hover:bg-surface-hover",
+              !isLive && !isSelected && "opacity-80",
             )}
             onClick={() => onView(r)}
             title={t("deploy.history.click_to_view")}
           >
-            <Badge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>
+            {isLive ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-success">
+                <span className="relative inline-flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                </span>
+                {t("deploy.live")}
+              </span>
+            ) : (
+              <Badge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>
+            )}
             <div className="flex-1 overflow-hidden">
               <div className="font-mono text-fg" title={r.version}>
                 {r.version.length > 24

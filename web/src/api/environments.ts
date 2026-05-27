@@ -244,6 +244,26 @@ export interface StackOpResult {
 export const getStackStatus = (envId: string) =>
   apiGet<StackStatus>(`/_gapt/api/environments/${envId}/stack`);
 
+export interface StackLogs {
+  environment_id: string;
+  project: string;
+  output: string;
+  bytes: number;
+}
+
+export const getStackLogs = (
+  envId: string,
+  options: { tail?: number; since?: string } = {},
+) => {
+  const q = new URLSearchParams();
+  if (options.tail !== undefined) q.set("tail", String(options.tail));
+  if (options.since) q.set("since", options.since);
+  const suffix = q.toString();
+  return apiGet<StackLogs>(
+    `/_gapt/api/environments/${envId}/stack/logs${suffix ? `?${suffix}` : ""}`,
+  );
+};
+
 export const stopStack = (envId: string) =>
   apiPost<StackOpResult>(`/_gapt/api/environments/${envId}/stack/down`);
 
@@ -305,3 +325,26 @@ export interface DeployRunRow {
 
 export const listDeployRuns = (envId: string, limit = 20) =>
   apiGet<DeployRunRow[]>(`/_gapt/api/environments/${envId}/runs?limit=${limit}`);
+
+/** Diagnostic for subdomain mode prereqs — DNS, Caddy admin, env,
+ * Cloudflare provider state. */
+export interface SubdomainDiagnose {
+  preview_domain: string | null;
+  sample_host: string;
+  dns_resolves: boolean;
+  dns_message: string;
+  caddy_admin_reachable: boolean;
+  caddy_has_wildcard_server: boolean;
+  e2e_reachable: boolean;
+  e2e_message: string;
+  provider_configured: boolean;
+  provider_account_id: string | null;
+  provider_zone_id: string | null;
+  provider_tunnel_id: string | null;
+  tunnel_mode: "remote_managed" | "local_config" | "unknown" | null;
+  tunnel_has_wildcard: boolean;
+  next_steps: string[];
+}
+
+export const diagnoseSubdomainMode = () =>
+  apiGet<SubdomainDiagnose>(`/_gapt/api/preview/diagnose`);

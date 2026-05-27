@@ -30,6 +30,7 @@ from gapt_server.routers import (
     policies,
     preview,
     projects,
+    providers,
     secrets,
     services,
     sessions,
@@ -196,6 +197,7 @@ def create_app(
     app.include_router(introspect.router)
     app.include_router(webhooks.router)
     app.include_router(tests.router)
+    app.include_router(providers.router)
     app.include_router(git.router)
     return app
 

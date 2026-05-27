@@ -356,7 +356,19 @@ class LocalComposeTarget:
             SubdomainBinding,
         )
 
+        # Slug resolution: operator-overridden `preview_slug` in
+        # target_options wins (validated DNS-safe regex), else the
+        # `prod-<env>-<project>` default. Keeping the regex inline
+        # here avoids a circular import with deploy router helpers.
+        import re as _re  # noqa: PLC0415
+
+        _SLUG_RE = _re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+        override = request.target_options.get("preview_slug")
         slug = f"prod-{request.environment}-{request.project_id}".lower()
+        if isinstance(override, str):
+            candidate = override.strip().lower()
+            if candidate and _SLUG_RE.match(candidate):
+                slug = candidate
         mode_str = request.target_options.get("preview_mode", "path")
         mode = (
             PreviewMode.SUBDOMAIN
