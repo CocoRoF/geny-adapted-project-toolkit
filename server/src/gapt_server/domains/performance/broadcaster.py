@@ -96,6 +96,26 @@ class PerformanceBroadcaster:
         plumbing."""
         self._build_payload = fn
 
+    async def force_push(self) -> None:
+        """Sample + build + fan out a frame RIGHT NOW, then update
+        the replay cache. Lets the orphan-cleanup endpoint surface
+        its effect immediately instead of waiting up to `tick_s` (2s)
+        for the next regular tick. Safe to call even when there are
+        no subscribers — the replay cache is updated for the next
+        subscribe."""
+        if self._build_payload is None:
+            return
+        try:
+            samples = await self._sampler.sample_all()
+            payload = await self._build_payload(samples)
+            frame = _encode_sse("stats", payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("performance.broadcaster.force_push_failed", error=str(exc))
+            return
+        self._latest = frame
+        for sub in list(self._subscribers):
+            self._enqueue(sub, frame)
+
     async def subscribe(self) -> AsyncIterator[bytes]:
         """Yields raw SSE-formatted byte frames. Cancellation /
         connection-close is expected to surface as `GeneratorExit`

@@ -1143,23 +1143,56 @@ async def stack_down(
     env_id: str,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> StackOpResponse:
     """`docker compose down --remove-orphans` for this env's prod
-    stack. Containers + network are removed; volumes survive. To
-    bring it back, the operator clicks Deploy again."""
+    stack PLUS unregister its Caddy preview route. Containers +
+    network are removed; volumes survive; the route stops
+    answering. To bring it back, the operator clicks Deploy again.
+
+    Pre-fix this only ran `compose down`, leaving the Caddy route
+    pointing at the (now gone) upstream — every preview URL hit
+    502'd until the operator manually re-routed or ran orphan
+    cleanup. Tying the route teardown to the stack stop matches the
+    user mental model: "stop = stop everything related to this
+    deploy"."""
     env_row = await _resolve_env(db, env_id=env_id)
     try:
         await fetch_project_for(db, actor=user, project_id=env_row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     result = await _get_stack_manager().stop(env_row.project_id)
+
+    # Best-effort Caddy route teardown — slug matches what
+    # `LocalComposeTarget` / `stack_reroute` register. Swallow
+    # failures into the output but don't fail the whole down on
+    # them; the stack is already stopped.
+    caddy_status = "skipped (no caddy admin configured)"
+    if settings.caddy_admin_url and settings.caddy_preview_domain:
+        try:
+            transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
+            manager = SubdomainManager(
+                client=CaddyAdminClient(transport=transport),
+                preview_domain=settings.caddy_preview_domain,
+            )
+            slug = f"prod-{env_row.name}-{env_row.project_id}".lower()
+            await manager.unregister(slug)
+            caddy_status = f"unregistered {slug}"
+        except Exception as exc:  # noqa: BLE001
+            caddy_status = f"unregister failed: {exc}"
+            logger.warning(
+                "deploy.stack_down.caddy_unregister_failed",
+                env_id=env_id,
+                error=str(exc),
+            )
+
     return StackOpResponse(
         environment_id=env_id,
         project=result.project,
         action=result.action,
         ok=result.ok,
         affected=result.affected,
-        output=result.output,
+        output=f"{result.output}\n[caddy] {caddy_status}",
     )
 
 

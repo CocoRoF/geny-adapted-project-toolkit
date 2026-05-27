@@ -77,7 +77,8 @@ export function CleanupOrphansModal({ onClose, onCleaned }: Props) {
     plan &&
     plan.containers.length === 0 &&
     plan.caddy_route_ids.length === 0 &&
-    plan.worktree_paths.length === 0;
+    plan.worktree_paths.length === 0 &&
+    (plan.archived_projects?.length ?? 0) === 0;
 
   return (
     <div
@@ -256,6 +257,41 @@ function PlanView({
         )}
       </Section>
 
+      {/* Archived projects — DB cascade purge */}
+      <Section
+        title={t("performance.cleanup.section.archived_projects")}
+        count={plan.archived_projects?.length ?? 0}
+      >
+        {(plan.archived_projects?.length ?? 0) === 0 ? (
+          <Empty label={t("performance.cleanup.empty.archived_projects")} />
+        ) : (
+          <>
+            <p className="mb-1.5 text-[11.5px] text-fg-muted">
+              {t("performance.cleanup.archived_projects.hint")}
+            </p>
+            <ul className="space-y-1">
+              {plan.archived_projects.map((p) => (
+                <li
+                  key={p.project_id}
+                  className="flex flex-wrap items-baseline gap-2 rounded border border-warn/40 bg-warn/5 px-2 py-1 text-[11.5px]"
+                >
+                  <span className="font-medium text-fg">{p.display_name}</span>
+                  <code className="text-[10px] text-fg-subtle">
+                    {p.project_id.slice(0, 12).toLowerCase()}…
+                  </code>
+                  <span className="text-[10.5px] text-fg-muted">
+                    {t("performance.cleanup.archived_projects.cascade")
+                      .replace("{ws}", String(p.cascade_workspaces))
+                      .replace("{env}", String(p.cascade_environments))
+                      .replace("{run}", String(p.cascade_deploy_runs))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </Section>
+
       {/* Worktrees — opt-in destructive */}
       <Section
         title={t("performance.cleanup.section.worktrees")}
@@ -336,8 +372,28 @@ function ReportView({ report }: { report: CleanupReport }) {
               String(report.worktrees_removed.length),
             )}
           </li>
+          <li>
+            {t("performance.cleanup.report.projects_purged").replace(
+              "{n}",
+              String(report.projects_purged?.length ?? 0),
+            )}
+          </li>
         </ul>
       </div>
+      {(report.project_purge_errors?.length ?? 0) > 0 ? (
+        <div>
+          <h3 className="mb-1 text-[12px] font-semibold text-warn">
+            {t("performance.cleanup.report.project_purge_errors")}
+          </h3>
+          <ul className="space-y-0.5 text-[11.5px] text-warn">
+            {report.project_purge_errors.map((e) => (
+              <li key={e.project_id}>
+                <span className="font-mono">{e.project_id}</span> — {e.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {failCount > 0 ? (
         <div>
           <h3 className="mb-1 text-[12px] font-semibold text-danger">

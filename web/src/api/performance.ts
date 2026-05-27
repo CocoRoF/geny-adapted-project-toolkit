@@ -184,10 +184,23 @@ export interface OrphanTarget {
   status: string;
 }
 
+/** An archived project the server will DB-purge along with the
+ * container cleanup. Cascade counts come from the FK chain
+ * (workspaces / environments / deploy_runs) so the modal can show
+ * "5 more rows will be deleted with this project". */
+export interface ArchivedProjectPurge {
+  project_id: string;
+  display_name: string;
+  cascade_workspaces: number;
+  cascade_environments: number;
+  cascade_deploy_runs: number;
+}
+
 export interface OrphanPlan {
   containers: OrphanTarget[];
   caddy_route_ids: string[];
   worktree_paths: string[];
+  archived_projects: ArchivedProjectPurge[];
 }
 
 export interface CleanupOutcome {
@@ -202,6 +215,8 @@ export interface CleanupReport {
   caddy_routes_removed: string[];
   worktrees_removed: string[];
   worktree_errors: { path: string; reason: string }[];
+  projects_purged: string[];
+  project_purge_errors: { project_id: string; reason: string }[];
 }
 
 export const previewOrphanCleanup = () =>

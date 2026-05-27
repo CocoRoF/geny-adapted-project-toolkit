@@ -295,10 +295,19 @@ class OrphanTargetDto(BaseModel):
     status: str
 
 
+class ArchivedProjectPurgeDto(BaseModel):
+    project_id: str
+    display_name: str
+    cascade_workspaces: int
+    cascade_environments: int
+    cascade_deploy_runs: int
+
+
 class OrphanPlanResponse(BaseModel):
     containers: list[OrphanTargetDto]
     caddy_route_ids: list[str]
     worktree_paths: list[str]
+    archived_projects: list[ArchivedProjectPurgeDto] = []
 
 
 class CleanupOutcomeDto(BaseModel):
@@ -313,6 +322,8 @@ class CleanupReportResponse(BaseModel):
     caddy_routes_removed: list[str]
     worktrees_removed: list[str]
     worktree_errors: list[dict[str, str]]
+    projects_purged: list[str] = []
+    project_purge_errors: list[dict[str, str]] = []
 
 
 class CleanupRequest(BaseModel):
@@ -812,28 +823,64 @@ async def _orphan_db_context(
     dict[str, models.Workspace],
     dict[str, models.Environment],
     set[str],
+    dict[str, dict[str, object]],
 ]:
-    """Tables needed for orphan classification: workspaces +
-    environments + the set of archived project IDs. The archived set
-    is the backstop that catches workspaces whose project was
-    archived but whose own status wasn't cascaded — see
-    `cleanup._is_orphan`."""
+    """Tables needed for orphan classification + DB purge:
+
+      * workspaces + environments (for `_is_orphan` joins)
+      * the set of archived project IDs (orphan-classifier backstop)
+      * per-archived-project cascade metadata (display_name +
+        workspaces/envs/deploy_runs counts) so the cleanup modal can
+        preview "5 DB rows will be deleted with this project"
+    """
     if container.session_factory is None:
-        return ({}, {}, set())
+        return ({}, {}, set(), {})
     async with container.session_factory() as db:
         ws_rows = (await db.execute(select(models.Workspace))).scalars().all()
         env_rows = (await db.execute(select(models.Environment))).scalars().all()
-        archived_proj_rows = (
-            await db.execute(
-                select(models.Project.id).where(
-                    models.Project.archived_at.is_not(None)
+        archived_projects = (
+            (
+                await db.execute(
+                    select(models.Project).where(
+                        models.Project.archived_at.is_not(None)
+                    )
                 )
             )
-        ).all()
+            .scalars()
+            .all()
+        )
+        archived_ids = {p.id for p in archived_projects}
+        # Build cascade-counts per archived project. The cascade
+        # uses ON DELETE CASCADE, so the modal counts mirror the
+        # FK chain (workspaces / envs / deploy_runs only — sandboxes
+        # and agent_sessions cascade too but are noise for the UI).
+        meta: dict[str, dict[str, object]] = {}
+        for p in archived_projects:
+            ws_count = sum(1 for w in ws_rows if w.project_id == p.id)
+            env_ids = [e.id for e in env_rows if e.project_id == p.id]
+            env_count = len(env_ids)
+            if env_ids:
+                deploy_run_count = (
+                    await db.execute(
+                        select(models.DeployRun).where(
+                            models.DeployRun.environment_id.in_(env_ids)
+                        )
+                    )
+                ).scalars().all()
+                dr_count = len(list(deploy_run_count))
+            else:
+                dr_count = 0
+            meta[p.id] = {
+                "display_name": p.display_name,
+                "workspaces": ws_count,
+                "environments": env_count,
+                "deploy_runs": dr_count,
+            }
     return (
         {w.id: w for w in ws_rows},
         {e.id: e for e in env_rows},
-        {row[0] for row in archived_proj_rows},
+        archived_ids,
+        meta,
     )
 
 
@@ -854,6 +901,16 @@ def _plan_dto(plan: OrphanPlan) -> OrphanPlanResponse:
         containers=[_target_dto(t) for t in plan.containers],
         caddy_route_ids=plan.caddy_route_ids,
         worktree_paths=plan.worktree_paths,
+        archived_projects=[
+            ArchivedProjectPurgeDto(
+                project_id=p.project_id,
+                display_name=p.display_name,
+                cascade_workspaces=p.cascade_workspaces,
+                cascade_environments=p.cascade_environments,
+                cascade_deploy_runs=p.cascade_deploy_runs,
+            )
+            for p in plan.archived_projects
+        ],
     )
 
 
@@ -868,7 +925,9 @@ async def preview_orphan_cleanup(
     can see the blast radius before clicking the destructive
     button."""
     sampler = _get_sampler()
-    workspaces, environments, archived_projects = await _orphan_db_context(container)
+    workspaces, environments, archived_projects, archived_meta = (
+        await _orphan_db_context(container)
+    )
     caddy_manager = _build_subdomain_manager(settings)
     plan = await build_orphan_plan(
         sampler,
@@ -876,6 +935,7 @@ async def preview_orphan_cleanup(
         environments_by_id=environments,
         caddy_manager=caddy_manager,
         archived_project_ids=archived_projects,
+        archived_projects_meta=archived_meta,
     )
     return _plan_dto(plan)
 
@@ -893,7 +953,9 @@ async def cleanup_orphans(
     the live container list + DB rows — the client cannot trick
     this into deleting a live workspace."""
     sampler = _get_sampler()
-    workspaces, environments, archived_projects = await _orphan_db_context(container)
+    workspaces, environments, archived_projects, archived_meta = (
+        await _orphan_db_context(container)
+    )
     caddy_manager = _build_subdomain_manager(settings)
     plan = await build_orphan_plan(
         sampler,
@@ -901,18 +963,30 @@ async def cleanup_orphans(
         environments_by_id=environments,
         caddy_manager=caddy_manager,
         archived_project_ids=archived_projects,
+        archived_projects_meta=archived_meta,
     )
     report = await execute_cleanup(
         plan,
         sampler=sampler,
         caddy_manager=caddy_manager,
         remove_worktrees=body.remove_worktrees,
+        db_session_factory=container.session_factory,
     )
     # Bust the broadcaster's replay cache so the next stream tick
     # reflects the smaller container set without a 2 s stale frame.
     global _BROADCASTER  # noqa: PLW0603
     if _BROADCASTER is not None:
         _BROADCASTER._latest = None  # noqa: SLF001
+        # Force a fresh sample + broadcast right now so the SSE
+        # clients update within ~100 ms instead of waiting for the
+        # next 2-s sampler tick. Without this the UI shows stale
+        # "0 실행 중" containers for up to 2 s after a "전부 정리".
+        try:
+            await _BROADCASTER.force_push()
+        except Exception:  # noqa: BLE001
+            # Best-effort — broadcaster might not be wired with a
+            # payload builder in some test setups.
+            pass
     # Also invalidate the sampler TTL cache for the same reason.
     sampler._sample_cache = None  # noqa: SLF001
     return CleanupReportResponse(
@@ -928,6 +1002,8 @@ async def cleanup_orphans(
         caddy_routes_removed=report.caddy_routes_removed,
         worktrees_removed=report.worktrees_removed,
         worktree_errors=report.worktree_errors,
+        projects_purged=report.projects_purged,
+        project_purge_errors=report.project_purge_errors,
     )
 
 

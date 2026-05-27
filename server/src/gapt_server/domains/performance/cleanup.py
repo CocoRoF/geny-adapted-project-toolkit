@@ -69,6 +69,23 @@ class OrphanTarget:
 
 
 @dataclass(frozen=True)
+class ArchivedProjectPurge:
+    """An archived project whose containers + routes are gone or
+    will be gone after this cleanup runs — safe to DB-purge so it
+    stops cluttering the Performance dashboard's orphan bucket.
+
+    Purging cascades through workspaces / environments / deploy_runs
+    via the FK ON DELETE CASCADE we defined in the schema; audit
+    events survive (they have no FK to projects)."""
+
+    project_id: str
+    display_name: str
+    cascade_workspaces: int  # how many ws rows the cascade will drop
+    cascade_environments: int
+    cascade_deploy_runs: int
+
+
+@dataclass(frozen=True)
 class OrphanPlan:
     """Pre-computed plan returned to the UI before any destructive
     action runs. The frontend renders this so the operator sees what
@@ -77,6 +94,7 @@ class OrphanPlan:
     containers: list[OrphanTarget]
     caddy_route_ids: list[str]
     worktree_paths: list[str]
+    archived_projects: list[ArchivedProjectPurge]
 
 
 @dataclass(frozen=True)
@@ -93,6 +111,8 @@ class CleanupReport:
     caddy_routes_removed: list[str]
     worktrees_removed: list[str]
     worktree_errors: list[dict[str, str]]
+    projects_purged: list[str]  # project_id strings
+    project_purge_errors: list[dict[str, str]]
 
 
 # ─────────────────────────────────────────────────── detection ──
@@ -172,11 +192,20 @@ async def build_plan(
     environments_by_id: dict[str, "models.Environment"],
     caddy_manager: "SubdomainManager | None",
     archived_project_ids: set[str] | None = None,
+    archived_projects_meta: dict[str, dict[str, object]] | None = None,
 ) -> OrphanPlan:
     """Snapshot the host + DB state once, return the cleanup target
     list. The same function backs both the dry-run preview and the
     real cleanup — we never trust the client's idea of "this is an
-    orphan", we recompute it server-side."""
+    orphan", we recompute it server-side.
+
+    `archived_projects_meta` (optional): when supplied, the plan
+    includes a list of archived projects to DB-purge so the orphan
+    bucket on the Performance dashboard actually goes empty instead
+    of just losing containers. Shape per project_id:
+        {"display_name": str, "workspaces": int,
+         "environments": int, "deploy_runs": int}
+    """
     samples = await sampler.sample_all()
     archived = archived_project_ids or set()
     orphan_samples = [
@@ -227,10 +256,44 @@ async def build_plan(
             if slug not in live_workspace_ids_lower:
                 caddy_route_ids.append(rid)
 
+    # Build the archived-projects purge list. An archived project is
+    # safe to purge when, AFTER this cleanup runs, it will have:
+    #   * 0 containers on the host (all its orphan containers are in
+    #     `targets` and will be removed),
+    #   * AND no remaining live (non-archived) containers tied to it
+    #     (we already filtered to orphan-only above, but if SOMEHOW
+    #     a live container references an archived project, that's a
+    #     bug we want to surface — skip the purge in that case so the
+    #     operator notices in the modal).
+    archived_purges: list[ArchivedProjectPurge] = []
+    if archived_projects_meta:
+        # Project IDs that will still have containers AFTER cleanup —
+        # i.e. samples we did NOT classify as orphan but which still
+        # reference this project. This list is empty in the common
+        # case (archived → cascade ran → no live containers left).
+        live_after = {
+            s.summary.project_id
+            for s in samples
+            if s not in orphan_samples and s.summary.project_id
+        }
+        for pid, meta in archived_projects_meta.items():
+            if pid in live_after:
+                continue
+            archived_purges.append(
+                ArchivedProjectPurge(
+                    project_id=pid,
+                    display_name=str(meta.get("display_name") or pid),
+                    cascade_workspaces=int(meta.get("workspaces", 0) or 0),
+                    cascade_environments=int(meta.get("environments", 0) or 0),
+                    cascade_deploy_runs=int(meta.get("deploy_runs", 0) or 0),
+                )
+            )
+
     return OrphanPlan(
         containers=targets,
         caddy_route_ids=caddy_route_ids,
         worktree_paths=sorted(worktrees),
+        archived_projects=archived_purges,
     )
 
 
@@ -250,9 +313,12 @@ async def execute_cleanup(
     sampler: ContainerSampler,
     caddy_manager: "SubdomainManager | None",
     remove_worktrees: bool,
+    db_session_factory: object | None = None,
 ) -> CleanupReport:
     """Carry out the plan. Stops + removes each container, unregisters
-    each Caddy route, optionally removes worktree directories.
+    each Caddy route, optionally removes worktree directories, and —
+    when `db_session_factory` is provided — DB-purges archived
+    projects whose containers + routes are now gone.
 
     All operations are best-effort and per-target — one failed
     removal doesn't abort the rest. The report captures every error
@@ -290,11 +356,46 @@ async def execute_cleanup(
             else:
                 worktree_errors.append({"path": path, "reason": err})
 
+    # 4. Archived project DB rows. ON DELETE CASCADE on workspaces /
+    # environments / deploy_runs / sandboxes / agent_sessions means
+    # one DELETE FROM projects per id wipes the lineage. audit_events
+    # carries no project FK so the audit trail survives untouched.
+    purged_ids: list[str] = []
+    purge_errors: list[dict[str, str]] = []
+    if db_session_factory is not None and plan.archived_projects:
+        from gapt_server.db import models  # noqa: PLC0415
+        from sqlalchemy import delete  # noqa: PLC0415
+
+        async with db_session_factory() as db:  # type: ignore[operator]
+            for purge in plan.archived_projects:
+                try:
+                    await db.execute(
+                        delete(models.Project).where(
+                            models.Project.id == purge.project_id
+                        )
+                    )
+                    await db.commit()
+                    purged_ids.append(purge.project_id)
+                    logger.info(
+                        "orphan_cleanup.project_purged",
+                        project_id=purge.project_id,
+                        cascade_workspaces=purge.cascade_workspaces,
+                        cascade_environments=purge.cascade_environments,
+                        cascade_deploy_runs=purge.cascade_deploy_runs,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    await db.rollback()
+                    purge_errors.append(
+                        {"project_id": purge.project_id, "reason": str(exc)}
+                    )
+
     return CleanupReport(
         containers=container_results,
         caddy_routes_removed=removed_routes,
         worktrees_removed=removed_worktrees,
         worktree_errors=worktree_errors,
+        projects_purged=purged_ids,
+        project_purge_errors=purge_errors,
     )
 
 
