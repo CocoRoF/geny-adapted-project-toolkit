@@ -271,7 +271,14 @@ export function GitPanel({ workspaceId }: Props) {
       setFlash({ kind: "info", text: `${t("git.push.done")} → origin/${r.branch ?? "?"}` });
       await refresh();
     } catch (e) {
-      setFlash({ kind: "error", text: errText(e) });
+      // git push errors are noisy multi-line `hint:` / `error:`
+      // blobs. Compress to a one-liner action item; full text
+      // available on hover/click.
+      const raw = errText(e);
+      setFlash({
+        kind: "error",
+        text: friendlyPushError(raw, t),
+      });
     } finally {
       setBusy(null);
     }
@@ -614,7 +621,12 @@ export function GitPanel({ workspaceId }: Props) {
               size="sm"
               variant="ghost"
               onClick={onPush}
-              disabled={busy !== null}
+              disabled={busy !== null || (status?.ahead ?? 0) === 0}
+              title={
+                (status?.ahead ?? 0) === 0
+                  ? t("git.push.nothing")
+                  : t("git.push")
+              }
               className="flex-1"
             >
               {busy === "push" ? (
@@ -1331,4 +1343,45 @@ function errText(e: unknown): string {
   if (e instanceof ApiError) return e.reason;
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+/** Compress a raw git push / fetch error into a one-line operator
+ * action item. The git CLI dumps multi-line hint blocks ("hint:
+ * Updates were rejected because the remote contains work that you
+ * do not have…") that scream the same thing as the first
+ * `[rejected]` line — surface that line, drop the rest. The full
+ * raw text is preserved as the `title` attribute by callers so
+ * hover reveals the original.
+ *
+ * Common patterns:
+ *   `[rejected] HEAD -> main (fetch first)` → "원격이 앞서 있음 — Pull 먼저"
+ *   `Authentication failed for ...`         → "원격 인증 실패 — 토큰/권한 확인"
+ *   `Repository not found`                  → "원격 저장소 못 찾음"
+ *   `Everything up-to-date`                 → "변경 없음 — 보낼 커밋 없음"
+ *
+ * Anything we don't recognise falls back to the first non-empty
+ * line of the raw output, capped at 200 chars. */
+function friendlyPushError(raw: string, t: (k: never) => string): string {
+  const text = raw || "";
+  if (/\[rejected\]/.test(text) && /fetch first|non-fast-forward/i.test(text)) {
+    return t("git.push.error.rejected_ff" as never);
+  }
+  if (/Authentication failed|could not read Username|403/i.test(text)) {
+    return t("git.push.error.auth" as never);
+  }
+  if (/Repository not found|404/i.test(text)) {
+    return t("git.push.error.not_found" as never);
+  }
+  if (/Everything up-to-date/i.test(text)) {
+    return t("git.push.error.nothing" as never);
+  }
+  if (/permission denied|forbidden/i.test(text)) {
+    return t("git.push.error.permission" as never);
+  }
+  // Fallback: first non-empty informative line, clipped.
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("hint:") && !l.startsWith("To "));
+  return (lines[0] || text).slice(0, 200);
 }
