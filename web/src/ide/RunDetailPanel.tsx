@@ -459,6 +459,46 @@ function StackSection({
     }
   };
 
+  /** First-class mode switch — flip path ↔ subdomain immediately,
+   * persist to env config, re-register Caddy routes. UI sits on the
+   * Stack section header (visible regardless of whether the
+   * Overrides drawer is open) so production routing strategy is
+   * always one click away. */
+  const onModeFlip = useCallback(
+    async (target: "path" | "subdomain") => {
+      const current =
+        targetConfig.preview_mode === "subdomain" ? "subdomain" : "path";
+      if (target === current) return;
+      const confirmKey =
+        target === "subdomain"
+          ? "deploy.stack.mode.confirm_to_subdomain"
+          : "deploy.stack.mode.confirm_to_path";
+      if (!window.confirm(t(confirmKey).replace("{name}", envName))) return;
+      setBusy("reroute");
+      setActionOutput(null);
+      try {
+        const r = await rerouteStack(environmentId, { preview_mode: target });
+        setActionOutput({ kind: "reroute", ok: r.ok, output: r.output });
+        if (!r.ok) {
+          window.alert(t("deploy.stack.failed.reroute") + "\n\n" + r.output.slice(-400));
+        }
+        if (r.ok) {
+          const next = { ...targetConfig, preview_mode: target };
+          onConfigChange(next);
+          // Local form state needs to follow so the Overrides drawer
+          // reflects the change without a re-fetch.
+          setFMode(target);
+        }
+        await refresh();
+      } catch (e) {
+        setErr(e instanceof ApiError ? e.reason : String(e));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [environmentId, envName, targetConfig, onConfigChange, refresh, t],
+  );
+
   const onRestart = async () => {
     if (
       !window.confirm(
@@ -483,6 +523,11 @@ function StackSection({
   };
 
   const hasContainers = (status?.total_count ?? 0) > 0;
+  // Current routing mode — saved value first, default to "path" so
+  // existing envs (created before subdomain mode was a thing) read
+  // as path. This is the value the segmented control reads + writes.
+  const currentMode: "path" | "subdomain" =
+    cfg.preview_mode === "subdomain" ? "subdomain" : "path";
 
   return (
     <section className="border-b border-border bg-bg-subtle/20 px-4 py-3">
@@ -493,6 +538,48 @@ function StackSection({
         <span className="text-[10.5px] text-fg-subtle">
           {status ? `${status.running_count} / ${status.total_count} running` : "—"}
         </span>
+        {/* First-class routing-mode toggle: path | subdomain. Click
+            to switch the env's preview_mode permanently. Keeps the
+            two strategies visible+actionable on every deploy view,
+            not buried in the Overrides drawer. */}
+        <div
+          role="radiogroup"
+          aria-label={t("deploy.stack.mode.label")}
+          className="inline-flex items-center rounded-md border border-border bg-bg p-0.5 text-[10.5px]"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={currentMode === "path"}
+            onClick={() => onModeFlip("path")}
+            disabled={busy !== null || currentMode === "path"}
+            title={t("deploy.stack.mode.path.title")}
+            className={cn(
+              "rounded px-2 py-0.5 font-medium transition-colors",
+              currentMode === "path"
+                ? "bg-accent/15 text-accent"
+                : "text-fg-muted hover:bg-bg-subtle disabled:opacity-50",
+            )}
+          >
+            path
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={currentMode === "subdomain"}
+            onClick={() => onModeFlip("subdomain")}
+            disabled={busy !== null || currentMode === "subdomain"}
+            title={t("deploy.stack.mode.subdomain.title")}
+            className={cn(
+              "rounded px-2 py-0.5 font-medium transition-colors",
+              currentMode === "subdomain"
+                ? "bg-accent/15 text-accent"
+                : "text-fg-muted hover:bg-bg-subtle disabled:opacity-50",
+            )}
+          >
+            subdomain
+          </button>
+        </div>
         {busy ? (
           <span
             className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent"

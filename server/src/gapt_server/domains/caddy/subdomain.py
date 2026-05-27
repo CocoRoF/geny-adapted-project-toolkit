@@ -93,15 +93,29 @@ class SubdomainBinding:
     # IDE — confusing. The Referer + Cookie fallbacks below catch
     # those nav cases and steer them back into the preview.
     #
-    # When this is > 0, Caddy sets a short-lived
-    # `gapt_preview=<slug>` cookie when the visitor first hits
-    # `/preview/<slug>/...`, and a separate route forwards any
-    # later root-relative request bearing that cookie back to the
-    # same upstream. TTL kept intentionally short (default 5 min)
-    # to bound the "tab A's GAPT got eaten by tab B's preview"
-    # cookie-pollution window; for true robustness use subdomain
-    # mode instead. Set to 0 to disable.
-    cookie_pinning_ttl_s: int = 300
+    # When this is > 0, Caddy sets a `gapt_preview=<slug>` cookie
+    # when the visitor first hits `/preview/<slug>/...`. Two fallback
+    # routes then use the cookie to handle root-relative URLs the
+    # upstream app emits:
+    #
+    #   * **document** navigations (link clicks, form submits, typed
+    #     URLs) → 307 REDIRECT to `/preview/<slug>{path}`. This
+    #     bounces the browser back into the preview prefix so the
+    #     URL bar matches what the user sees and bookmarks survive
+    #     a cookie expiry. Distinguished by `Sec-Fetch-Dest:
+    #     document`.
+    #   * **assets / XHR / fetch** (everything non-document) →
+    #     transparent reverse_proxy to the upstream. URL bar doesn't
+    #     change for XHR anyway, and redirecting JS bundles / images
+    #     would double the latency of every page load.
+    #
+    # Default 24 h (was 5 min) — the cookie is HttpOnly + SameSite=
+    # Lax + Path=/ so cross-site pollution is bounded; for solo
+    # hobbyist scale the longer TTL massively improves the "refresh
+    # broke my preview" surface. Subdomain mode remains the only
+    # *structurally* robust answer for multi-tenant cases. Set to 0
+    # to disable cookie-based fallback entirely.
+    cookie_pinning_ttl_s: int = 86400
 
 
 def _full_host(workspace_slug: str, preview_domain: str) -> str:
@@ -283,6 +297,66 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
         # a same-origin click, never catch GAPT's own namespace —
         # otherwise the dashboard becomes unreachable for the entire
         # cookie TTL (5 min default) after one preview visit.
+        # ── cookie-doc: REDIRECT navigations back into the preview
+        # prefix so the URL bar matches what's rendered ──
+        #
+        # The user clicks `<a href="/about">` inside the preview app.
+        # Browser navigates to `apex/about` with the cookie. Without
+        # this rule, the cookie-asset route below would transparently
+        # forward to nginx → content is correct BUT URL bar stays at
+        # `apex/about`, breaking:
+        #
+        #   * refresh after cookie expiry → 404 (no cookie, no path
+        #     prefix, falls to default-404)
+        #   * bookmarks / shared links — recipient hits `apex/about`
+        #     without cookie → 404
+        #   * new tab → no cookie → 404
+        #
+        # With this rule, the same click 307-redirects to
+        # `apex/preview/<slug>/about`. Browser follows, primary route
+        # catches it, URL bar updates. Bookmarks now contain the
+        # slug — they survive cookie expiry.
+        #
+        # `Sec-Fetch-Dest: document` filters to TOP-LEVEL navigations
+        # (link clicks, typed URLs, form submits without target,
+        # iframe doc loads). XHR / fetch / images / scripts / styles
+        # have other Sec-Fetch-Dest values and fall through to the
+        # cookie-asset fallback below — those don't change the URL
+        # bar anyway, and redirecting them would double-roundtrip
+        # every JS bundle.
+        #
+        # 307 (not 301/302) because it preserves the request method,
+        # so a form POST → /api/post still POSTs after the redirect.
+        cookie_doc_redirect = {
+            "@id": _route_id(binding.workspace_slug) + "-cookie-doc",
+            "match": [
+                {
+                    "header_regexp": {
+                        "Cookie": {
+                            "pattern": f"(?:^|;\\s*)gapt_preview={slug}(?:;|$)",
+                        }
+                    },
+                    "header": {
+                        "Sec-Fetch-Site": ["same-origin"],
+                        "Sec-Fetch-Dest": ["document"],
+                    },
+                    "not": [{"path": _RESERVED_PATHS}],
+                }
+            ],
+            "handle": [
+                {
+                    "handler": "static_response",
+                    "status_code": 307,
+                    "headers": {
+                        "Location": [
+                            f"{prefix}{{http.request.uri}}",
+                        ],
+                    },
+                }
+            ],
+            "terminal": True,
+        }
+        payloads.append(cookie_doc_redirect)
         cookie_fallback = {
             "@id": _route_id(binding.workspace_slug) + "-cookie",
             "match": [
@@ -366,7 +440,12 @@ class SubdomainManager:
         # binding upgraded to subdomain would leave its `-asset` /
         # `-cookie` fallback routes catching requests forever.
         primary_id = _route_id(binding.workspace_slug)
-        full_family = {primary_id, f"{primary_id}-asset", f"{primary_id}-cookie"}
+        full_family = {
+            primary_id,
+            f"{primary_id}-asset",
+            f"{primary_id}-cookie",
+            f"{primary_id}-cookie-doc",
+        }
 
         if binding.mode == PreviewMode.SUBDOMAIN:
             await self._upsert(
@@ -528,11 +607,16 @@ class SubdomainManager:
             await self.client.post(self.routes_path, arr)
 
     async def unregister(self, workspace_slug: str) -> None:
-        """Delete the primary preview route plus its Referer fallback
-        and (optional) cookie fallback. Idempotent — 404 means
-        "already gone" and is swallowed."""
+        """Delete the primary preview route plus all fallback
+        siblings (Referer, Cookie-doc redirect, Cookie-asset).
+        Idempotent — 404 means "already gone" and is swallowed."""
         primary = _route_id(workspace_slug)
-        for route_id in (primary, f"{primary}-asset", f"{primary}-cookie"):
+        for route_id in (
+            primary,
+            f"{primary}-asset",
+            f"{primary}-cookie",
+            f"{primary}-cookie-doc",
+        ):
             try:
                 await self.client.delete(f"/id/{route_id}")
             except CaddyAdminError as exc:

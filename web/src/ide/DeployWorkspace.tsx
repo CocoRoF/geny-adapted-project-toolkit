@@ -7,6 +7,7 @@ import {
   Plus,
   RotateCcw,
   Rocket,
+  Settings,
   Undo2,
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ import {
   triggerRollback,
 } from "@/api/environments";
 import { useI18n } from "@/app/providers/i18n-context";
+import { EnvSettingsModal } from "@/ide/EnvSettingsModal";
 import { RunDetailPanel } from "@/ide/RunDetailPanel";
 import { useDeployStream } from "@/ide/useDeployStream";
 import { Badge } from "@/ui/Badge";
@@ -79,6 +81,10 @@ export function DeployWorkspace({ projectId }: Props) {
   // Cleared when the user clicks Deploy / View Logs (which want
   // live stream view) or opens a different env.
   const [detailRunId, setDetailRunId] = useState<string | null>(null);
+  // Env whose settings modal is currently open. `null` = no modal.
+  const [settingsEnv, setSettingsEnv] = useState<EnvironmentResponse | null>(
+    null,
+  );
 
   const logScrollRef = useRef<HTMLPreElement | null>(null);
 
@@ -398,6 +404,14 @@ export function DeployWorkspace({ projectId }: Props) {
                         <History className="mr-1 h-3 w-3" />
                         {t("deploy.history.toggle")}
                       </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => setSettingsEnv(env)}
+                        title={t("env_settings.button_title")}
+                      >
+                        <Settings className="mr-1 h-3 w-3" />
+                        {t("env_settings.button")}
+                      </Button>
                     </div>
                     {historyEnvId === env.id ? (
                       <HistoryPane
@@ -508,6 +522,19 @@ export function DeployWorkspace({ projectId }: Props) {
           </>
         )}
       </main>
+      {settingsEnv ? (
+        <EnvSettingsModal
+          open
+          env={settingsEnv}
+          onClose={() => setSettingsEnv(null)}
+          onSaved={(updated) => {
+            setEnvs((prev) =>
+              prev.map((e) => (e.id === updated.id ? updated : e)),
+            );
+            setSettingsEnv(updated);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

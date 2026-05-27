@@ -192,6 +192,7 @@ async def test_subdomain_manager_unregister_targets_id_path() -> None:
         "/id/gapt-preview-01kws",
         "/id/gapt-preview-01kws-asset",
         "/id/gapt-preview-01kws-cookie",
+        "/id/gapt-preview-01kws-cookie-doc",
     ]
 
 
@@ -385,7 +386,11 @@ async def test_cookie_pinning_sets_short_lived_cookie_and_fallback_route() -> No
     cookie_header = headers_handler["response"]["set"]["Set-Cookie"][0]
     assert "gapt_preview=01kws" in cookie_header
     assert "Path=/" in cookie_header
-    assert "Max-Age=300" in cookie_header
+    # Default TTL was bumped 5min → 24h (`86400s`) to make path mode
+    # survive refreshes / new tabs without losing the cookie. Cookie
+    # remains HttpOnly + SameSite=Lax + Path=/ so pollution risk
+    # stays bounded.
+    assert "Max-Age=86400" in cookie_header
     assert "SameSite=Lax" in cookie_header
     assert "HttpOnly" in cookie_header
 
@@ -530,6 +535,83 @@ async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
         if "/_gapt/api/*" in (r.get("match") or [{}])[0].get("path", [])
     )
     assert cookie_idx < api_idx
+
+
+@pytest.mark.asyncio
+async def test_cookie_doc_redirect_route_exists_and_uses_307() -> None:
+    """The cookie-doc fallback is the URL-bar fix for path mode: when
+    the browser navigates (Sec-Fetch-Dest=document) with the preview
+    cookie set, instead of transparently proxying we 307-redirect
+    back to `/preview/<slug>{path}` so the address bar matches the
+    served content.
+
+    Regression guard: status MUST be 307 (preserves method for form
+    POSTs), Location MUST include `/preview/<slug>{http.request.uri}`,
+    and the match must include `Sec-Fetch-Dest: document` AND the
+    reserved-path `not` clause (otherwise GAPT IDE navigation gets
+    redirected too)."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+        )
+    )
+    posted = calls[2][2]
+    doc = next(
+        (r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie-doc"),
+        None,
+    )
+    assert doc is not None, "cookie-doc redirect route missing"
+    match = doc["match"][0]
+    assert match["header"]["Sec-Fetch-Site"] == ["same-origin"]
+    assert match["header"]["Sec-Fetch-Dest"] == ["document"]
+    assert "not" in match  # reserved-path guard
+    handler = doc["handle"][0]
+    assert handler["handler"] == "static_response"
+    assert handler["status_code"] == 307
+    location = handler["headers"]["Location"][0]
+    assert location == "/preview/01kws{http.request.uri}"
+
+
+@pytest.mark.asyncio
+async def test_cookie_doc_redirect_excluded_when_pinning_off() -> None:
+    """When `cookie_pinning_ttl_s=0`, neither the cookie-doc redirect
+    nor the cookie-asset fallback should be registered — they both
+    rely on the cookie that won't be set in that mode."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            cookie_pinning_ttl_s=0,
+        )
+    )
+    posted = calls[2][2]
+    cookie_doc = [r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie-doc"]
+    cookie = [r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie"]
+    assert cookie_doc == [], "cookie-doc should not exist when pinning disabled"
+    assert cookie == [], "cookie-asset should not exist when pinning disabled"
 
 
 @pytest.mark.asyncio
