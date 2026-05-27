@@ -79,6 +79,126 @@ export const gitDiscard = (wid: string, paths: string[]) =>
     json: { paths },
   });
 
+// ─── branches ───────────────────────────────────────────────────────
+
+export interface GitBranchInfo {
+  name: string;
+  kind: "local" | "remote" | string;
+  current: boolean;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  last_commit_sha: string | null;
+  last_commit_subject: string | null;
+}
+
+export interface GitBranchesResponse {
+  current: string | null;
+  branches: GitBranchInfo[];
+}
+
+export interface GitCheckoutResponse {
+  ok: boolean;
+  branch: string;
+  output: string;
+  error: string | null;
+}
+
+export const getGitBranches = (wid: string) =>
+  apiGet<GitBranchesResponse>(`/_gapt/api/workspaces/${wid}/git/branches`);
+
+export const gitCheckout = (
+  wid: string,
+  body: { branch: string; create?: boolean; start_point?: string | null; force?: boolean },
+) =>
+  apiFetch<GitCheckoutResponse>(`/_gapt/api/workspaces/${wid}/git/checkout`, {
+    method: "POST",
+    json: body,
+  });
+
+export const gitBranchDelete = (
+  wid: string,
+  body: { branch: string; force?: boolean },
+) =>
+  apiFetch<GitCheckoutResponse>(`/_gapt/api/workspaces/${wid}/git/branch/delete`, {
+    method: "POST",
+    json: body,
+  });
+
+// ─── stash ──────────────────────────────────────────────────────────
+
+export interface GitStashEntry {
+  ref: string;
+  branch: string | null;
+  subject: string;
+  age_seconds: number | null;
+}
+
+export interface GitStashListResponse {
+  entries: GitStashEntry[];
+}
+
+export interface GitStashOpResponse {
+  ok: boolean;
+  output: string;
+  error: string | null;
+}
+
+export const getGitStashList = (wid: string) =>
+  apiGet<GitStashListResponse>(`/_gapt/api/workspaces/${wid}/git/stash/list`);
+
+export const gitStashPush = (
+  wid: string,
+  body: { message?: string; include_untracked?: boolean } = {},
+) =>
+  apiFetch<GitStashOpResponse>(`/_gapt/api/workspaces/${wid}/git/stash/push`, {
+    method: "POST",
+    json: body,
+  });
+
+export const gitStashPop = (wid: string, body: { ref?: string } = {}) =>
+  apiFetch<GitStashOpResponse>(`/_gapt/api/workspaces/${wid}/git/stash/pop`, {
+    method: "POST",
+    json: body,
+  });
+
+export const gitStashDrop = (wid: string, body: { ref?: string } = {}) =>
+  apiFetch<GitStashOpResponse>(`/_gapt/api/workspaces/${wid}/git/stash/drop`, {
+    method: "POST",
+    json: body,
+  });
+
+// ─── commit log (graph) ─────────────────────────────────────────────
+
+export interface GitLogCommit {
+  sha: string;
+  short_sha: string;
+  parents: string[];
+  author: string;
+  author_email: string;
+  iso_date: string;
+  subject: string;
+  refs: string[];
+}
+
+export interface GitLogResponse {
+  commits: GitLogCommit[];
+}
+
+export const getGitLog = (
+  wid: string,
+  opts: { limit?: number; all_branches?: boolean } = {},
+) => {
+  const params = new URLSearchParams();
+  if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.all_branches !== undefined)
+    params.set("all_branches", String(opts.all_branches));
+  const qs = params.toString();
+  return apiGet<GitLogResponse>(
+    `/_gapt/api/workspaces/${wid}/git/log${qs ? `?${qs}` : ""}`,
+  );
+};
+
 export const getGitDiff = (wid: string, path: string, staged = false) =>
   apiGet<GitDiffResponse>(
     `/_gapt/api/workspaces/${wid}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,

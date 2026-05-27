@@ -914,6 +914,467 @@ async def git_discard(
     )
 
 
+# ─── branches ───────────────────────────────────────────────────────
+
+
+class GitBranchInfo(BaseModel):
+    """One branch row. `current` is the local HEAD; `kind` separates
+    local from remote-tracking so the UI can render them in two
+    groups without re-parsing the name. `ahead`/`behind` only filled
+    for local branches that have an upstream — None on remotes and
+    local-without-upstream."""
+
+    name: str
+    kind: str  # "local" | "remote"
+    current: bool = False
+    upstream: str | None = None
+    ahead: int | None = None
+    behind: int | None = None
+    last_commit_sha: str | None = None
+    last_commit_subject: str | None = None
+
+
+class GitBranchesResponse(BaseModel):
+    current: str | None
+    branches: list[GitBranchInfo]
+
+
+@router.get(
+    "/{workspace_id}/git/branches", response_model=GitBranchesResponse
+)
+async def git_branches(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitBranchesResponse:
+    """List every local + remote-tracking branch with the metadata
+    the panel's switcher needs: current flag, upstream tracking pair,
+    last commit. Single `git for-each-ref` covers local + remote in
+    one shot — way cheaper than calling `git branch` twice."""
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+
+    # `for-each-ref` format. Field separator is `\x01` since branch
+    # names + commit subjects can both contain pretty much anything
+    # else. Locals carry upstream pair; remotes don't.
+    fmt = "\x01".join(
+        [
+            "%(refname:short)",  # 0 name (local: main; remote: origin/main)
+            "%(refname)",  # 1 full ref (refs/heads/main, refs/remotes/origin/main)
+            "%(HEAD)",  # 2 "*" for current branch, " " otherwise
+            "%(upstream:short)",  # 3 upstream (e.g. origin/main) — local only
+            "%(upstream:track,nobracket)",  # 4 "ahead 2, behind 1" or empty
+            "%(objectname:short)",  # 5 last commit sha
+            "%(contents:subject)",  # 6 last commit subject
+        ]
+    )
+    rc, out, err = await _git_exec(
+        sandbox,
+        [
+            "for-each-ref",
+            f"--format={fmt}",
+            "refs/heads/",
+            "refs/remotes/",
+        ],
+        timeout_s=15.0,
+    )
+    if rc != 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "git.branches_failed", "reason": err.strip()[:400]},
+        )
+
+    branches: list[GitBranchInfo] = []
+    current: str | None = None
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\x01")
+        if len(parts) < 7:
+            continue
+        short, full, head_flag, upstream, track, sha, subject = parts[:7]
+        is_local = full.startswith("refs/heads/")
+        is_remote = full.startswith("refs/remotes/")
+        kind = "local" if is_local else ("remote" if is_remote else "other")
+        if kind == "other":
+            continue
+        # Skip the HEAD ref symlink that points at the default branch
+        # — it duplicates the real branch row and would render twice.
+        if short.endswith("/HEAD"):
+            continue
+        is_current = head_flag.strip() == "*"
+        if is_current:
+            current = short
+        ahead: int | None = None
+        behind: int | None = None
+        if track:
+            # `ahead 2, behind 1` / `ahead 2` / `behind 1` / `gone` etc.
+            import re as _re  # noqa: PLC0415
+
+            m_a = _re.search(r"ahead (\d+)", track)
+            m_b = _re.search(r"behind (\d+)", track)
+            ahead = int(m_a.group(1)) if m_a else (0 if upstream else None)
+            behind = int(m_b.group(1)) if m_b else (0 if upstream else None)
+        branches.append(
+            GitBranchInfo(
+                name=short,
+                kind=kind,
+                current=is_current,
+                upstream=upstream or None,
+                ahead=ahead,
+                behind=behind,
+                last_commit_sha=sha or None,
+                last_commit_subject=subject or None,
+            )
+        )
+
+    # Sort: current first, then alphabetical within each kind.
+    branches.sort(
+        key=lambda b: (
+            0 if b.kind == "local" else 1,
+            0 if b.current else 1,
+            b.name.lower(),
+        )
+    )
+    return GitBranchesResponse(current=current, branches=branches)
+
+
+class GitCheckoutRequest(BaseModel):
+    """`branch` is the local branch name to switch to. With
+    `create=True`, creates it from the current HEAD (`git checkout -b`).
+    `start_point` lets the UI branch from a remote: e.g. create
+    `feat-x` starting at `origin/main`. Refuses by default when there
+    are uncommitted worktree changes — set `force=True` to override
+    (calls `git checkout -f`, lose-on-purpose semantics)."""
+
+    branch: str = Field(min_length=1, max_length=200)
+    create: bool = False
+    start_point: str | None = None
+    force: bool = False
+
+
+class GitCheckoutResponse(BaseModel):
+    ok: bool
+    branch: str
+    output: str
+    error: str | None = None
+
+
+@router.post(
+    "/{workspace_id}/git/checkout", response_model=GitCheckoutResponse
+)
+async def git_checkout(
+    workspace_id: str,
+    payload: GitCheckoutRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitCheckoutResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    argv: list[str] = ["checkout"]
+    if payload.force:
+        argv.append("-f")
+    if payload.create:
+        argv.append("-b")
+    argv.append(payload.branch)
+    if payload.start_point:
+        argv.append(payload.start_point)
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=30.0)
+    combined = (out + err).strip()
+    return GitCheckoutResponse(
+        ok=rc == 0,
+        branch=payload.branch,
+        output=combined,
+        error=err.strip()[-400:] if rc != 0 else None,
+    )
+
+
+class GitBranchDeleteRequest(BaseModel):
+    branch: str = Field(min_length=1, max_length=200)
+    # By default we refuse to delete an unmerged branch (`git branch
+    # -d`); `force=True` flips to `-D` so the operator can drop a
+    # merged-by-eye branch the tracking machinery doesn't recognise.
+    force: bool = False
+
+
+class GitBranchDeleteResponse(BaseModel):
+    ok: bool
+    branch: str
+    output: str
+    error: str | None = None
+
+
+@router.post(
+    "/{workspace_id}/git/branch/delete",
+    response_model=GitBranchDeleteResponse,
+)
+async def git_branch_delete(
+    workspace_id: str,
+    payload: GitBranchDeleteRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitBranchDeleteResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    flag = "-D" if payload.force else "-d"
+    rc, out, err = await _git_exec(
+        sandbox, ["branch", flag, payload.branch], timeout_s=10.0
+    )
+    return GitBranchDeleteResponse(
+        ok=rc == 0,
+        branch=payload.branch,
+        output=(out + err).strip(),
+        error=err.strip()[-400:] if rc != 0 else None,
+    )
+
+
+# ─── stash ──────────────────────────────────────────────────────────
+
+
+class GitStashEntry(BaseModel):
+    """`ref` is `stash@{N}` — that's the form `git stash pop/drop`
+    wants. `subject` is the auto-generated or user-supplied message."""
+
+    ref: str
+    branch: str | None
+    subject: str
+    age_seconds: int | None = None
+
+
+class GitStashListResponse(BaseModel):
+    entries: list[GitStashEntry]
+
+
+@router.get(
+    "/{workspace_id}/git/stash/list", response_model=GitStashListResponse
+)
+async def git_stash_list(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitStashListResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    # `git stash list --format=...`. We grab the ref name, branch
+    # name (parsed from subject by git), the subject after the colon,
+    # and the relative age. Use `\x01` separator for same reason
+    # as branches above.
+    fmt = "\x01".join(["%gd", "%cr", "%s"])  # gd = stash ref, cr = committer rel, s = subject
+    rc, out, _ = await _git_exec(
+        sandbox, ["stash", "list", f"--format={fmt}"], timeout_s=10.0
+    )
+    entries: list[GitStashEntry] = []
+    if rc == 0:
+        import re as _re  # noqa: PLC0415
+
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\x01")
+            if len(parts) < 3:
+                continue
+            ref, _age_rel, subject = parts[:3]
+            # Subject format: `WIP on <branch>: <sha> <msg>` or `On <branch>: <msg>`
+            branch: str | None = None
+            m = _re.match(r"(?:WIP on|On) ([^:]+):", subject)
+            if m:
+                branch = m.group(1).strip()
+            entries.append(
+                GitStashEntry(
+                    ref=ref.strip(),
+                    branch=branch,
+                    subject=subject.strip(),
+                )
+            )
+    return GitStashListResponse(entries=entries)
+
+
+class GitStashPushRequest(BaseModel):
+    message: str | None = None
+    include_untracked: bool = False
+
+
+class GitStashOpResponse(BaseModel):
+    ok: bool
+    output: str
+    error: str | None = None
+
+
+@router.post(
+    "/{workspace_id}/git/stash/push", response_model=GitStashOpResponse
+)
+async def git_stash_push(
+    workspace_id: str,
+    payload: GitStashPushRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitStashOpResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    argv: list[str] = ["stash", "push"]
+    if payload.include_untracked:
+        argv.append("-u")
+    if payload.message:
+        argv.extend(["-m", payload.message])
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=20.0)
+    return GitStashOpResponse(
+        ok=rc == 0,
+        output=(out + err).strip(),
+        error=err.strip()[-400:] if rc != 0 else None,
+    )
+
+
+class GitStashRefRequest(BaseModel):
+    """Defaults to `stash@{0}` (most recent) when `ref` is omitted —
+    matches `git stash pop` / `git stash drop` semantics."""
+
+    ref: str | None = None
+
+
+@router.post(
+    "/{workspace_id}/git/stash/pop", response_model=GitStashOpResponse
+)
+async def git_stash_pop(
+    workspace_id: str,
+    payload: GitStashRefRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitStashOpResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    argv: list[str] = ["stash", "pop"]
+    if payload.ref:
+        argv.append(payload.ref)
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=20.0)
+    return GitStashOpResponse(
+        ok=rc == 0,
+        output=(out + err).strip(),
+        error=err.strip()[-400:] if rc != 0 else None,
+    )
+
+
+@router.post(
+    "/{workspace_id}/git/stash/drop", response_model=GitStashOpResponse
+)
+async def git_stash_drop(
+    workspace_id: str,
+    payload: GitStashRefRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitStashOpResponse:
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    argv: list[str] = ["stash", "drop"]
+    if payload.ref:
+        argv.append(payload.ref)
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=10.0)
+    return GitStashOpResponse(
+        ok=rc == 0,
+        output=(out + err).strip(),
+        error=err.strip()[-400:] if rc != 0 else None,
+    )
+
+
+# ─── commit log (for graph view) ────────────────────────────────────
+
+
+class GitLogCommit(BaseModel):
+    """One commit row from `git log`. `parents` is the list of parent
+    SHAs (length >1 = merge commit) and lets the frontend draw a
+    simple ASCII graph. `refs` is the decorate string split into the
+    branch/tag tags that point at this commit."""
+
+    sha: str
+    short_sha: str
+    parents: list[str]
+    author: str
+    author_email: str
+    iso_date: str
+    subject: str
+    refs: list[str]
+
+
+class GitLogResponse(BaseModel):
+    commits: list[GitLogCommit]
+
+
+@router.get(
+    "/{workspace_id}/git/log", response_model=GitLogResponse
+)
+async def git_log(
+    workspace_id: str,
+    limit: int = 50,
+    all_branches: bool = True,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> GitLogResponse:
+    """Recent commit history with parent SHAs so the panel can draw
+    a graph. `all_branches=True` follows `--all` for VS Code-style
+    "show every branch" view; flip to False for "current branch only"
+    if the panel adds a filter toggle later."""
+    ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
+    await sandbox.ensure()
+    limit = max(1, min(limit, 500))
+    fmt = "\x01".join(
+        [
+            "%H",  # full SHA
+            "%h",  # short SHA
+            "%P",  # parent SHAs (space-separated)
+            "%an",  # author name
+            "%ae",  # author email
+            "%aI",  # author date ISO 8601
+            "%s",  # subject
+            "%D",  # ref names (without parens)
+        ]
+    )
+    argv = ["log", f"--max-count={limit}", f"--format={fmt}"]
+    if all_branches:
+        argv.append("--all")
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=15.0)
+    if rc != 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "git.log_failed", "reason": err.strip()[:400]},
+        )
+    commits: list[GitLogCommit] = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\x01")
+        if len(parts) < 8:
+            continue
+        sha, short, parents, author, email, date, subject, refs = parts[:8]
+        commits.append(
+            GitLogCommit(
+                sha=sha.strip(),
+                short_sha=short.strip(),
+                parents=[p for p in parents.split() if p],
+                author=author.strip(),
+                author_email=email.strip(),
+                iso_date=date.strip(),
+                subject=subject.strip(),
+                refs=[r.strip() for r in refs.split(",") if r.strip()],
+            )
+        )
+    return GitLogResponse(commits=commits)
+
+
 # Anchor for static analysers — the BaseModel imports below are
 # pulled in by pydantic at runtime via field annotations.
 _USED: tuple[type, ...] = (BaseModel, shlex.__class__)

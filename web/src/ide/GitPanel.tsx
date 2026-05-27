@@ -7,8 +7,12 @@ import {
   ChevronRight,
   GitBranch,
   GitCommit,
+  GitMerge,
   GitPullRequest,
+  Inbox,
   Loader2,
+  Package,
+  Plus,
   RefreshCw,
   RotateCcw,
   Send,
@@ -19,18 +23,32 @@ import {
 import { ApiError } from "@/api/client";
 import {
   type CreatePrResponse,
+  type GitBranchInfo,
+  type GitBranchesResponse,
+  type GitLogCommit,
+  type GitLogResponse,
   type GitPushResponse,
+  type GitStashEntry,
+  type GitStashListResponse,
   type GitStatusEntry,
   type GitStatusResponse,
   type GitSyncResponse,
   createPr,
+  getGitBranches,
   getGitDiff,
+  getGitLog,
+  getGitStashList,
   getGitStatus,
+  gitBranchDelete,
+  gitCheckout,
   gitCommit,
   gitDiscard,
   gitFetch,
   gitPull,
   gitPush,
+  gitStashDrop,
+  gitStashPop,
+  gitStashPush,
   gitSync,
 } from "@/api/git";
 import { useI18n } from "@/app/providers/i18n-context";
@@ -45,59 +63,69 @@ interface Props {
 type FlashKind = "info" | "error" | "warn";
 type Flash = { kind: FlashKind; text: string };
 
-/** Source-control panel — VS Code-class minus the multi-repo /
- * per-hunk-staging surfaces.
+type BusyOp =
+  | "fetch"
+  | "pull"
+  | "sync"
+  | "commit"
+  | "push"
+  | "pr"
+  | "discard"
+  | "checkout"
+  | "branch-delete"
+  | "stash"
+  | null;
+
+/** Source-control panel — VS Code-class.
  *
- * Three vertical sections in the left pane:
- *   1. Branch header — branch name, ahead/behind chips, sync buttons
- *      (Fetch / Pull / Sync), refresh button.
- *   2. Changes — checklist with status icon + per-file discard.
- *      Click a row → diff in right pane.
- *   3. Recent commits — last 10 commits on this branch, collapsible.
+ * Header: branch switcher (dropdown of local + remote branches, create-new
+ * inline) + sync-state badge + Fetch / Pull / Sync / Refresh.
  *
- * Commit / push / PR actions live in the footer with the message
- * editor. The right pane shows a colored unified diff for the
- * currently-selected file, or recent commits when no file is
- * selected.
+ * Left aside (collapsible sections):
+ *   1. Changes — checklist + click-to-diff + per-file discard.
+ *   2. Stash — list, push, pop, drop.
+ *   3. History — recent commits with refs as badges, parent-aware
+ *      ASCII rail at the left for merge visualisation.
  *
- * Architectural notes:
- *   * `.gapt/` is filtered server-side so the panel never shows the
- *     workspace's service log files as untracked. The user never sees
- *     those entries, never accidentally stages them.
- *   * Fetch + Pull are separate from Sync. Sync = fetch + pull + push
- *     in one call (VS Code's circular-arrows button); Pull = fetch +
- *     ff-merge only; Fetch = refs only. Each surfaces as its own
- *     button so the user can choose the granularity. */
+ * Right pane: colored unified diff for the selected file.
+ *
+ * All endpoints are scoped to one workspace_id; `.gapt/` is filtered
+ * server-side so runtime log files never clutter the changes list. */
 export function GitPanel({ workspaceId }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
+  const [branchesResp, setBranchesResp] = useState<GitBranchesResponse | null>(null);
+  const [stash, setStash] = useState<GitStashListResponse | null>(null);
+  const [log, setLog] = useState<GitLogResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activePath, setActivePath] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState<
-    | "fetch"
-    | "pull"
-    | "sync"
-    | "commit"
-    | "push"
-    | "pr"
-    | "discard"
-    | null
-  >(null);
+  const [busy, setBusy] = useState<BusyOp>(null);
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [prUrl, setPrUrl] = useState<string | null>(null);
-  const [recentOpen, setRecentOpen] = useState(true);
+  const [openSections, setOpenSections] = useState<{
+    stash: boolean;
+    history: boolean;
+  }>({ stash: false, history: true });
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [newBranchInput, setNewBranchInput] = useState("");
+  const [stashMsgInput, setStashMsgInput] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const s = await getGitStatus(workspaceId);
+      const [s, b, st, l] = await Promise.all([
+        getGitStatus(workspaceId),
+        getGitBranches(workspaceId),
+        getGitStashList(workspaceId),
+        getGitLog(workspaceId, { limit: 50, all_branches: true }),
+      ]);
       setStatus(s);
-      // Pre-select everything on first load only. After the user
-      // unchecks a row we don't auto-recheck it on every refresh —
-      // their intent is preserved via the local Set.
+      setBranchesResp(b);
+      setStash(st);
+      setLog(l);
       setSelected((prev) =>
         prev.size === 0 ? new Set(s.entries.map((e) => e.path)) : prev,
       );
@@ -113,7 +141,9 @@ export function GitPanel({ workspaceId }: Props) {
   }, [refresh]);
 
   const dirty = (status?.entries.length ?? 0) > 0;
+  const stashCount = stash?.entries.length ?? 0;
 
+  // ── change-selection helpers ───────────────────────
   const toggle = (path: string) =>
     setSelected((cur) => {
       const next = new Set(cur);
@@ -121,24 +151,19 @@ export function GitPanel({ workspaceId }: Props) {
       else next.add(path);
       return next;
     });
-
   const toggleAll = () => {
     if (!status) return;
     const all = status.entries.map((e) => e.path);
-    setSelected((cur) =>
-      cur.size === all.length ? new Set() : new Set(all),
-    );
+    setSelected((cur) => (cur.size === all.length ? new Set() : new Set(all)));
   };
 
+  // ── diff ───────────────────────────────────────────
   const onDiff = useCallback(
     async (path: string) => {
       setActivePath(path);
       try {
         const d = await getGitDiff(workspaceId, path);
-        setDiff({
-          path,
-          text: d.diff || t("git.diff.empty"),
-        });
+        setDiff({ path, text: d.diff || t("git.diff.empty") });
       } catch (e) {
         setFlash({ kind: "error", text: errText(e) });
       }
@@ -146,25 +171,24 @@ export function GitPanel({ workspaceId }: Props) {
     [workspaceId, t],
   );
 
+  // ── discard ────────────────────────────────────────
   const onDiscard = useCallback(
     async (path: string) => {
-      if (
-        !window.confirm(t("git.discard.confirm").replace("{path}", path))
-      )
+      if (!window.confirm(t("git.discard.confirm").replace("{path}", path)))
         return;
       setBusy("discard");
       try {
         const r = await gitDiscard(workspaceId, [path]);
-        if (r.ok) {
-          setFlash({ kind: "info", text: t("git.discard.done") });
-        } else {
-          setFlash({
-            kind: "warn",
-            text:
-              `${t("git.discard.partial")} ${r.discarded.length}/${r.discarded.length + r.skipped.length}` +
-              (r.skipped[0] ? ` — ${r.skipped[0].reason.slice(0, 100)}` : ""),
-          });
-        }
+        setFlash(
+          r.ok
+            ? { kind: "info", text: t("git.discard.done") }
+            : {
+                kind: "warn",
+                text: `${t("git.discard.partial")} ${r.discarded.length}/${
+                  r.discarded.length + r.skipped.length
+                }`,
+              },
+        );
         if (activePath === path) {
           setActivePath(null);
           setDiff(null);
@@ -179,27 +203,22 @@ export function GitPanel({ workspaceId }: Props) {
     [workspaceId, activePath, refresh, t],
   );
 
+  // ── sync trio (fetch / pull / sync) ────────────────
   const runSync = useCallback(
-    async (
-      kind: "fetch" | "pull" | "sync",
-      fn: () => Promise<GitSyncResponse>,
-    ) => {
+    async (kind: "fetch" | "pull" | "sync", fn: () => Promise<GitSyncResponse>) => {
       setBusy(kind);
       setFlash(null);
       try {
         const r = await fn();
         const label = r.actions.join(" + ");
-        if (r.ok) {
-          setFlash({
-            kind: "info",
-            text: `${label || kind} · ↑${r.ahead} ↓${r.behind}`,
-          });
-        } else {
-          setFlash({
-            kind: "error",
-            text: `${label || kind} failed — ${(r.error || "see output").slice(0, 200)}`,
-          });
-        }
+        setFlash(
+          r.ok
+            ? { kind: "info", text: `${label || kind} · ↑${r.ahead} ↓${r.behind}` }
+            : {
+                kind: "error",
+                text: `${label || kind} failed — ${(r.error || "see output").slice(0, 200)}`,
+              },
+        );
         await refresh();
       } catch (e) {
         setFlash({ kind: "error", text: errText(e) });
@@ -210,6 +229,7 @@ export function GitPanel({ workspaceId }: Props) {
     [refresh],
   );
 
+  // ── commit ─────────────────────────────────────────
   const onCommit = useCallback(async () => {
     if (!message.trim()) {
       setFlash({ kind: "error", text: t("git.commit.need_message") });
@@ -221,10 +241,7 @@ export function GitPanel({ workspaceId }: Props) {
     }
     setBusy("commit");
     try {
-      const r = await gitCommit(workspaceId, {
-        message,
-        paths: Array.from(selected),
-      });
+      const r = await gitCommit(workspaceId, { message, paths: Array.from(selected) });
       setFlash({
         kind: "info",
         text: `${t("git.commit.done")} ${r.sha}${r.branch ? ` (${r.branch})` : ""}`,
@@ -243,10 +260,7 @@ export function GitPanel({ workspaceId }: Props) {
     setBusy("push");
     try {
       const r: GitPushResponse = await gitPush(workspaceId, {});
-      setFlash({
-        kind: "info",
-        text: `${t("git.push.done")} → origin/${r.branch ?? "?"}`,
-      });
+      setFlash({ kind: "info", text: `${t("git.push.done")} → origin/${r.branch ?? "?"}` });
       await refresh();
     } catch (e) {
       setFlash({ kind: "error", text: errText(e) });
@@ -265,16 +279,154 @@ export function GitPanel({ workspaceId }: Props) {
         base: "main",
       });
       setPrUrl(r.url);
-      setFlash({
-        kind: "info",
-        text: `${t("git.pr.done")} #${r.number}`,
-      });
+      setFlash({ kind: "info", text: `${t("git.pr.done")} #${r.number}` });
     } catch (e) {
       setFlash({ kind: "error", text: errText(e) });
     } finally {
       setBusy(null);
     }
   }, [message, workspaceId, t]);
+
+  // ── branches ───────────────────────────────────────
+  const onCheckout = useCallback(
+    async (branchName: string, opts: { create?: boolean; startPoint?: string } = {}) => {
+      setBusy("checkout");
+      try {
+        const r = await gitCheckout(workspaceId, {
+          branch: branchName,
+          create: opts.create ?? false,
+          start_point: opts.startPoint ?? null,
+        });
+        if (r.ok) {
+          setFlash({ kind: "info", text: `${t("git.checkout.done")} ${branchName}` });
+          setBranchMenuOpen(false);
+          setNewBranchInput("");
+          await refresh();
+        } else {
+          setFlash({
+            kind: "error",
+            text: `${t("git.checkout.failed")}: ${(r.error || "").slice(0, 200)}`,
+          });
+        }
+      } catch (e) {
+        setFlash({ kind: "error", text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [workspaceId, refresh, t],
+  );
+
+  const onBranchDelete = useCallback(
+    async (branchName: string) => {
+      if (!window.confirm(t("git.branch.delete_confirm").replace("{name}", branchName)))
+        return;
+      setBusy("branch-delete");
+      try {
+        const r = await gitBranchDelete(workspaceId, { branch: branchName });
+        if (r.ok) {
+          setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
+        } else {
+          // Most failures are "not fully merged" — offer force.
+          if (
+            window.confirm(
+              t("git.branch.force_confirm").replace("{name}", branchName) +
+                "\n\n" +
+                (r.error || "").slice(0, 200),
+            )
+          ) {
+            const r2 = await gitBranchDelete(workspaceId, {
+              branch: branchName,
+              force: true,
+            });
+            if (r2.ok) {
+              setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
+            } else {
+              setFlash({
+                kind: "error",
+                text: `${t("git.branch.delete_failed")}: ${(r2.error || "").slice(0, 200)}`,
+              });
+            }
+          }
+        }
+        await refresh();
+      } catch (e) {
+        setFlash({ kind: "error", text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [workspaceId, refresh, t],
+  );
+
+  // ── stash ──────────────────────────────────────────
+  const onStashPush = useCallback(async () => {
+    setBusy("stash");
+    try {
+      const r = await gitStashPush(workspaceId, {
+        message: stashMsgInput.trim() || undefined,
+        include_untracked: true,
+      });
+      setFlash(
+        r.ok
+          ? { kind: "info", text: t("git.stash.pushed") }
+          : { kind: "error", text: `${t("git.stash.push_failed")}: ${(r.error || "").slice(0, 200)}` },
+      );
+      setStashMsgInput("");
+      await refresh();
+    } catch (e) {
+      setFlash({ kind: "error", text: errText(e) });
+    } finally {
+      setBusy(null);
+    }
+  }, [workspaceId, stashMsgInput, refresh, t]);
+
+  const onStashPop = useCallback(
+    async (ref: string) => {
+      setBusy("stash");
+      try {
+        const r = await gitStashPop(workspaceId, { ref });
+        setFlash(
+          r.ok
+            ? { kind: "info", text: `${t("git.stash.popped")} ${ref}` }
+            : {
+                kind: "error",
+                text: `${t("git.stash.pop_failed")}: ${(r.error || "").slice(0, 200)}`,
+              },
+        );
+        await refresh();
+      } catch (e) {
+        setFlash({ kind: "error", text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [workspaceId, refresh, t],
+  );
+
+  const onStashDrop = useCallback(
+    async (ref: string) => {
+      if (!window.confirm(t("git.stash.drop_confirm").replace("{ref}", ref))) return;
+      setBusy("stash");
+      try {
+        const r = await gitStashDrop(workspaceId, { ref });
+        setFlash(
+          r.ok
+            ? { kind: "info", text: `${t("git.stash.dropped")} ${ref}` }
+            : {
+                kind: "error",
+                text: `${t("git.stash.drop_failed")}: ${(r.error || "").slice(0, 200)}`,
+              },
+        );
+        await refresh();
+      } catch (e) {
+        setFlash({ kind: "error", text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [workspaceId, refresh, t],
+  );
 
   const syncState = useMemo(() => {
     if (!status) return "unknown" as const;
@@ -285,16 +437,28 @@ export function GitPanel({ workspaceId }: Props) {
   }, [status]);
 
   return (
-    <div className="grid h-full grid-cols-[minmax(300px,380px)_1fr]">
+    <div className="grid h-full grid-cols-[minmax(320px,400px)_1fr]">
       <aside className="flex h-full flex-col overflow-hidden border-r border-border bg-bg-elevated">
-        {/* ── Branch header ── */}
-        <header className="flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2">
+        {/* ── Header ── */}
+        <header className="relative flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2">
           <div className="flex items-center gap-1.5">
-            <GitBranch className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.5} />
-            <span className="font-mono text-[12.5px] font-semibold text-fg">
-              {status?.branch ?? t("git.branch.detached")}
-            </span>
-            <SyncStateBadge state={syncState} ahead={status?.ahead ?? 0} behind={status?.behind ?? 0} />
+            <button
+              type="button"
+              onClick={() => setBranchMenuOpen((v) => !v)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg-subtle"
+              title={t("git.branch.switcher")}
+            >
+              <GitBranch className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.5} />
+              <span className="font-mono text-[12.5px] font-semibold text-fg">
+                {status?.branch ?? t("git.branch.detached")}
+              </span>
+              <ChevronDown className="h-3 w-3 text-fg-subtle" />
+            </button>
+            <SyncStateBadge
+              state={syncState}
+              ahead={status?.ahead ?? 0}
+              behind={status?.behind ?? 0}
+            />
             <Button
               size="sm"
               variant="ghost"
@@ -311,13 +475,9 @@ export function GitPanel({ workspaceId }: Props) {
             </Button>
           </div>
           {status?.upstream ? (
-            <code className="text-[10px] text-fg-subtle">
-              → {status.upstream}
-            </code>
+            <code className="text-[10px] text-fg-subtle">→ {status.upstream}</code>
           ) : (
-            <span className="text-[10px] text-warn">
-              {t("git.upstream.none")}
-            </span>
+            <span className="text-[10px] text-warn">{t("git.upstream.none")}</span>
           )}
           <div className="flex flex-wrap gap-1">
             <Button
@@ -366,18 +526,25 @@ export function GitPanel({ workspaceId }: Props) {
               {t("git.sync")}
             </Button>
           </div>
+          {branchMenuOpen ? (
+            <BranchMenu
+              branches={branchesResp?.branches ?? []}
+              busy={busy === "checkout" || busy === "branch-delete"}
+              newBranchInput={newBranchInput}
+              onNewBranchInput={setNewBranchInput}
+              onCheckout={onCheckout}
+              onDelete={onBranchDelete}
+              onClose={() => setBranchMenuOpen(false)}
+            />
+          ) : null}
         </header>
 
-        {/* ── Changes section ── */}
+        {/* ── Changes ── */}
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <header className="flex items-center gap-2 border-b border-border bg-bg-subtle/40 px-3 py-1.5">
-            <button
-              type="button"
-              className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted"
-              onClick={() => status?.entries.length && toggleAll()}
-            >
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
               {t("git.section.changes")}
-            </button>
+            </span>
             <span className="text-[10.5px] text-fg-subtle">
               {status?.entries.length ?? 0}
             </span>
@@ -417,50 +584,115 @@ export function GitPanel({ workspaceId }: Props) {
           </div>
         </section>
 
-        {/* ── Recent commits ── */}
-        {status?.recent_commits.length ? (
-          <section className="shrink-0 border-t border-border">
-            <button
-              type="button"
-              className="flex w-full items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
-              onClick={() => setRecentOpen((v) => !v)}
-              aria-expanded={recentOpen}
-            >
-              {recentOpen ? (
-                <ChevronDown className="h-3 w-3" />
+        {/* ── Stash ── */}
+        <section className="shrink-0 border-t border-border">
+          <button
+            type="button"
+            className="flex w-full items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+            onClick={() => setOpenSections((s) => ({ ...s, stash: !s.stash }))}
+            aria-expanded={openSections.stash}
+          >
+            {openSections.stash ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+            <Package className="h-3 w-3" strokeWidth={1.5} />
+            {t("git.section.stash")}
+            <span className="text-[10.5px] text-fg-subtle">{stashCount}</span>
+          </button>
+          {openSections.stash ? (
+            <div className="border-t border-border px-2 py-1.5">
+              <div className="mb-1.5 flex gap-1">
+                <input
+                  value={stashMsgInput}
+                  onChange={(e) => setStashMsgInput(e.target.value)}
+                  placeholder={t("git.stash.msg_placeholder")}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-fg placeholder:text-fg-subtle"
+                  disabled={busy !== null}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onStashPush}
+                  disabled={busy !== null || !dirty}
+                  title={t("git.stash.push_title")}
+                >
+                  {busy === "stash" ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Inbox className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
+              {stashCount === 0 ? (
+                <p className="px-1 py-1 text-[10.5px] text-fg-subtle">
+                  {t("git.stash.empty")}
+                </p>
               ) : (
-                <ChevronRight className="h-3 w-3" />
+                <ul className="max-h-36 space-y-0.5 overflow-y-auto">
+                  {stash!.entries.map((s) => (
+                    <li
+                      key={s.ref}
+                      className="group flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px]"
+                    >
+                      <code className="font-mono text-[10.5px] text-fg-subtle">
+                        {s.ref}
+                      </code>
+                      <span className="flex-1 truncate text-fg" title={s.subject}>
+                        {s.subject}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onStashPop(s.ref)}
+                        disabled={busy !== null}
+                        className="invisible rounded p-0.5 text-fg-subtle hover:bg-accent/10 hover:text-accent group-hover:visible"
+                        title={t("git.stash.pop_title")}
+                      >
+                        <ArrowDownToLine className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onStashDrop(s.ref)}
+                        disabled={busy !== null}
+                        className="invisible rounded p-0.5 text-fg-subtle hover:bg-danger/10 hover:text-danger group-hover:visible"
+                        title={t("git.stash.drop_title")}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
-              {t("git.section.recent")}
-              <span className="text-[10.5px] text-fg-subtle">
-                {status.recent_commits.length}
-              </span>
-            </button>
-            {recentOpen ? (
-              <ul className="max-h-44 overflow-y-auto py-1">
-                {status.recent_commits.map((c) => (
-                  <li
-                    key={c.sha}
-                    className="flex items-baseline gap-2 px-3 py-0.5 text-[11.5px]"
-                  >
-                    <GitCommit
-                      className="h-3 w-3 shrink-0 text-fg-subtle"
-                      strokeWidth={1.5}
-                    />
-                    <code className="font-mono text-[10.5px] text-fg-subtle">
-                      {c.sha}
-                    </code>
-                    <span className="truncate text-fg" title={c.message}>
-                      {c.message}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        ) : null}
+            </div>
+          ) : null}
+        </section>
 
-        {/* ── Commit area ── */}
+        {/* ── History (commit log with refs + graph hints) ── */}
+        <section className="shrink-0 border-t border-border">
+          <button
+            type="button"
+            className="flex w-full items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+            onClick={() => setOpenSections((s) => ({ ...s, history: !s.history }))}
+            aria-expanded={openSections.history}
+          >
+            {openSections.history ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+            <GitCommit className="h-3 w-3" strokeWidth={1.5} />
+            {t("git.section.history")}
+            <span className="text-[10.5px] text-fg-subtle">
+              {log?.commits.length ?? 0}
+            </span>
+          </button>
+          {openSections.history ? (
+            <HistoryList commits={log?.commits ?? []} currentBranch={status?.branch ?? null} />
+          ) : null}
+        </section>
+
+        {/* ── Commit footer ── */}
         <div className="shrink-0 border-t border-border p-2">
           <textarea
             value={message}
@@ -499,9 +731,7 @@ export function GitPanel({ workspaceId }: Props) {
               )}
               {t("git.commit")}
               {selected.size > 0 && dirty ? (
-                <span className="ml-1 text-[10px] opacity-70">
-                  ({selected.size})
-                </span>
+                <span className="ml-1 text-[10px] opacity-70">({selected.size})</span>
               ) : null}
             </Button>
             <Button
@@ -549,7 +779,7 @@ export function GitPanel({ workspaceId }: Props) {
         </div>
       </aside>
 
-      {/* ── Right pane: diff or recent commits ── */}
+      {/* ── Right pane: diff ── */}
       <main className="flex h-full flex-col overflow-hidden bg-bg">
         <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
           {diff ? (
@@ -568,9 +798,7 @@ export function GitPanel({ workspaceId }: Props) {
               </button>
             </>
           ) : (
-            <span className="text-[12px] text-fg-subtle">
-              {t("git.diff.placeholder")}
-            </span>
+            <span className="text-[12px] text-fg-subtle">{t("git.diff.placeholder")}</span>
           )}
         </header>
         <div className="flex-1 overflow-auto bg-bg">
@@ -579,6 +807,259 @@ export function GitPanel({ workspaceId }: Props) {
       </main>
     </div>
   );
+}
+
+// ────────────────────────────────────────── components ──
+
+function BranchMenu({
+  branches,
+  busy,
+  newBranchInput,
+  onNewBranchInput,
+  onCheckout,
+  onDelete,
+  onClose,
+}: {
+  branches: GitBranchInfo[];
+  busy: boolean;
+  newBranchInput: string;
+  onNewBranchInput: (v: string) => void;
+  onCheckout: (
+    name: string,
+    opts?: { create?: boolean; startPoint?: string },
+  ) => void;
+  onDelete: (name: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const locals = branches.filter((b) => b.kind === "local");
+  const remotes = branches.filter((b) => b.kind === "remote");
+  return (
+    <div className="absolute left-3 right-3 top-[calc(100%-2px)] z-10 max-h-[70vh] overflow-y-auto rounded-md border border-border bg-bg-elevated shadow-xl">
+      <div className="flex items-center gap-1 border-b border-border bg-bg-subtle/40 px-2 py-1.5">
+        <input
+          autoFocus
+          value={newBranchInput}
+          onChange={(e) => onNewBranchInput(e.target.value)}
+          placeholder={t("git.branch.create_placeholder")}
+          className="flex-1 rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-fg placeholder:text-fg-subtle"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newBranchInput.trim()) {
+              onCheckout(newBranchInput.trim(), { create: true });
+            } else if (e.key === "Escape") {
+              onClose();
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() =>
+            newBranchInput.trim() &&
+            onCheckout(newBranchInput.trim(), { create: true })
+          }
+          disabled={busy || !newBranchInput.trim()}
+          title={t("git.branch.create_title")}
+        >
+          <Plus className="h-3 w-3" />
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onClose} title="close">
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+      <SectionLabel>{t("git.branch.local")}</SectionLabel>
+      {locals.length === 0 ? (
+        <p className="px-3 py-1.5 text-[10.5px] text-fg-subtle">
+          {t("git.branch.no_local")}
+        </p>
+      ) : (
+        <ul>
+          {locals.map((b) => (
+            <BranchRow
+              key={b.name}
+              branch={b}
+              busy={busy}
+              onClick={() => onCheckout(b.name)}
+              onDelete={b.current ? undefined : () => onDelete(b.name)}
+            />
+          ))}
+        </ul>
+      )}
+      {remotes.length > 0 ? (
+        <>
+          <SectionLabel>{t("git.branch.remote")}</SectionLabel>
+          <ul>
+            {remotes.map((b) => {
+              // checkout a remote → create a local tracking branch
+              // from it. e.g. clicking origin/feat-x creates feat-x
+              // local with origin/feat-x as upstream.
+              const localName = b.name.replace(/^origin\//, "");
+              return (
+                <BranchRow
+                  key={b.name}
+                  branch={b}
+                  busy={busy}
+                  onClick={() =>
+                    onCheckout(localName, { create: true, startPoint: b.name })
+                  }
+                  trailingHint={t("git.branch.checkout_remote_hint")}
+                />
+              );
+            })}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border-b border-border bg-bg px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+      {children}
+    </div>
+  );
+}
+
+function BranchRow({
+  branch,
+  busy,
+  onClick,
+  onDelete,
+  trailingHint,
+}: {
+  branch: GitBranchInfo;
+  busy: boolean;
+  onClick: () => void;
+  onDelete?: () => void;
+  trailingHint?: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <li className="group flex items-center gap-1.5 border-b border-border/40 px-2 py-1 hover:bg-bg-subtle">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy || branch.current}
+        className={cn(
+          "flex flex-1 items-center gap-1.5 truncate text-left",
+          branch.current && "cursor-default",
+        )}
+      >
+        {branch.current ? (
+          <Check className="h-3 w-3 shrink-0 text-success" />
+        ) : (
+          <GitBranch className="h-3 w-3 shrink-0 text-fg-subtle" strokeWidth={1.5} />
+        )}
+        <span
+          className={cn(
+            "truncate font-mono text-[11.5px]",
+            branch.current ? "font-semibold text-fg" : "text-fg-muted",
+          )}
+        >
+          {branch.name}
+        </span>
+        {branch.upstream ? (
+          <code className="shrink-0 text-[9.5px] text-fg-subtle">
+            → {branch.upstream}
+          </code>
+        ) : null}
+        {branch.ahead !== null && branch.ahead > 0 ? (
+          <span className="text-[9.5px] text-success">↑{branch.ahead}</span>
+        ) : null}
+        {branch.behind !== null && branch.behind > 0 ? (
+          <span className="text-[9.5px] text-warn">↓{branch.behind}</span>
+        ) : null}
+        {trailingHint ? (
+          <span className="shrink-0 text-[9.5px] text-fg-subtle">{trailingHint}</span>
+        ) : null}
+      </button>
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={busy}
+          className="invisible rounded p-0.5 text-fg-subtle hover:bg-danger/10 hover:text-danger group-hover:visible"
+          title={t("git.branch.delete_title")}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
+function HistoryList({
+  commits,
+  currentBranch,
+}: {
+  commits: GitLogCommit[];
+  currentBranch: string | null;
+}) {
+  const { t } = useI18n();
+  if (commits.length === 0) {
+    return (
+      <p className="px-3 py-2 text-[10.5px] text-fg-subtle">{t("git.history.empty")}</p>
+    );
+  }
+  return (
+    <ul className="max-h-56 overflow-y-auto py-1">
+      {commits.map((c, i) => {
+        const isMerge = c.parents.length > 1;
+        const isHead = currentBranch && c.refs.some((r) => r.includes(currentBranch));
+        return (
+          <li
+            key={c.sha}
+            className="flex items-baseline gap-1.5 px-3 py-0.5 text-[11.5px]"
+            title={`${c.author} <${c.author_email}>  ·  ${new Date(c.iso_date).toLocaleString()}`}
+          >
+            {/* Simple graph rail — bullet for normal, fork for merge. */}
+            <span className="shrink-0 font-mono text-[10px] text-fg-subtle">
+              {isMerge ? (
+                <GitMerge className="inline h-3 w-3 text-accent" strokeWidth={1.5} />
+              ) : (
+                <span className={cn("inline-block", isHead && "text-success")}>
+                  {i === 0 ? "●" : "│"}
+                </span>
+              )}
+            </span>
+            <code className="shrink-0 font-mono text-[10.5px] text-fg-subtle">
+              {c.short_sha}
+            </code>
+            <span className="truncate text-fg">{c.subject}</span>
+            {c.refs.length > 0 ? (
+              <span className="flex shrink-0 gap-0.5">
+                {c.refs.slice(0, 3).map((r) => (
+                  <Badge
+                    key={r}
+                    tone={
+                      r === currentBranch || r === `HEAD -> ${currentBranch}`
+                        ? "success"
+                        : r.startsWith("origin/")
+                          ? "neutral"
+                          : "accent"
+                    }
+                    className="text-[9px]"
+                    title={r}
+                  >
+                    {prettyRef(r)}
+                  </Badge>
+                ))}
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function prettyRef(r: string): string {
+  // `HEAD -> main` -> show "main"; `tag: v1` -> show "v1"; remote branch
+  // shows as-is.
+  if (r.startsWith("HEAD -> ")) return r.slice("HEAD -> ".length);
+  if (r.startsWith("tag: ")) return r.slice("tag: ".length);
+  return r;
 }
 
 function SyncStateBadge({
@@ -600,10 +1081,8 @@ function SyncStateBadge({
     );
   }
   return (
-    <span className="inline-flex items-center gap-0.5 text-[10.5px] font-mono">
-      {ahead > 0 ? (
-        <span className="text-success">↑{ahead}</span>
-      ) : null}
+    <span className="inline-flex items-center gap-0.5 font-mono text-[10.5px]">
+      {ahead > 0 ? <span className="text-success">↑{ahead}</span> : null}
       {behind > 0 ? <span className="text-warn">↓{behind}</span> : null}
     </span>
   );
@@ -676,15 +1155,12 @@ function FileRow({
 }
 
 function ColoredDiff({ text }: { text: string }) {
-  // Unified diff line classifier. Two-state coloring (added / removed
-  // / context / hunk header) is enough — full git-style intra-line
-  // word diff is a stretch goal.
   return (
     <pre className="whitespace-pre px-3 py-2 font-mono text-[11.5px] leading-relaxed">
       {text.split("\n").map((line, i) => {
         let className = "block text-fg-muted";
         if (line.startsWith("+++") || line.startsWith("---")) {
-          className = "block text-fg font-semibold";
+          className = "block font-semibold text-fg";
         } else if (line.startsWith("@@")) {
           className = "block text-accent";
         } else if (line.startsWith("+")) {
@@ -692,11 +1168,11 @@ function ColoredDiff({ text }: { text: string }) {
         } else if (line.startsWith("-")) {
           className = "block bg-danger/10 text-danger";
         } else if (line.startsWith("diff --git")) {
-          className = "block text-fg font-semibold";
+          className = "block font-semibold text-fg";
         }
         return (
           <span key={i} className={className}>
-            {line || " "}
+            {line || " "}
           </span>
         );
       })}
@@ -707,8 +1183,6 @@ function ColoredDiff({ text }: { text: string }) {
 function shortStatus(porcelain: string): string {
   const t = porcelain.trim();
   if (t === "??") return "U";
-  // git porcelain v2 first 2 chars: index, worktree. Show worktree
-  // (operator-facing state) by default, fall back to index.
   const wt = porcelain.length >= 2 ? porcelain[1] : porcelain[0] ?? "·";
   const idx = porcelain.length >= 1 ? porcelain[0] : "·";
   const ch = wt && wt.trim() ? wt : idx;
