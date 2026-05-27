@@ -533,6 +533,7 @@ export const ko: Record<keyof typeof en, string> = {
   // ─── git panel ───
   "git.branch.detached": "(detached HEAD)",
   "git.upstream.none": "upstream 미설정 — 첫 push 시 origin/HEAD 가 만들어집니다",
+  "git.upstream.none_short": "upstream 없음",
   "git.refresh": "상태 새로고침",
   "git.fetch": "Fetch",
   "git.fetch.title": "git fetch origin — 원격 ref 만 갱신, merge 안 함.",
@@ -555,6 +556,9 @@ export const ko: Record<keyof typeof en, string> = {
   "git.discard.partial": "일부 폐기:",
   "git.commit": "커밋",
   "git.commit.placeholder": "커밋 메시지 (첫 줄 = 제목)…",
+  "git.commit.placeholder_branch": "메시지 (Ctrl+Enter 로 \"{branch}\" 에 커밋)",
+  "git.commit.include_on": "이 파일을 커밋에 포함",
+  "git.commit.include_off": "이 파일을 커밋에서 제외",
   "git.commit.need_message": "커밋 메시지를 입력하세요.",
   "git.commit.need_files": "최소 1개 파일을 선택하세요.",
   "git.commit.done": "커밋됨",

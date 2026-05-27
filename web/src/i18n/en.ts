@@ -535,6 +535,7 @@ export const en = {
   // ─── git panel ───
   "git.branch.detached": "(detached HEAD)",
   "git.upstream.none": "No upstream — push will need an initial origin/HEAD",
+  "git.upstream.none_short": "no upstream",
   "git.refresh": "Refresh status",
   "git.fetch": "Fetch",
   "git.fetch.title": "git fetch origin — refresh remote refs only, no merge.",
@@ -557,6 +558,9 @@ export const en = {
   "git.discard.partial": "Partial discard:",
   "git.commit": "Commit",
   "git.commit.placeholder": "Commit message (first line = subject)…",
+  "git.commit.placeholder_branch": "Message (Ctrl+Enter to commit on \"{branch}\")",
+  "git.commit.include_on": "Include this file in the commit",
+  "git.commit.include_off": "Exclude this file from the commit",
   "git.commit.need_message": "Type a commit message.",
   "git.commit.need_files": "Select at least one file to commit.",
   "git.commit.done": "Committed",

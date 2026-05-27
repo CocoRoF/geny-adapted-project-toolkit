@@ -78,24 +78,42 @@ async def _read_github_token(
     project_id: str,
     actor_id: str,
     vault: SecretVault,
+    container: AppContainer | None = None,
 ) -> str | None:
-    """Resolve the project's GitHub token from its
-    `git_auth_secret_ref`. Returns None when no secret is bound —
-    push/PR endpoints translate that into a clear 412."""
+    """Resolve a GitHub token for git operations. Priority:
+
+      1. Project's vault-bound secret (`git_auth_secret_ref`). Per-
+         project token, set by the operator in Settings + bound at
+         project create / edit time.
+      2. Host's GitHub credentials, discovered at server startup
+         via `gh auth token` / `GH_TOKEN` / etc. Lets a host where
+         `gh` is already logged-in clone + fetch + push private
+         repos without the user having to copy a token into vault.
+
+    Returns None when neither is available — push/PR endpoints
+    translate that into a clear 412 with operator guidance.
+    """
     project = (
         await db.execute(select(models.Project).where(models.Project.id == project_id))
     ).scalar_one_or_none()
-    if project is None or not project.git_auth_secret_ref:
-        return None
-    try:
-        return await vault.read(
-            db,
-            secret_id=project.git_auth_secret_ref,
-            purpose="workspace.git",
-            actor_id=actor_id,
-        )
-    except (SecretVaultError, Exception):
-        return None
+    if project is not None and project.git_auth_secret_ref:
+        try:
+            token = await vault.read(
+                db,
+                secret_id=project.git_auth_secret_ref,
+                purpose="workspace.git",
+                actor_id=actor_id,
+            )
+            if token:
+                return token
+        except (SecretVaultError, Exception):
+            # Fall through to host fallback — the operator might
+            # have a stale ref to a deleted secret, that shouldn't
+            # block git ops if the host token is fine.
+            pass
+    if container is not None and container.host_github_token:
+        return container.host_github_token
+    return None
 
 
 def _is_gapt_managed_path(path: str) -> bool:
@@ -403,7 +421,7 @@ async def git_push(
 ) -> GitPushResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
     token = await _read_github_token(
-        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
     if not token:
         raise HTTPException(
@@ -489,7 +507,7 @@ async def create_pr(
     """
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
     token = await _read_github_token(
-        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
     if not token:
         raise HTTPException(
@@ -600,23 +618,23 @@ async def _git_fetch(sandbox: WorkspaceSandbox, token: str | None) -> tuple[int,
     touching the worktree. Token (when supplied) is injected via the
     same `http.extraHeader` mechanism the clone path uses so private
     repos work transparently."""
-    env = {}
-    argv: list[str] = ["fetch", "origin", "--prune"]
-    if token:
-        # Embed the Basic auth via `-c http.extraHeader=...`. Same
-        # pattern as `_default_clone_runner_with_creds` in the
-        # workspace boot path — keeps the token off disk and out of
-        # the URL.
-        import base64  # noqa: PLC0415
-
-        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-        argv = [
-            "-c",
-            f"http.extraHeader=Authorization: Basic {basic}",
-            *argv,
-        ]
-    rc, out, err = await _git_exec(sandbox, argv, env=env, timeout_s=60.0)
+    argv = _with_auth_prefix(["fetch", "origin", "--prune"], token)
+    rc, out, err = await _git_exec(sandbox, argv, timeout_s=60.0)
     return rc, (out + err).strip()
+
+
+def _with_auth_prefix(argv: list[str], token: str | None) -> list[str]:
+    """Prepend `-c http.extraHeader=Authorization: Basic ...` so the
+    given git subcommand authenticates against origin without writing
+    the token to disk or embedding it in the remote URL. No-op when
+    token is None — caller's network operation will then try
+    anonymous (fine for public repos, 401s on private)."""
+    if not token:
+        return list(argv)
+    import base64  # noqa: PLC0415
+
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return ["-c", f"http.extraHeader=Authorization: Basic {basic}", *argv]
 
 
 @router.post(
@@ -636,7 +654,7 @@ async def git_fetch(
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
-        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
     rc, output = await _git_fetch(sandbox, token)
     if rc != 0:
@@ -669,7 +687,7 @@ async def git_pull(
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
-        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
     actions: list[str] = []
 
@@ -690,7 +708,9 @@ async def git_pull(
         )
 
     rc, pull_out, pull_err = await _git_exec(
-        sandbox, ["pull", "--ff-only", "--no-rebase"], timeout_s=60.0
+        sandbox,
+        _with_auth_prefix(["pull", "--ff-only", "--no-rebase"], token),
+        timeout_s=60.0,
     )
     actions.append("pull")
     combined = (fetch_out + "\n" + pull_out + pull_err).strip()
@@ -732,7 +752,7 @@ async def git_sync(
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
-        db, project_id=ws.project_id, actor_id=user.id, vault=vault
+        db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
     actions: list[str] = []
     log_parts: list[str] = []
@@ -748,7 +768,9 @@ async def git_sync(
     ahead, behind = await _ahead_behind(sandbox)
     if behind > 0:
         rc, p_out, p_err = await _git_exec(
-            sandbox, ["pull", "--ff-only", "--no-rebase"], timeout_s=60.0
+            sandbox,
+            _with_auth_prefix(["pull", "--ff-only", "--no-rebase"], token),
+            timeout_s=60.0,
         )
         actions.append("pull")
         log_parts.append(f"$ git pull --ff-only\n{(p_out + p_err).strip()}")
@@ -764,19 +786,10 @@ async def git_sync(
         ahead, behind = await _ahead_behind(sandbox)
 
     if ahead > 0:
-        push_env: dict[str, str] = {}
-        push_argv: list[str] = ["push", "origin", "HEAD"]
-        if token:
-            import base64  # noqa: PLC0415
-
-            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-            push_argv = [
-                "-c",
-                f"http.extraHeader=Authorization: Basic {basic}",
-                *push_argv,
-            ]
         rc, p_out, p_err = await _git_exec(
-            sandbox, push_argv, env=push_env, timeout_s=60.0
+            sandbox,
+            _with_auth_prefix(["push", "origin", "HEAD"], token),
+            timeout_s=60.0,
         )
         actions.append("push")
         log_parts.append(f"$ git push\n{(p_out + p_err).strip()}")
@@ -1000,9 +1013,13 @@ async def git_branches(
         kind = "local" if is_local else ("remote" if is_remote else "other")
         if kind == "other":
             continue
-        # Skip the HEAD ref symlink that points at the default branch
-        # — it duplicates the real branch row and would render twice.
-        if short.endswith("/HEAD"):
+        # Skip the HEAD ref symlink that points at the default branch.
+        # `refname:short` strips trailing `/HEAD` to just the remote
+        # name (`origin`), so we have to check the FULL refname for
+        # the `/HEAD` suffix — otherwise an entry literally named
+        # `origin` slips through and clicking it creates a useless
+        # branch called `origin`.
+        if full.endswith("/HEAD"):
             continue
         is_current = head_flag.strip() == "*"
         if is_current:

@@ -88,6 +88,15 @@ class AppContainer:
     services: ServiceRegistry
     workspace_sandbox: WorkspaceSandboxManager
     deploy_registry: "DeployRegistry"  # noqa: UP037 — forward ref for fwd decl
+    # Token discovered from the host's `gh auth status` at startup —
+    # fallback for git operations when the project hasn't bound a
+    # `git_auth_secret_ref` to a vault secret. Lets the operator
+    # clone / fetch / push private repos out-of-the-box on a host
+    # where `gh` is already authenticated, without the per-project
+    # secret dance. None when the host has no usable token (no `gh`,
+    # not logged in, etc.) — vault path remains the source of truth
+    # when a project secret IS bound.
+    host_github_token: str | None = None
 
     async def aclose(self) -> None:
         await self.deploy_registry.aclose()
@@ -176,7 +185,53 @@ def build_container(
         services=ServiceRegistry(sandbox_manager=ws_sandbox),
         workspace_sandbox=ws_sandbox,
         deploy_registry=DeployRegistry(session_factory=factory),
+        host_github_token=_discover_host_github_token(),
     )
+
+
+def _discover_host_github_token() -> str | None:
+    """Best-effort host GitHub token discovery. Tries (in order):
+
+      1. `GAPT_HOST_GITHUB_TOKEN` env — explicit operator override.
+      2. `GH_TOKEN` / `GITHUB_TOKEN` standard env vars.
+      3. `gh auth token` (the GitHub CLI). Most common path on a
+         dev host where the operator's already logged in via `gh`.
+
+    Returns the token string or None. We never raise — this is a
+    fallback that should fail silently and let the per-project
+    `git_auth_secret_ref` path remain the source of truth when a
+    project HAS bound a vault secret."""
+    import os  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    explicit = (
+        os.environ.get("GAPT_HOST_GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if explicit and explicit.strip():
+        return explicit.strip()
+
+    gh = shutil.which("gh")
+    if gh is None:
+        return None
+    try:
+        # `gh auth token` prints the token on stdout; non-zero exit
+        # means "not logged in" (or no host known). 5s timeout — the
+        # call should be milliseconds since gh caches.
+        result = subprocess.run(  # noqa: S603 — gh is a trusted binary
+            [gh, "auth", "token"],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    token = (result.stdout or "").strip()
+    return token or None
 
 
 def _build_notifications(settings: Settings) -> NotificationService:

@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 
+import { SplitHandle } from "@/ide/shell/SplitHandle";
 import { ApiError } from "@/api/client";
 import {
   type CreatePrResponse,
@@ -112,6 +113,13 @@ export function GitPanel({ workspaceId }: Props) {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [newBranchInput, setNewBranchInput] = useState("");
   const [stashMsgInput, setStashMsgInput] = useState("");
+  // VS Code-style draggable section heights. Each is the pixel
+  // height of the OPEN section's body — Changes is the residual
+  // (`flex-1`), Stash and History have explicit user-controllable
+  // heights with a SplitHandle above them. Defaults chosen so the
+  // first-open state shows a few entries without dominating Changes.
+  const [stashHeight, setStashHeight] = useState(140);
+  const [historyHeight, setHistoryHeight] = useState(200);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -437,23 +445,47 @@ export function GitPanel({ workspaceId }: Props) {
   }, [status]);
 
   return (
-    <div className="grid h-full grid-cols-[minmax(320px,400px)_1fr]">
+    <div
+      className={cn(
+        "grid h-full",
+        // Collapse to single column when no diff is open — without
+        // this the right pane sits empty as a strip with just a
+        // "click a file to see diff" placeholder, eating the panel's
+        // horizontal real estate AND mis-positioning the IdeShell's
+        // splitter bar (the splitter measures from the panel's right
+        // edge, so an unused diff strip throws it off).
+        diff ? "grid-cols-[minmax(320px,400px)_1fr]" : "grid-cols-1",
+      )}
+    >
       <aside className="flex h-full flex-col overflow-hidden border-r border-border bg-bg-elevated">
-        {/* ── Header ── */}
+        {/* ── Header (branch · upstream · sync state all on ONE row;
+                       action buttons on the row below) ── */}
         <header className="relative flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
               onClick={() => setBranchMenuOpen((v) => !v)}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg-subtle"
+              className="flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg-subtle"
               title={t("git.branch.switcher")}
             >
-              <GitBranch className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.5} />
-              <span className="font-mono text-[12.5px] font-semibold text-fg">
+              <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" strokeWidth={1.5} />
+              <span className="truncate font-mono text-[12.5px] font-semibold text-fg">
                 {status?.branch ?? t("git.branch.detached")}
               </span>
-              <ChevronDown className="h-3 w-3 text-fg-subtle" />
+              <ChevronDown className="h-3 w-3 shrink-0 text-fg-subtle" />
             </button>
+            {status?.upstream ? (
+              <code
+                className="min-w-0 truncate text-[10.5px] text-fg-subtle"
+                title={`upstream → ${status.upstream}`}
+              >
+                → {status.upstream}
+              </code>
+            ) : (
+              <span className="truncate text-[10px] text-warn" title={t("git.upstream.none")}>
+                ⚠ {t("git.upstream.none_short")}
+              </span>
+            )}
             <SyncStateBadge
               state={syncState}
               ahead={status?.ahead ?? 0}
@@ -474,11 +506,6 @@ export function GitPanel({ workspaceId }: Props) {
               )}
             </Button>
           </div>
-          {status?.upstream ? (
-            <code className="text-[10px] text-fg-subtle">→ {status.upstream}</code>
-          ) : (
-            <span className="text-[10px] text-warn">{t("git.upstream.none")}</span>
-          )}
           <div className="flex flex-wrap gap-1">
             <Button
               size="sm"
@@ -539,34 +566,142 @@ export function GitPanel({ workspaceId }: Props) {
           ) : null}
         </header>
 
-        {/* ── Changes ── */}
+        {/* ── Commit composer (VS Code-style: lives ABOVE Changes,
+            full-width primary button, dropdown for variants) ── */}
+        <div className="shrink-0 space-y-1.5 border-b border-border bg-bg-elevated px-2 py-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.currentTarget.value)}
+            placeholder={t("git.commit.placeholder_branch").replace(
+              "{branch}",
+              status?.branch ?? "?",
+            )}
+            rows={2}
+            className="w-full resize-none rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                if (
+                  !(busy !== null || !dirty || !message.trim() || selected.size === 0)
+                ) {
+                  void onCommit();
+                }
+              }
+            }}
+          />
+          <Button
+            variant="primary"
+            onClick={onCommit}
+            disabled={
+              busy !== null || !dirty || !message.trim() || selected.size === 0
+            }
+            className="w-full justify-center"
+          >
+            {busy === "commit" ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            <span className="font-semibold">{t("git.commit")}</span>
+            {selected.size > 0 && dirty && selected.size < (status?.entries.length ?? 0) ? (
+              <span className="ml-1.5 text-[10.5px] opacity-70">
+                ({selected.size}/{status?.entries.length})
+              </span>
+            ) : null}
+          </Button>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onPush}
+              disabled={busy !== null}
+              className="flex-1"
+            >
+              {busy === "push" ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <ArrowUpFromLine className="mr-1 h-3 w-3" />
+              )}
+              {t("git.push")}
+              {status && status.ahead > 0 ? (
+                <span className="ml-1 text-[10px] opacity-70">↑{status.ahead}</span>
+              ) : null}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onPr}
+              disabled={busy !== null || !message.trim()}
+              title={t("git.pr.title")}
+              className="flex-1"
+            >
+              {busy === "pr" ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <GitPullRequest className="mr-1 h-3 w-3" />
+              )}
+              {t("git.pr")}
+            </Button>
+          </div>
+          {flash ? (
+            <p
+              className={cn(
+                "px-1 text-[11px]",
+                flash.kind === "error"
+                  ? "text-danger"
+                  : flash.kind === "warn"
+                    ? "text-warn"
+                    : "text-accent",
+              )}
+            >
+              {flash.text}
+            </p>
+          ) : null}
+          {prUrl ? (
+            <a
+              href={prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-1 text-[11px] text-accent hover:underline"
+            >
+              <Send className="h-3 w-3" />
+              {prUrl}
+            </a>
+          ) : null}
+        </div>
+
+        {/* ── Changes (VS Code-style collapsible w/ count) ── */}
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <header className="flex items-center gap-2 border-b border-border bg-bg-subtle/40 px-3 py-1.5">
+          <header className="flex items-center gap-1.5 border-b border-border bg-bg-subtle/40 px-3 py-1.5">
+            <ChevronDown className="h-3 w-3 text-fg-muted" />
             <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
               {t("git.section.changes")}
             </span>
-            <span className="text-[10.5px] text-fg-subtle">
+            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
               {status?.entries.length ?? 0}
             </span>
             {dirty ? (
               <button
                 type="button"
-                className="ml-auto text-[10px] text-fg-subtle hover:text-accent"
+                className="text-[10px] text-fg-subtle hover:text-accent"
                 onClick={toggleAll}
+                title={
+                  selected.size === status?.entries.length
+                    ? t("git.deselect_all")
+                    : t("git.select_all")
+                }
               >
-                {selected.size === status?.entries.length
-                  ? t("git.deselect_all")
-                  : t("git.select_all")}
+                {selected.size === status?.entries.length ? "☑" : "☐"}
               </button>
             ) : null}
           </header>
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="flex-1 overflow-y-auto py-0.5">
             {!status || status.entries.length === 0 ? (
               <p className="px-3 py-3 text-[11px] text-fg-subtle">
                 {loading ? t("git.loading") : t("git.clean")}
               </p>
             ) : (
-              <ul className="space-y-0.5 px-1.5">
+              <ul className="space-y-px">
                 {status.entries.map((e) => (
                   <FileRow
                     key={e.path}
@@ -584,11 +719,24 @@ export function GitPanel({ workspaceId }: Props) {
           </div>
         </section>
 
-        {/* ── Stash ── */}
-        <section className="shrink-0 border-t border-border">
+        {/* ── Stash (resizable when open) ── */}
+        {openSections.stash ? (
+          <SplitHandle
+            axis="vertical"
+            value={stashHeight}
+            onChange={setStashHeight}
+            min={80}
+            max={400}
+            invert
+          />
+        ) : null}
+        <section
+          className="shrink-0 overflow-hidden border-t border-border"
+          style={openSections.stash ? { height: stashHeight } : undefined}
+        >
           <button
             type="button"
-            className="flex w-full items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+            className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
             onClick={() => setOpenSections((s) => ({ ...s, stash: !s.stash }))}
             aria-expanded={openSections.stash}
           >
@@ -599,10 +747,12 @@ export function GitPanel({ workspaceId }: Props) {
             )}
             <Package className="h-3 w-3" strokeWidth={1.5} />
             {t("git.section.stash")}
-            <span className="text-[10.5px] text-fg-subtle">{stashCount}</span>
+            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
+              {stashCount}
+            </span>
           </button>
           {openSections.stash ? (
-            <div className="border-t border-border px-2 py-1.5">
+            <div className="flex h-[calc(100%-30px)] flex-col border-t border-border px-2 py-1.5">
               <div className="mb-1.5 flex gap-1">
                 <input
                   value={stashMsgInput}
@@ -630,7 +780,7 @@ export function GitPanel({ workspaceId }: Props) {
                   {t("git.stash.empty")}
                 </p>
               ) : (
-                <ul className="max-h-36 space-y-0.5 overflow-y-auto">
+                <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
                   {stash!.entries.map((s) => (
                     <li
                       key={s.ref}
@@ -668,11 +818,24 @@ export function GitPanel({ workspaceId }: Props) {
           ) : null}
         </section>
 
-        {/* ── History (commit log with refs + graph hints) ── */}
-        <section className="shrink-0 border-t border-border">
+        {/* ── History (commit log with refs + graph hints; resizable) ── */}
+        {openSections.history ? (
+          <SplitHandle
+            axis="vertical"
+            value={historyHeight}
+            onChange={setHistoryHeight}
+            min={80}
+            max={500}
+            invert
+          />
+        ) : null}
+        <section
+          className="flex shrink-0 flex-col overflow-hidden border-t border-border"
+          style={openSections.history ? { height: historyHeight } : undefined}
+        >
           <button
             type="button"
-            className="flex w-full items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+            className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
             onClick={() => setOpenSections((s) => ({ ...s, history: !s.history }))}
             aria-expanded={openSections.history}
           >
@@ -683,128 +846,42 @@ export function GitPanel({ workspaceId }: Props) {
             )}
             <GitCommit className="h-3 w-3" strokeWidth={1.5} />
             {t("git.section.history")}
-            <span className="text-[10.5px] text-fg-subtle">
+            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
               {log?.commits.length ?? 0}
             </span>
           </button>
           {openSections.history ? (
-            <HistoryList commits={log?.commits ?? []} currentBranch={status?.branch ?? null} />
+            <HistoryList
+              commits={log?.commits ?? []}
+              currentBranch={status?.branch ?? null}
+            />
           ) : null}
         </section>
 
-        {/* ── Commit footer ── */}
-        <div className="shrink-0 border-t border-border p-2">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.currentTarget.value)}
-            placeholder={t("git.commit.placeholder")}
-            rows={3}
-            className="w-full resize-none rounded-md border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-          {flash ? (
-            <p
-              className={cn(
-                "mt-1 text-[11px]",
-                flash.kind === "error"
-                  ? "text-danger"
-                  : flash.kind === "warn"
-                    ? "text-warn"
-                    : "text-accent",
-              )}
-            >
-              {flash.text}
-            </p>
-          ) : null}
-          <div className="mt-1 flex flex-wrap gap-1">
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={onCommit}
-              disabled={
-                busy !== null || !dirty || !message.trim() || selected.size === 0
-              }
-            >
-              {busy === "commit" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <Check className="mr-1 h-3 w-3" />
-              )}
-              {t("git.commit")}
-              {selected.size > 0 && dirty ? (
-                <span className="ml-1 text-[10px] opacity-70">({selected.size})</span>
-              ) : null}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onPush}
-              disabled={busy !== null}
-            >
-              {busy === "push" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <ArrowUpFromLine className="mr-1 h-3 w-3" />
-              )}
-              {t("git.push")}
-              {status && status.ahead > 0 ? (
-                <span className="ml-1 text-[10px] opacity-70">↑{status.ahead}</span>
-              ) : null}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onPr}
-              disabled={busy !== null || !message.trim()}
-              title={t("git.pr.title")}
-            >
-              {busy === "pr" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <GitPullRequest className="mr-1 h-3 w-3" />
-              )}
-              {t("git.pr")}
-            </Button>
-          </div>
-          {prUrl ? (
-            <a
-              href={prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
-            >
-              <Send className="h-3 w-3" />
-              {prUrl}
-            </a>
-          ) : null}
-        </div>
       </aside>
 
-      {/* ── Right pane: diff ── */}
-      <main className="flex h-full flex-col overflow-hidden bg-bg">
-        <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
-          {diff ? (
-            <>
-              <span className="font-mono text-[12px] text-fg">{diff.path}</span>
-              <button
-                type="button"
-                className="ml-auto text-fg-subtle hover:text-fg"
-                onClick={() => {
-                  setDiff(null);
-                  setActivePath(null);
-                }}
-                title={t("git.diff.close")}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </>
-          ) : (
-            <span className="text-[12px] text-fg-subtle">{t("git.diff.placeholder")}</span>
-          )}
-        </header>
-        <div className="flex-1 overflow-auto bg-bg">
-          {diff ? <ColoredDiff text={diff.text} /> : null}
-        </div>
-      </main>
+      {/* ── Right pane: diff — only mounted when a file is selected ── */}
+      {diff ? (
+        <main className="flex h-full flex-col overflow-hidden bg-bg">
+          <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
+            <span className="font-mono text-[12px] text-fg">{diff.path}</span>
+            <button
+              type="button"
+              className="ml-auto text-fg-subtle hover:text-fg"
+              onClick={() => {
+                setDiff(null);
+                setActivePath(null);
+              }}
+              title={t("git.diff.close")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </header>
+          <div className="flex-1 overflow-auto bg-bg">
+            <ColoredDiff text={diff.text} />
+          </div>
+        </main>
+      ) : null}
     </div>
   );
 }
@@ -1003,7 +1080,7 @@ function HistoryList({
     );
   }
   return (
-    <ul className="max-h-56 overflow-y-auto py-1">
+    <ul className="min-h-0 flex-1 overflow-y-auto py-1">
       {commits.map((c, i) => {
         const isMerge = c.parents.length > 1;
         const isHead = currentBranch && c.refs.some((r) => r.includes(currentBranch));
@@ -1107,40 +1184,79 @@ function FileRow({
 }) {
   const { t } = useI18n();
   const tone = statusTone(entry.status);
+  // VS Code visually splits filename + folder so the eye locks onto
+  // basename first (the part most diffs touch). `path/to/foo.ts` ⇒
+  // `foo.ts` bold + `path/to` muted right after.
+  const lastSlash = entry.path.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? entry.path.slice(lastSlash + 1) : entry.path;
+  const dirname = lastSlash >= 0 ? entry.path.slice(0, lastSlash) : "";
+  const dotColor =
+    tone === "added"
+      ? "bg-success"
+      : tone === "modified"
+        ? "bg-warn"
+        : tone === "deleted"
+          ? "bg-danger"
+          : tone === "untracked"
+            ? "bg-success" /* VS Code: untracked = green */
+            : tone === "renamed"
+              ? "bg-accent"
+              : "bg-fg-subtle";
+  const statusColor =
+    tone === "added"
+      ? "text-success"
+      : tone === "modified"
+        ? "text-warn"
+        : tone === "deleted"
+          ? "text-danger"
+          : tone === "untracked"
+            ? "text-success"
+            : tone === "renamed"
+              ? "text-accent"
+              : "text-fg-subtle";
   return (
     <li
       className={cn(
-        "group flex items-center gap-1.5 rounded px-1 py-0.5",
-        active && "bg-accent/10",
+        "group flex items-center gap-2 px-2.5 py-0.5",
+        active ? "bg-accent/10" : "hover:bg-bg-subtle",
+        !checked && "opacity-60",
       )}
     >
+      {/* Status dot — single colored bullet on the left, VS Code's
+          most distinctive Source-Control affordance. */}
+      <span
+        className={cn("h-2 w-2 shrink-0 rounded-full", dotColor)}
+        title={`porcelain: ${entry.status}`}
+      />
+      {/* Click body — filename (bold) + dirname (muted) on a single
+          truncated line. Click to open diff. */}
+      <button
+        type="button"
+        onClick={onView}
+        className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left"
+      >
+        <span className="shrink-0 text-[12px] font-medium text-fg">
+          {filename}
+        </span>
+        {dirname ? (
+          <span
+            className="truncate text-[11px] text-fg-subtle"
+            title={entry.path}
+          >
+            {dirname}
+          </span>
+        ) : null}
+      </button>
+      {/* Hover-only tools: include-in-commit toggle + discard. */}
       <input
         type="checkbox"
         checked={checked}
         onChange={onToggle}
-        className="h-3 w-3"
+        className="invisible h-3 w-3 group-hover:visible"
+        title={
+          checked ? t("git.commit.include_off") : t("git.commit.include_on")
+        }
       />
-      <span
-        className={cn(
-          "w-6 shrink-0 rounded text-center font-mono text-[10px]",
-          tone === "added" && "bg-success/15 text-success",
-          tone === "modified" && "bg-accent/15 text-accent",
-          tone === "deleted" && "bg-danger/15 text-danger",
-          tone === "untracked" && "bg-warn/15 text-warn",
-          tone === "renamed" && "bg-accent/15 text-accent",
-          tone === "other" && "bg-bg-subtle text-fg-subtle",
-        )}
-        title={`porcelain: ${entry.status}`}
-      >
-        {shortStatus(entry.status)}
-      </span>
-      <button
-        type="button"
-        onClick={onView}
-        className="flex-1 truncate text-left font-mono text-[12px] text-fg hover:text-accent"
-      >
-        {entry.path}
-      </button>
       <button
         type="button"
         onClick={onDiscard}
@@ -1150,6 +1266,16 @@ function FileRow({
       >
         <Trash2 className="h-3 w-3" />
       </button>
+      {/* Status letter on the right — VS Code's M / A / D / U. */}
+      <span
+        className={cn(
+          "shrink-0 w-4 text-center font-mono text-[11px] font-semibold",
+          statusColor,
+        )}
+        title={`porcelain: ${entry.status}`}
+      >
+        {shortStatus(entry.status)}
+      </span>
     </li>
   );
 }
