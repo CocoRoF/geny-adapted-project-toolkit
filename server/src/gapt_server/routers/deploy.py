@@ -1422,6 +1422,19 @@ async def stack_down(
                 error=str(exc),
             )
 
+    # Flip env.last_run.status to "stopped" so the sidebar's LIVE
+    # card disappears (and history's fallback won't repopulate it
+    # because we look for status="success" specifically). bound_url
+    # is cleared because the URL no longer serves anything; preserve
+    # the run_id so the operator can still open the past run detail
+    # and rollback to this version later.
+    if result.ok and env_row.last_run:
+        last_run = dict(env_row.last_run or {})
+        last_run["status"] = "stopped"
+        last_run["bound_url"] = None
+        env_row.last_run = last_run
+        await db.commit()
+
     return StackOpResponse(
         environment_id=env_id,
         project=result.project,

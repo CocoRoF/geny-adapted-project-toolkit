@@ -188,11 +188,15 @@ export function DeployWorkspace({ projectId }: Props) {
       setStackBusyEnvId(envId);
       try {
         await stopStack(envId);
-        // Refresh envs so the LIVE card disappears (last_run still
-        // references the stopped deploy, but the stack section in
-        // the right pane reflects the new "no containers running"
-        // reality).
+        // Refresh both envs and the per-env history so the just-
+        // stopped run shows up in the history tab immediately
+        // (backend marks env.last_run.status="stopped"; the run
+        // itself stays as "success" in DeployRun, but the UI
+        // re-tags it via env.last_run pointer).
         await refreshEnvs();
+        if (tabFor(envId) === "history") {
+          void loadHistory(envId);
+        }
       } catch (e) {
         console.warn("stopStack failed", e);
       } finally {
@@ -200,10 +204,8 @@ export function DeployWorkspace({ projectId }: Props) {
         setConfirmStopEnvId(null);
       }
     },
-    // refreshEnvs is defined below — TS hoists the const ref via
-    // closure, eslint's exhaustive-deps doesn't need it here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [tabFor, loadHistory],
   );
 
   const startDeploy = useCallback(
@@ -346,12 +348,26 @@ export function DeployWorkspace({ projectId }: Props) {
                 const active = activeByEnv[env.id];
                 const envRunning = !!active && !TERMINAL_STATUSES.has(active.status);
                 const tab = tabFor(env.id);
-                const liveRunId = env.last_run?.run_id ?? null;
-                // History pane filters out the live run — it represents
-                // "what's serving traffic right now", not "past deploys".
+                // A run is "live" (and thus excluded from history) ONLY
+                // when env.last_run is the success run currently
+                // serving traffic. When stopped, the same run id is
+                // still on env.last_run but the run belongs in
+                // history — there's nothing live to surface in the
+                // deploy tab anymore.
+                const liveRunId =
+                  env.last_run?.status === "success"
+                    ? (env.last_run?.run_id ?? null)
+                    : null;
                 const pastRuns = liveRunId
                   ? historyRuns.filter((r) => r.id !== liveRunId)
                   : historyRuns;
+                // run id that was just stopped, so HistoryPane can
+                // render that entry with a "stopped" badge instead
+                // of its original "success" status.
+                const stoppedRunId =
+                  env.last_run?.status === "stopped"
+                    ? (env.last_run?.run_id ?? null)
+                    : null;
                 return (
                   <li
                     key={env.id}
@@ -529,7 +545,9 @@ export function DeployWorkspace({ projectId }: Props) {
                           </button>
                         ) : (
                           <p className="rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-fg-subtle">
-                            {t("deploy.idle_empty")}
+                            {stoppedRunId
+                              ? t("deploy.idle_after_stop")
+                              : t("deploy.idle_empty")}
                           </p>
                         )}
                         {/* Action row — varies by state so the
@@ -600,6 +618,7 @@ export function DeployWorkspace({ projectId }: Props) {
                         busyRunId={rollbackBusyRunId}
                         selectedRunId={detailRunId}
                         liveRunId={liveRunId}
+                        stoppedRunId={stoppedRunId}
                         onView={(run) => {
                           setDetailRunId(run.id);
                           setViewEnvId(null);
@@ -752,6 +771,7 @@ function HistoryPane({
   busyRunId,
   selectedRunId,
   liveRunId,
+  stoppedRunId,
   onView,
   onRollback,
 }: {
@@ -760,6 +780,7 @@ function HistoryPane({
   busyRunId: string | null;
   selectedRunId: string | null;
   liveRunId: string | null;
+  stoppedRunId: string | null;
   onView: (run: DeployRunRow) => void;
   onRollback: (run: DeployRunRow) => void;
 }) {
@@ -784,6 +805,7 @@ function HistoryPane({
         const success = r.status === "success";
         const isSelected = selectedRunId === r.id;
         const isLive = liveRunId !== null && r.id === liveRunId;
+        const isStopped = stoppedRunId !== null && r.id === stoppedRunId;
         return (
           <li
             key={r.id}
@@ -794,8 +816,10 @@ function HistoryPane({
                 ? "bg-accent/10 ring-1 ring-accent/40"
                 : isLive
                   ? "bg-success/5 ring-1 ring-success/40"
-                  : "bg-bg-elevated hover:bg-surface-hover",
-              !isLive && !isSelected && "opacity-80",
+                  : isStopped
+                    ? "bg-fg-subtle/10 ring-1 ring-fg-subtle/30"
+                    : "bg-bg-elevated hover:bg-surface-hover",
+              !isLive && !isStopped && !isSelected && "opacity-80",
             )}
             onClick={() => onView(r)}
             title={t("deploy.history.click_to_view")}
@@ -807,6 +831,14 @@ function HistoryPane({
                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
                 </span>
                 {t("deploy.live")}
+              </span>
+            ) : isStopped ? (
+              // The run whose stack was just stopped. Effective
+              // status overrides the DeployRun.status="success"
+              // value (the stop signal lives on env.last_run).
+              <span className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-fg-subtle" />
+                {t("deploy.stopped")}
               </span>
             ) : (
               <Badge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</Badge>

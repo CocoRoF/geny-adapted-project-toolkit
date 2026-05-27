@@ -99,6 +99,11 @@ async def _env_with_fallback(
         bool(resp.last_run.get("run_id"))
         and resp.last_run.get("status") == "success"
     )
+    # "stopped" is an explicit terminal state set by stack/down —
+    # we respect it (no fallback) so the sidebar doesn't bounce
+    # back to LIVE after the operator just stopped the stack.
+    if resp.last_run.get("status") == "stopped":
+        return resp
     if has_run:
         return resp
     latest = (
