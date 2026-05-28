@@ -104,6 +104,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reconcile_loop(), name="gapt-net-reconciler"
     )
 
+    # Caddy ↔ DB resync — stale-route cleanup + active-env replay.
+    # Stale cleanup is what fixes the "preview-domain typo left a
+    # stuck wildcard" class of bug deterministically on every boot.
+    # Replay re-registers the route family of any environment whose
+    # last deploy succeeded AND whose compose stack is still up,
+    # so a Caddy container restart / host reboot lands the user in
+    # a working state without them clicking Reroute. Best-effort —
+    # individual failures are logged, the server still comes up.
+    if container.session_factory is not None and settings.caddy_admin_url:
+        try:
+            from gapt_server.domains.caddy.boot_resync import (  # noqa: PLC0415
+                run_boot_resync,
+            )
+            from gapt_server.domains.deploy.stack_manager import (  # noqa: PLC0415
+                StackManager,
+            )
+            from gapt_server.domains.sandbox import (  # noqa: PLC0415
+                make_default_client,
+            )
+
+            sm = StackManager(client=make_default_client())
+            resync_report = await run_boot_resync(
+                session_factory=container.session_factory,
+                settings=settings,
+                stack_manager=sm,
+            )
+            logger.info(
+                "caddy.boot_resync.done",
+                stale_deleted=len(resync_report.stale_deleted),
+                catchall_reset=resync_report.catchall_reset,
+                replayed=len(resync_report.replayed),
+                replay_failures=len(resync_report.replay_failures),
+                skipped_no_stack=len(resync_report.skipped_no_stack),
+            )
+        except Exception:
+            logger.exception("caddy.boot_resync.crashed")
+
     # ServiceRegistry recovery — scan running workspaces for live
     # `GAPT_SVC=` markers and rebuild the in-memory table. Without
     # this every server restart wipes the Services panel even

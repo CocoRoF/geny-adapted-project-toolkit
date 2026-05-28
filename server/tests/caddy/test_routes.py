@@ -23,6 +23,7 @@ from gapt_server.domains.caddy.share import parse_share_link
 from gapt_server.routers import preview as preview_router
 from gapt_server.settings import Settings
 from tests._helpers.fake_sandbox import FakeSandboxBackend
+from tests._helpers.db_guard import assert_safe_to_reset
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -39,6 +40,7 @@ def _require_dsn() -> str:
 
 
 def _reset_and_upgrade(sync_dsn: str) -> None:
+    assert_safe_to_reset(sync_dsn)
     with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

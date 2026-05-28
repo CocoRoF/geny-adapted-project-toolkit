@@ -19,6 +19,7 @@ from gapt_server.domains.audit.sink import (
     NullAuditSink,
     PostgresAuditSink,
 )
+from tests._helpers.db_guard import assert_safe_to_reset
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,6 +32,7 @@ def _require_dsn() -> str:
 
 
 def _reset_and_upgrade(sync_dsn: str) -> None:
+    assert_safe_to_reset(sync_dsn)
     with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import psycopg
 import pytest
 import pytest_asyncio
+from tests._helpers.db_guard import assert_safe_to_reset
 
 from gapt_server.agent.credentials import (
     SecretRefMap,
@@ -40,6 +41,7 @@ def _require_dsn() -> str:
 
 
 def _reset_and_upgrade(sync_dsn: str) -> None:
+    assert_safe_to_reset(sync_dsn)
     with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

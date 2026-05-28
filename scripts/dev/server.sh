@@ -30,13 +30,24 @@ LOGFILE="${GAPT_SERVER_LOGFILE:-/tmp/gapt-server.log}"
 PORT="${GAPT_SERVER_PORT:-38001}"
 
 # Default env vars — overridable from caller's environment. These
-# match the dev compose setup (Postgres on host:5432, Caddy admin
-# on host:32019, preview domain `gapt.hrletsgo.me`).
-export GAPT_POSTGRES_DSN="${GAPT_POSTGRES_DSN:-postgresql+psycopg://gapt:gapt_dev_only@localhost:5432/gapt}"
+# match the dev compose setup (Postgres on host:35432, Caddy admin
+# on host:32019, preview domain `gapt.hrletsgo.me`). All infra ports
+# follow the 3xxxx prefix convention to avoid clashing with user
+# services.
+export GAPT_POSTGRES_DSN="${GAPT_POSTGRES_DSN:-postgresql+psycopg://gapt:gapt_dev_only@localhost:35432/gapt}"
 export GAPT_ENV="${GAPT_ENV:-dev}"
 export GAPT_LOG_FORMAT="${GAPT_LOG_FORMAT:-console}"
 export GAPT_CADDY_ADMIN_URL="${GAPT_CADDY_ADMIN_URL:-http://127.0.0.1:32019}"
 export GAPT_CADDY_PREVIEW_DOMAIN="${GAPT_CADDY_PREVIEW_DOMAIN:-gapt.hrletsgo.me}"
+# Safety net for the zone-wide catch-all 404 (B.H.3.1): if the
+# preview-domain ever becomes the zone apex (e.g. the operator
+# sets preview-domain=hrletsgo.me while GAPT itself runs at
+# gapt.hrletsgo.me), the `*.<preview-domain>` wildcard would
+# otherwise eat the GAPT IDE host and the entire app would 404
+# with "Preview not registered". Setting APEX_HOST adds a
+# `not host=<apex>` clause to that catch-all so GAPT's own
+# requests pass through.
+export GAPT_CADDY_APEX_HOST="${GAPT_CADDY_APEX_HOST:-gapt.hrletsgo.me}"
 
 # ─────────────────────────────────────────── helpers ──
 

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gapt_server.db import create_engine, create_session_factory, enums, models
+from tests._helpers.db_guard import assert_safe_to_reset
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -36,6 +37,7 @@ def _dsn_async(sync_dsn: str) -> str:
 
 
 def _reset_and_upgrade(sync_dsn: str) -> None:
+    assert_safe_to_reset(sync_dsn)
     with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

@@ -1,0 +1,19 @@
+-- Create a dedicated test database alongside the live `gapt` DB.
+--
+-- Why a separate DB?  Every DSN-gated test in `server/tests/` runs
+-- `DROP SCHEMA public CASCADE` before alembic-upgrading.  Pointing
+-- `GAPT_TEST_POSTGRES_DSN` at the live `gapt` DB wipes the operator's
+-- projects / environments / secrets / Cloudflare config every time
+-- tests run.  Happened once (2026-05-28) — never again.
+--
+-- This script only runs on a *fresh* postgres-data volume (Postgres's
+-- standard `/docker-entrypoint-initdb.d/` semantics).  If you're
+-- upgrading an existing install, run the body manually:
+--
+--   docker exec -it gapt-dev-postgres-1 psql -U gapt -d postgres \
+--     -c "CREATE DATABASE gapt_test OWNER gapt;"
+--
+-- The guard at `server/tests/_helpers/db_guard.py` refuses any DSN
+-- whose database name isn't visibly a test target (must end in
+-- `_test`, start with `test_`, or equal `test`).
+CREATE DATABASE gapt_test OWNER gapt;

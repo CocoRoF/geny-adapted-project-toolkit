@@ -21,6 +21,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from tests._helpers.db_guard import assert_safe_to_reset
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,7 +59,7 @@ def _dsn() -> str:
     if not dsn:
         pytest.skip(
             "GAPT_TEST_POSTGRES_DSN unset — run with: "
-            "GAPT_TEST_POSTGRES_DSN=postgresql://gapt:gapt@localhost:5432/gapt pytest tests/db"
+            "GAPT_TEST_POSTGRES_DSN=postgresql://gapt:gapt_dev_only@localhost:35432/gapt_test pytest tests/db"
         )
     return dsn
 
@@ -84,6 +85,7 @@ def _alembic(command: list[str], *, dsn: str) -> None:
 
 
 def _reset_schema(dsn: str) -> None:
+    assert_safe_to_reset(dsn)
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

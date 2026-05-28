@@ -24,6 +24,7 @@ from gapt_server.agent import (
 from gapt_server.db import create_engine, create_session_factory, enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import InMemoryAuditSink
+from tests._helpers.db_guard import assert_safe_to_reset
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
@@ -130,6 +131,7 @@ def _require_dsn() -> str:
 
 
 def _reset_and_upgrade(sync_dsn: str) -> None:
+    assert_safe_to_reset(sync_dsn)
     with psycopg.connect(sync_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE")
         cur.execute("CREATE SCHEMA public")

@@ -154,8 +154,12 @@ cd server && uv run uvicorn gapt_server.app:app --reload --port 8001
 # Vite dev server on the web UI:
 cd web && pnpm dev   # → http://localhost:5173
 
-# Server tests (needs the dev Postgres up):
-GAPT_TEST_POSTGRES_DSN="postgresql://gapt:gapt_dev_only@localhost:5432/gapt" \
+# Server tests (needs the dev Postgres up).
+# IMPORTANT: point at `gapt_test`, NEVER the live `gapt` DB — every
+# DSN-gated test runs DROP SCHEMA before the alembic upgrade. The
+# guard in `server/tests/_helpers/db_guard.py` will refuse anything
+# whose database name doesn't visibly mark it as a test target.
+GAPT_TEST_POSTGRES_DSN="postgresql://gapt:gapt_dev_only@localhost:35432/gapt_test" \
   uv run pytest
 ```
 
