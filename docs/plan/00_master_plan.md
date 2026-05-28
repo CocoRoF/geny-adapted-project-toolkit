@@ -35,7 +35,9 @@
 | **M2 Phase B-Hardening** robustness + 테스트 백필 | B.H.1 ~ B.H.4 | **완료** (2026-05-28) | [`m2_phase_b_hardening.md`](m2_phase_b_hardening.md) |
 | **M2 Phase C** worktree workspace (C.1) → multi-project UX (C.2) | **완료** (C.1+C.2 — 2026-05-28); C.3/C.4 보류 | **상세** | [`m2_phase_c.md`](m2_phase_c.md) |
 | **M2 Phase D** agent UX 폴리시 (Plan/Act / diff 그루핑 / 영속화) | **완료** (D.1+D.2+D.3+D.5 — 2026-05-28) | **상세** | [`m2_phase_d.md`](m2_phase_d.md) |
-| **M2 Phase E** 리소스 모델 정합성 (GPU passthrough / perf 매시업 / Prometheus 정리) | E.1 → E.2 → E.3 진행 중 | **상세** | [`m2_phase_e.md`](m2_phase_e.md) |
+| **M2 Phase E** 리소스 모델 정합성 (GPU passthrough / perf 매시업 / Prometheus 정리) | **완료** (2026-05-28) | **상세** | [`m2_phase_e.md`](m2_phase_e.md) |
+| **M2 Phase F** IDE UX (editor close / diff in editor / chat full-width) | **완료** (2026-05-28) | 미니 doc 없음 | — |
+| **M2 Phase G** Chat fortification (CLI auth / multi-backend / manifest picker) | G.1 → G.2 → G.3 → G.4 → G.5 진행 중 | **상세** | [`m2_phase_g.md`](m2_phase_g.md) |
 | ~~M3 멀티 사용자~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M4 K8s / 엔터프라이즈~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M5 자동 운영 / SaaS~~ | **out of v1 scope** | — | OSS self-hosted 코어 유지 |

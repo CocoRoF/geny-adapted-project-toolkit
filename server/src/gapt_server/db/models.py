@@ -399,6 +399,13 @@ class AdminAgentPrefs(Base):
     # "default" (prompt for everything — almost certainly will hang in
     # our non-interactive flow), "plan" (read-only). Null = server default.
     permission_mode: Mapped[str | None] = mapped_column(String(40))
+    # Phase G.5 — operator-chosen default manifest. Null falls back to
+    # `Settings.default_manifest_id` (gapt_default). Lets the user
+    # swap between provider variants (claude_code_cli /
+    # anthropic_sdk / openai / google) without redeploying. Resolved
+    # by `ProjectAwareSessionManager.create_session` when the request
+    # doesn't supply `env_id`.
+    default_manifest_id: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -19,6 +19,15 @@ export interface SessionResponse {
 export interface CreateSessionInput {
   workspace_id: string;
   env_id?: string;
+  /** Phase G.4 — per-session manifest overrides. Each missing field
+   *  falls through to the global Settings → Pipeline overrides, then
+   *  to the manifest's bundled defaults. Applied at session-create
+   *  time only — switching mid-conversation requires a new session. */
+  model?: string;
+  max_tokens?: number;
+  max_iterations?: number;
+  cost_budget_usd?: number;
+  timeout_s?: number;
 }
 
 export type SessionEventKind =

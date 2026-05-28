@@ -1,10 +1,10 @@
 {
-  "name": "gapt-default",
+  "name": "gapt-google",
   "metadata": {
     "owner": "gapt",
-    "tags": ["m1-e2", "claude-code-cli", "production"],
+    "tags": ["m2-g5", "google", "gemini", "sdk"],
     "version": "v1",
-    "description": "기본 매니페스트 — Claude Code CLI로 sonnet 8K tokens. 대부분의 작업에 적합."
+    "description": "Google Gemini 백엔드 — GOOGLE_API_KEY 사용. Gemini 2.5 Pro 기본."
   },
   "stages": [
     { "order": 1, "name": "input", "active": true, "artifact": "default", "config": {}, "strategies": {} },
@@ -18,8 +18,8 @@
       "active": true,
       "artifact": "default",
       "config": {
-        "provider": "claude_code_cli",
-        "model": "sonnet",
+        "provider": "google",
+        "model": "gemini-2.5-pro",
         "max_tokens": 8192
       },
       "strategies": {}

@@ -88,6 +88,16 @@ by_id = APIRouter(prefix="/_gapt/api/sessions", tags=["sessions"])
 class CreateSessionRequest(BaseModel):
     workspace_id: str = Field(min_length=1, max_length=64)
     env_id: str | None = None
+    # Phase G.4 — per-session manifest overrides. All optional;
+    # missing fields fall through to the global Settings → Pipeline
+    # overrides prefs, which fall through to the manifest's bundled
+    # defaults. Applied at session-create time only — flipping these
+    # mid-conversation requires starting a new session.
+    model: str | None = Field(default=None, max_length=120)
+    max_tokens: int | None = Field(default=None, ge=1, le=200_000)
+    max_iterations: int | None = Field(default=None, ge=1, le=200)
+    cost_budget_usd: float | None = Field(default=None, ge=0.0, le=1_000.0)
+    timeout_s: int | None = Field(default=None, ge=1, le=3_600)
 
 
 class SessionResponse(BaseModel):
@@ -371,6 +381,30 @@ async def create_session(
     vault: SecretVault = Depends(get_vault),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> SessionResponse:
+    # Phase G.4 — assemble per-session manifest overrides from the
+    # request body. `has_any()` lets us skip the build when the
+    # caller didn't ask for anything, so global prefs still win.
+    from gapt_server.agent.environment_service import ManifestOverrides  # noqa: PLC0415
+
+    session_overrides: ManifestOverrides | None = None
+    if any(
+        v is not None
+        for v in (
+            payload.model,
+            payload.max_tokens,
+            payload.max_iterations,
+            payload.cost_budget_usd,
+            payload.timeout_s,
+        )
+    ):
+        session_overrides = ManifestOverrides(
+            model=payload.model,
+            max_tokens=payload.max_tokens,
+            max_iterations=payload.max_iterations,
+            cost_budget_usd=payload.cost_budget_usd,
+            timeout_s=payload.timeout_s,
+        )
+
     try:
         handle = await manager.create_session(
             db,
@@ -378,6 +412,7 @@ async def create_session(
             workspace_id=payload.workspace_id,
             env_id=payload.env_id,
             vault=vault,
+            session_overrides=session_overrides,
         )
         await db.commit()
     except ProjectError as exc:

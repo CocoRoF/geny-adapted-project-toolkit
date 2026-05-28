@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Bot, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, Cpu, ExternalLink, Eye, EyeOff, FileText, KeyRound, RefreshCw, Settings as SettingsIcon, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, Bot, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, Cpu, ExternalLink, Eye, EyeOff, FileText, KeyRound, RefreshCw, Server, Settings as SettingsIcon, Trash2, X, Zap } from "lucide-react";
 
 import { type AgentPrefs, getAgentPrefs, putAgentPrefs } from "@/api/agent_prefs";
 import { ApiError } from "@/api/client";
 import { diagnoseSubdomainMode } from "@/api/environments";
+import { type ManifestSummary, listManifests } from "@/api/manifests";
 import { type GpusResponse, getGpuInfo } from "@/api/performance";
 import {
   type CloudflareConfig,
@@ -42,6 +43,7 @@ import {
 } from "@/api/secrets";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
+import { LlmBackendsCard } from "@/settings/LlmBackendsCard";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/ui/Card";
@@ -169,6 +171,16 @@ export function Settings() {
           <h2 className="text-[15px] font-semibold text-fg">Agent defaults</h2>
         </div>
         <AgentPrefsCard />
+      </section>
+
+      <section className="mb-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Server className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-[15px] font-semibold text-fg">
+            {t("settings.llm_backends.heading")}
+          </h2>
+        </div>
+        <LlmBackendsCard />
       </section>
 
       <section className="mb-6 space-y-4">
@@ -394,6 +406,7 @@ interface AgentPrefsFormState {
   cost_budget_usd: string;
   timeout_s: string;
   permission_mode: string;
+  default_manifest_id: string;
 }
 
 function emptyForm(): AgentPrefsFormState {
@@ -404,6 +417,7 @@ function emptyForm(): AgentPrefsFormState {
     cost_budget_usd: "",
     timeout_s: "",
     permission_mode: "",
+    default_manifest_id: "",
   };
 }
 
@@ -415,6 +429,7 @@ function prefsToForm(prefs: AgentPrefs): AgentPrefsFormState {
     cost_budget_usd: prefs.cost_budget_usd != null ? String(prefs.cost_budget_usd) : "",
     timeout_s: prefs.timeout_s != null ? String(prefs.timeout_s) : "",
     permission_mode: prefs.permission_mode ?? "",
+    default_manifest_id: prefs.default_manifest_id ?? "",
   };
 }
 
@@ -426,6 +441,7 @@ function formToPayload(form: AgentPrefsFormState): AgentPrefs {
     return Number.isFinite(n) ? n : null;
   };
   const pm = form.permission_mode.trim();
+  const mid = form.default_manifest_id.trim();
   return {
     model: form.model.trim() === "" ? null : form.model.trim(),
     max_tokens: numOrNull(form.max_tokens),
@@ -433,6 +449,7 @@ function formToPayload(form: AgentPrefsFormState): AgentPrefs {
     cost_budget_usd: numOrNull(form.cost_budget_usd),
     timeout_s: numOrNull(form.timeout_s),
     permission_mode: pm === "" ? null : (pm as AgentPrefs["permission_mode"]),
+    default_manifest_id: mid === "" ? null : mid,
   };
 }
 
@@ -454,6 +471,11 @@ function AgentPrefsCard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  // Phase G.5 — bundled + workspace-local manifest list for the
+  // default-manifest selector. Best-effort: if the list fetch fails
+  // we still render a free-form text input so the operator can type
+  // a custom id.
+  const [manifestList, setManifestList] = useState<ManifestSummary[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -472,6 +494,12 @@ function AgentPrefsCard() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void listManifests()
+      .then((r) => setManifestList(r.manifests))
+      .catch(() => undefined);
+  }, []);
 
   const save = async () => {
     setBusy(true);
@@ -599,6 +627,25 @@ function AgentPrefsCard() {
               {PERMISSION_CHOICES.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Default manifest"
+            hint="Workspace-wide default. Every new chat session that doesn't pick a manifest explicitly uses this one. Null = `gapt_default` (Claude Code CLI / sonnet). Switch to gapt_anthropic_sdk / gapt_openai / gapt_google to route the agent through the API SDK instead."
+          >
+            <Select
+              value={form.default_manifest_id}
+              onChange={onField("default_manifest_id")}
+              disabled={busy}
+            >
+              <option value="">Server default (gapt_default)</option>
+              {manifestList.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id}
+                  {m.provider ? ` — ${m.provider}` : ""}
+                  {m.source === "workspace" ? " · workspace" : ""}
                 </option>
               ))}
             </Select>

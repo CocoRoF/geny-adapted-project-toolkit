@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bot, ChevronDown } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -13,6 +14,7 @@ import {
 import { useI18n } from "@/app/providers/i18n-context";
 import { CostModal } from "@/chat/CostModal";
 import { deriveCostSnapshot, type CostSnapshot as FullCostSnapshot } from "@/chat/cost-snapshot";
+import { type ManifestSummary, listManifests } from "@/api/manifests";
 import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
 import { annotateEditGroups } from "@/chat/diff-group";
 import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
@@ -47,6 +49,58 @@ interface Props {
  * "send" and "first server event". The negative-seq convention keeps
  * them out of the server's seq space (always positive) — replay /
  * reconnect won't duplicate them. */
+const MANIFEST_STORAGE_KEY = "gapt.chat.manifest_id";
+
+function readPersistedManifestId(projectId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(`${MANIFEST_STORAGE_KEY}.${projectId}`);
+  } catch {
+    return null;
+  }
+}
+
+function persistManifestId(projectId: string, id: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${MANIFEST_STORAGE_KEY}.${projectId}`, id);
+  } catch {
+    /* private mode / quota — best-effort */
+  }
+}
+
+const MODEL_STORAGE_KEY = "gapt.chat.model_override";
+
+function readPersistedModel(projectId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(`${MODEL_STORAGE_KEY}.${projectId}`);
+  } catch {
+    return null;
+  }
+}
+
+function persistModel(projectId: string, model: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = `${MODEL_STORAGE_KEY}.${projectId}`;
+    if (model) window.localStorage.setItem(key, model);
+    else window.localStorage.removeItem(key);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Phase G.4 — common model identifiers the pill offers. Bundled
+ *  manifests use bare names (sonnet/opus/haiku) which `geny-executor`
+ *  routes to the active provider's canonical model id. Operator can
+ *  still type a custom value. */
+const MODEL_PRESETS: { value: string; label: string }[] = [
+  { value: "haiku", label: "haiku (fastest)" },
+  { value: "sonnet", label: "sonnet (balanced)" },
+  { value: "opus", label: "opus (deepest)" },
+];
+
 export function ChatPanel({ projectId, workspaceId }: Props) {
   const { t } = useI18n();
   const [session, setSession] = useState<SessionResponse | null>(null);
@@ -56,6 +110,22 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const [mode, setMode] = useState<ChatMode>("act");
   const [showCostModal, setShowCostModal] = useState(false);
   const [guardSeq, setGuardSeq] = useState<number | null>(null);
+  // Phase G.3 — manifest picker. List comes from `/manifests`,
+  // selection is sticky per-project (localStorage). Falls back to
+  // the server's `default_manifest_id` when no localStorage value.
+  const [manifests, setManifests] = useState<ManifestSummary[]>([]);
+  const [manifestId, setManifestId] = useState<string | null>(() =>
+    readPersistedManifestId(projectId),
+  );
+  const [manifestMenuOpen, setManifestMenuOpen] = useState(false);
+  // Phase G.4 — per-session model override. `null` = inherit
+  // (manifest's bundled default + global admin prefs). Sticky per
+  // project so the operator doesn't have to reset on every new
+  // session.
+  const [modelOverride, setModelOverride] = useState<string | null>(() =>
+    readPersistedModel(projectId),
+  );
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   // Synthetic user-message events kept client-side. Negative seqs so
   // they sort before any server event of the same wall-clock moment.
   const [userEvents, setUserEvents] = useState<SessionStreamEvent[]>([]);
@@ -75,6 +145,44 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         // Silently swallow — the parent shows project-level errors.
       });
   }, [projectId, workspaceId]);
+
+  // Phase G.3 — fetch manifest list when the panel mounts.
+  // Workspace_id is passed so workspace-local overrides surface.
+  useEffect(() => {
+    void listManifests(workspaceId)
+      .then((resp) => {
+        setManifests(resp.manifests);
+        // Initialize selection: localStorage wins, otherwise the
+        // server-side default. Only sets if state was still null.
+        setManifestId((cur) => cur ?? resp.default_manifest_id);
+      })
+      .catch(() => {
+        /* picker just hides — chat still works on server default */
+      });
+  }, [workspaceId]);
+
+  const onPickManifest = useCallback(
+    (id: string) => {
+      setManifestId(id);
+      persistManifestId(projectId, id);
+      setManifestMenuOpen(false);
+    },
+    [projectId],
+  );
+
+  const selectedManifest = useMemo<ManifestSummary | null>(
+    () => manifests.find((m) => m.id === manifestId) ?? null,
+    [manifestId, manifests],
+  );
+
+  const onPickModel = useCallback(
+    (value: string | null) => {
+      setModelOverride(value);
+      persistModel(projectId, value);
+      setModelMenuOpen(false);
+    },
+    [projectId],
+  );
 
   const stream = useSessionStream(session?.id ?? null);
 
@@ -112,7 +220,14 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const start = useCallback(() => {
     setError(null);
     setPending(true);
-    void createSession(projectId, { workspace_id: workspaceId })
+    // Phase G.3+G.4 — pass the selected manifest id + the optional
+    // per-session model override. Each missing field falls through
+    // to the global Settings → Pipeline overrides on the server.
+    void createSession(projectId, {
+      workspace_id: workspaceId,
+      ...(manifestId ? { env_id: manifestId } : {}),
+      ...(modelOverride ? { model: modelOverride } : {}),
+    })
       .then(setSession)
       .catch((err: unknown) => {
         setError(
@@ -124,7 +239,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         );
       })
       .finally(() => setPending(false));
-  }, [projectId, workspaceId]);
+  }, [manifestId, modelOverride, projectId, workspaceId]);
 
   const send = useCallback(
     (text: string) => {
@@ -295,8 +410,29 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   return (
     <div data-panel-kind="chat" className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-border bg-bg-elevated px-3 py-2">
-        <span className="truncate text-[12px] font-semibold text-fg">
-          {session ? session.env_manifest_id : t("chat.empty").split(".")[0]}
+        {/* Phase G.3 — manifest picker. While a session is active the
+            picker is read-only (the session's pipeline is already
+            committed); before "Start session" the dropdown lets the
+            operator pick a different manifest. */}
+        <ManifestPill
+          session={session}
+          manifests={manifests}
+          selectedId={manifestId}
+          selected={selectedManifest}
+          open={manifestMenuOpen}
+          onToggle={() => setManifestMenuOpen((v) => !v)}
+          onPick={onPickManifest}
+        />
+        <ModelPill
+          locked={session !== null}
+          selected={modelOverride}
+          manifestModel={selectedManifest?.model ?? null}
+          open={modelMenuOpen}
+          onToggle={() => setModelMenuOpen((v) => !v)}
+          onPick={onPickModel}
+        />
+        <span className="sr-only">
+          {session ? session.env_manifest_id : ""}
         </span>
         {session ? (
           <>
@@ -534,6 +670,216 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
 
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+// ─────────────────────────────────────── manifest pill ──
+
+/** Phase G.3 — header pill that doubles as a manifest picker.
+ *
+ *  - With an active session: read-only — the session's pipeline is
+ *    already committed. Shows `env_manifest_id` so the operator
+ *    can see what they're running, but disables the dropdown.
+ *  - Without an active session: dropdown of bundled + workspace
+ *    manifests. Selection is sticky per-project (localStorage)
+ *    and gets passed as `env_id` to the next `createSession`. */
+function ManifestPill({
+  session,
+  manifests,
+  selectedId,
+  selected,
+  open,
+  onToggle,
+  onPick,
+}: {
+  session: SessionResponse | null;
+  manifests: ManifestSummary[];
+  selectedId: string | null;
+  selected: ManifestSummary | null;
+  open: boolean;
+  onToggle: () => void;
+  onPick: (id: string) => void;
+}) {
+  const label = session
+    ? session.env_manifest_id
+    : (selected?.display_name ?? selectedId ?? "gapt_default");
+  const locked = session !== null;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={locked || manifests.length === 0}
+        className={
+          locked
+            ? "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[12px] font-semibold text-fg-muted"
+            : "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[12px] font-semibold text-fg hover:bg-bg"
+        }
+        title={
+          locked
+            ? "Session active — manifest locked. End session to switch."
+            : "Pick a manifest for the next session"
+        }
+      >
+        <Bot className="h-3 w-3" strokeWidth={1.5} />
+        <span className="truncate font-mono">{label}</span>
+        {!locked ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
+      </button>
+      {open && !locked ? (
+        <ul
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-border bg-bg-elevated py-1 shadow-lg"
+        >
+          {manifests.map((m) => {
+            const active = m.id === selectedId;
+            return (
+              <li key={m.id}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onPick(m.id)}
+                  className={
+                    active
+                      ? "flex w-full flex-col items-start gap-0.5 bg-accent/10 px-3 py-1.5 text-left"
+                      : "flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left hover:bg-bg-subtle"
+                  }
+                >
+                  <span className="flex w-full items-center gap-1.5">
+                    <span className="flex-1 truncate font-mono text-[12.5px] text-fg">
+                      {m.id}
+                    </span>
+                    {m.source === "workspace" ? (
+                      <span className="rounded bg-accent/15 px-1 text-[9.5px] uppercase tracking-wider text-accent">
+                        ws
+                      </span>
+                    ) : null}
+                    {m.provider ? (
+                      <span className="rounded bg-bg-subtle px-1 text-[10px] text-fg-subtle">
+                        {m.provider}
+                      </span>
+                    ) : null}
+                  </span>
+                  {m.description ? (
+                    <span className="text-[11px] text-fg-muted">
+                      {m.description}
+                    </span>
+                  ) : null}
+                  {m.model ? (
+                    <span className="font-mono text-[10.5px] text-fg-subtle">
+                      model: {m.model}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+          {manifests.length === 0 ? (
+            <li className="px-3 py-2 text-[11px] text-fg-subtle">
+              No manifests loaded.
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Phase G.4 — header pill for the per-session model override.
+ *
+ *  `selected = null` means "inherit" (manifest's bundled default
+ *  + global admin prefs win). Selecting a preset overrides ONLY
+ *  this and future-new sessions for the same project — the running
+ *  session keeps whatever it was created with.
+ *
+ *  When a session is active the pill is locked (matches the
+ *  manifest-pill semantics) so the operator knows changes don't
+ *  retroactively apply. */
+function ModelPill({
+  locked,
+  selected,
+  manifestModel,
+  open,
+  onToggle,
+  onPick,
+}: {
+  locked: boolean;
+  selected: string | null;
+  manifestModel: string | null;
+  open: boolean;
+  onToggle: () => void;
+  onPick: (value: string | null) => void;
+}) {
+  // Label priority: explicit override → manifest's model → "model".
+  // Italic when inheriting so the user can see "this is *not* my
+  // active override".
+  const label = selected ?? manifestModel ?? "model";
+  const isInherit = selected === null;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={locked}
+        className={
+          locked
+            ? "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg-muted"
+            : "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg hover:bg-bg"
+        }
+        title={
+          locked
+            ? "Session active — model locked. End session to switch."
+            : "Override the model for the next session"
+        }
+      >
+        <span className="text-fg-subtle">model:</span>
+        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>
+          {label}
+        </span>
+        {!locked ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
+      </button>
+      {open && !locked ? (
+        <ul
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-border bg-bg-elevated py-1 shadow-lg"
+        >
+          <li>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => onPick(null)}
+              className={
+                selected === null
+                  ? "flex w-full items-baseline gap-2 bg-accent/10 px-3 py-1.5 text-left"
+                  : "flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-bg-subtle"
+              }
+            >
+              <span className="font-mono text-[12px] italic text-fg-muted">inherit</span>
+              <span className="text-[10.5px] text-fg-subtle">
+                {manifestModel ? `(uses ${manifestModel})` : "(manifest default)"}
+              </span>
+            </button>
+          </li>
+          {MODEL_PRESETS.map((p) => (
+            <li key={p.value}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => onPick(p.value)}
+                className={
+                  selected === p.value
+                    ? "flex w-full items-baseline gap-2 bg-accent/10 px-3 py-1.5 text-left"
+                    : "flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-bg-subtle"
+                }
+              >
+                <span className="font-mono text-[12px] text-fg">{p.value}</span>
+                <span className="text-[10.5px] text-fg-subtle">{p.label.replace(p.value, "").trim()}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 interface EventRowProps {

@@ -105,6 +105,7 @@ class ProjectAwareSessionManager:
         vault: SecretVault | None = None,
         mcp_config: dict[str, Any] | None = None,
         settings_path: str | None = None,
+        session_overrides: ManifestOverrides | None = None,
     ) -> AgentSessionHandle:
         # 1) Locate the workspace + verify the project exists.
         ws = await self._fetch_workspace(db, workspace_id)
@@ -146,8 +147,20 @@ class ProjectAwareSessionManager:
             )
 
         # 3) Instantiate the pipeline against the chosen manifest.
-        env_manifest_id = env_id or self.default_manifest_id
-        overrides = _prefs_to_overrides(prefs)
+        #
+        # Resolution order (Phase G.5):
+        #   1. Request `env_id` (ChatPanel manifest picker)
+        #   2. `admin_agent_prefs.default_manifest_id` (Settings)
+        #   3. `Settings.default_manifest_id` (env var / hard-coded)
+        admin_default = prefs.default_manifest_id if prefs else None
+        env_manifest_id = env_id or admin_default or self.default_manifest_id
+        # Phase G.4 — per-session overrides win over global admin
+        # prefs. Caller passes `session_overrides` when the chat
+        # panel's model/max_tokens pill is set; missing fields fall
+        # through to the prefs, which fall through to the manifest's
+        # bundled defaults. This is a one-shot ratchet — the override
+        # only affects this session, not future creates.
+        overrides = _merge_overrides(_prefs_to_overrides(prefs), session_overrides)
         try:
             pipeline = await self.env_service.instantiate_pipeline(
                 env_manifest_id, credentials=bundle, overrides=overrides
@@ -371,6 +384,36 @@ def _prefs_to_overrides(
         max_iterations=prefs.max_iterations,
         cost_budget_usd=float(prefs.cost_budget_usd) if prefs.cost_budget_usd is not None else None,
         timeout_s=prefs.timeout_s,
+    )
+
+
+def _merge_overrides(
+    base: ManifestOverrides | None,
+    patch: ManifestOverrides | None,
+) -> ManifestOverrides | None:
+    """Phase G.4 — combine global prefs (`base`) with per-session
+    request fields (`patch`). Non-`None` patch fields win; missing
+    fields fall back to `base`. Returns `None` when both inputs are
+    fully empty — same shape `_prefs_to_overrides(None)` returns so
+    the env_service code path is unchanged."""
+    if base is None and patch is None:
+        return None
+    if base is None:
+        return patch
+    if patch is None:
+        return base
+    return ManifestOverrides(
+        model=patch.model if patch.model is not None else base.model,
+        max_tokens=patch.max_tokens if patch.max_tokens is not None else base.max_tokens,
+        max_iterations=(
+            patch.max_iterations if patch.max_iterations is not None else base.max_iterations
+        ),
+        cost_budget_usd=(
+            patch.cost_budget_usd
+            if patch.cost_budget_usd is not None
+            else base.cost_budget_usd
+        ),
+        timeout_s=patch.timeout_s if patch.timeout_s is not None else base.timeout_s,
     )
 
 

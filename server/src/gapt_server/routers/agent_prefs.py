@@ -53,6 +53,12 @@ class AgentPrefsPayload(BaseModel):
     cost_budget_usd: float | None = Field(default=None, ge=0.0, le=1_000.0)
     timeout_s: int | None = Field(default=None, ge=1, le=600)
     permission_mode: str | None = Field(default=None, max_length=40)
+    # Phase G.5 — workspace-wide default manifest id. Null means
+    # "use the server default (gapt_default)". When set, every new
+    # chat session that doesn't explicitly pick a manifest uses this
+    # one. Lets the operator pin "I'm on the OpenAI variant this
+    # week" without touching `env_id` per call.
+    default_manifest_id: str | None = Field(default=None, max_length=120)
 
     def model_post_init(self, _: object) -> None:
         if self.permission_mode is not None and self.permission_mode not in _PERMISSION_MODES:
@@ -77,6 +83,7 @@ def _row_to_response(row: models.AdminAgentPrefs | None) -> AgentPrefsResponse:
         cost_budget_usd=float(row.cost_budget_usd) if row.cost_budget_usd is not None else None,
         timeout_s=row.timeout_s,
         permission_mode=row.permission_mode,
+        default_manifest_id=row.default_manifest_id,
         updated_at=row.updated_at,
     )
 
@@ -128,6 +135,7 @@ async def put_prefs(
             cost_budget_usd=payload.cost_budget_usd,
             timeout_s=payload.timeout_s,
             permission_mode=payload.permission_mode,
+            default_manifest_id=payload.default_manifest_id,
         )
         db.add(row)
     else:
@@ -137,6 +145,7 @@ async def put_prefs(
         row.cost_budget_usd = payload.cost_budget_usd
         row.timeout_s = payload.timeout_s
         row.permission_mode = payload.permission_mode
+        row.default_manifest_id = payload.default_manifest_id
     await db.commit()
     # Evict cached runtimes so the next invoke rehydrates with the
     # new prefs. Best-effort — if the registry is in a weird state

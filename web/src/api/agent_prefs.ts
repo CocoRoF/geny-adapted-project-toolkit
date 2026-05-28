@@ -10,6 +10,9 @@ export interface AgentPrefs {
   cost_budget_usd?: number | null;
   timeout_s?: number | null;
   permission_mode?: PermissionMode | null;
+  /** Phase G.5 — workspace-wide default manifest. Null = fall back
+   *  to the server's `Settings.default_manifest_id` (gapt_default). */
+  default_manifest_id?: string | null;
   updated_at?: string | null;
 }
 

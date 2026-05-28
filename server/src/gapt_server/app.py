@@ -23,6 +23,8 @@ from gapt_server.routers import (
     git,
     health,
     introspect,
+    llm_backends,
+    manifests as manifests_router,
     notifications,
     oneshot,
     performance,
@@ -185,6 +187,8 @@ def create_app(
     app.include_router(policies.router)
     app.include_router(cost.router)
     app.include_router(performance.router)
+    app.include_router(llm_backends.router)
+    app.include_router(manifests_router.router)
     app.include_router(notifications.router)
     app.include_router(oneshot.router)
     app.include_router(agent_prefs.router)
