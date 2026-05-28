@@ -34,6 +34,11 @@ from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditEvent, AuditSink
 from gapt_server.domains.auth import AdminPrincipal
+from gapt_server.domains.environments import (
+    KindNotSupportedError,
+    TargetConfigInvalidError,
+    validate_target_config,
+)
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
@@ -44,6 +49,35 @@ if TYPE_CHECKING:
 
 by_project = APIRouter(prefix="/_gapt/api/projects", tags=["environments"])
 by_id = APIRouter(prefix="/_gapt/api/environments", tags=["environments"])
+
+
+def _validate_or_422(
+    kind: enums.DeployTargetKind, raw: dict[str, Any]
+) -> dict[str, Any]:
+    """Run the deploy_target_config through the per-kind schema.
+
+    422 + `fields` list on validation errors so the EnvironmentEditor
+    can show field-level messages. 422 + `target_kind_not_supported`
+    when the kind has no schema yet (k8s today)."""
+    try:
+        return validate_target_config(kind, raw)
+    except KindNotSupportedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "environment.target_kind_not_supported",
+                "reason": str(exc),
+            },
+        ) from exc
+    except TargetConfigInvalidError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "environment.target_config_invalid",
+                "reason": exc.message,
+                "fields": exc.fields,
+            },
+        ) from exc
 
 
 class EnvironmentPayload(BaseModel):
@@ -206,12 +240,17 @@ async def create_environment(
             },
         )
 
+    # Phase H.1 — validate target config against the kind's schema
+    # before insert. See `domains/environments/target_config.py`.
+    cleaned_config = _validate_or_422(
+        payload.deploy_target_kind, payload.deploy_target_config
+    )
     row = models.Environment(
         id=new_ulid(),
         project_id=project_id,
         name=payload.name,
         deploy_target_kind=payload.deploy_target_kind,
-        deploy_target_config=payload.deploy_target_config,
+        deploy_target_config=cleaned_config,
         require_2fa=payload.require_2fa,
         secret_refs=payload.secret_refs,
         cost_multiplier=payload.cost_multiplier,
@@ -285,9 +324,12 @@ async def update_environment(
                 },
             )
 
+    cleaned_config = _validate_or_422(
+        payload.deploy_target_kind, payload.deploy_target_config
+    )
     row.name = payload.name
     row.deploy_target_kind = payload.deploy_target_kind
-    row.deploy_target_config = payload.deploy_target_config
+    row.deploy_target_config = cleaned_config
     row.require_2fa = payload.require_2fa
     row.secret_refs = payload.secret_refs
     row.cost_multiplier = payload.cost_multiplier

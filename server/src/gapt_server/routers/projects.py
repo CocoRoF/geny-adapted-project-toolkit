@@ -149,6 +149,21 @@ def http_from_project_error(exc: ProjectError) -> HTTPException:
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": exc.code, "reason": str(exc)},
         )
+    # Phase H.1 — schema/kind errors for `deploy_target_config`. We
+    # return 422 with a `fields` list so the EnvironmentEditor can
+    # point the operator at the exact knob that's wrong.
+    if exc.code in {
+        "environment.target_config_invalid",
+        "environment.target_kind_not_supported",
+    }:
+        detail: dict[str, Any] = {"code": exc.code, "reason": str(exc)}
+        fields = getattr(exc, "fields", None)
+        if fields is not None:
+            detail["fields"] = fields
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=detail,
+        )
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail={"code": exc.code, "reason": str(exc)},

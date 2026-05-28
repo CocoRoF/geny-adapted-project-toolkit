@@ -182,6 +182,74 @@ async def test_environment_crud(proj_fx: _ProjFixture) -> None:
 
 
 @pytest.mark.asyncio
+async def test_environment_target_config_validation(
+    proj_fx: _ProjFixture,
+) -> None:
+    """Phase H.1 — POST `/environments` with a malformed
+    `deploy_target_config` must return 422 with a field-level error
+    list so the EnvironmentEditor can red-line the exact knob."""
+    async with AsyncClient(
+        transport=ASGITransport(app=proj_fx.app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/_gapt/api/projects",
+            json={
+                "slug": "h1test",
+                "display_name": "H.1 test",
+                "git_remote_url": "https://example.com/h1.git",
+            },
+        )
+        project_id = created.json()["id"]
+
+        # Bad port → 422 with the offending field surfaced.
+        bad = await client.post(
+            f"/_gapt/api/projects/{project_id}/environments",
+            json={
+                "name": "broken",
+                "deploy_target_kind": "local",
+                "deploy_target_config": {"primary_port": 99999},
+            },
+        )
+        assert bad.status_code == 422, bad.text
+        detail = bad.json()["detail"]
+        assert detail["code"] == "environment.target_config_invalid"
+        assert any(f["loc"] == ["primary_port"] for f in detail["fields"])
+
+        # K8s kind → distinct 422 code (UI can banner this).
+        k8s = await client.post(
+            f"/_gapt/api/projects/{project_id}/environments",
+            json={
+                "name": "in-cluster",
+                "deploy_target_kind": "k8s",
+                "deploy_target_config": {},
+            },
+        )
+        assert k8s.status_code == 422, k8s.text
+        assert (
+            k8s.json()["detail"]["code"]
+            == "environment.target_kind_not_supported"
+        )
+
+        # Valid config → 201, even when sparse.
+        ok = await client.post(
+            f"/_gapt/api/projects/{project_id}/environments",
+            json={
+                "name": "prod",
+                "deploy_target_kind": "local",
+                "deploy_target_config": {
+                    "compose_path": "docker-compose.yml",
+                    "primary_port": 3000,
+                },
+            },
+        )
+        assert ok.status_code == 201, ok.text
+        cfg = ok.json()["deploy_target_config"]
+        # Round-trip cleaned dict — Nones dropped, valid fields kept.
+        assert cfg["compose_path"] == "docker-compose.yml"
+        assert cfg["primary_port"] == 3000
+
+
+@pytest.mark.asyncio
 async def test_remote_branches_endpoint(
     proj_fx: _ProjFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

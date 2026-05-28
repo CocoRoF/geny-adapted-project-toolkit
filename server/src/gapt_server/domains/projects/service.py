@@ -23,6 +23,11 @@ from sqlalchemy.exc import IntegrityError
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditAction, AuditEvent, AuditSink, NullAuditSink
+from gapt_server.domains.environments import (
+    KindNotSupportedError,
+    TargetConfigInvalidError,
+    validate_target_config,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -247,12 +252,29 @@ class ProjectService:
         hooks: dict[str, Any] | None = None,
     ) -> EnvironmentView:
         await fetch_project_for(db, actor=actor, project_id=project_id)
+        # Phase H.1 — validate deploy_target_config against the kind's
+        # schema before touching the DB. Pydantic errors surface as
+        # ProjectError so the router translates to a 422 + field list.
+        try:
+            cleaned_config = validate_target_config(
+                deploy_target_kind, deploy_target_config
+            )
+        except KindNotSupportedError as exc:
+            raise ProjectError(
+                "environment.target_kind_not_supported", str(exc)
+            ) from exc
+        except TargetConfigInvalidError as exc:
+            err = ProjectError(
+                "environment.target_config_invalid", exc.message
+            )
+            err.fields = exc.fields  # type: ignore[attr-defined]
+            raise err from exc
         env = models.Environment(
             id=new_ulid(),
             project_id=project_id,
             name=name,
             deploy_target_kind=deploy_target_kind,
-            deploy_target_config=deploy_target_config or {},
+            deploy_target_config=cleaned_config,
             require_2fa=require_2fa,
             secret_refs=secret_refs or [],
             cost_multiplier=cost_multiplier,

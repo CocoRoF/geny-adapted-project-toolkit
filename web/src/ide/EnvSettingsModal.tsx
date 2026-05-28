@@ -1,21 +1,28 @@
-/** Comprehensive environment settings panel.
+/** Edit-mode environment settings (Deploy view → env card → ⚙).
  *
- * Lives in the Deploy view (env card → ⚙ button). Surfaces every
- * `deploy_target_config` knob in one place so the operator doesn't
- * have to chase between the Environments page (JSON textarea), the
- * Stack section's Overrides drawer, and the Stack header's
- * path/subdomain toggle.
+ * Phase H rewrite — form fields, presets, kind dispatch, and
+ * field-level error rendering all delegate to the unified
+ * `EnvironmentEditor` (web/src/environments/EnvironmentEditor.tsx).
  *
- * Sections (each with its own explainer):
- *   * 라우팅 전략 — path | subdomain segmented control
- *   * Upstream — primary_service, primary_port, scheme, host
- *     header, tls verify, strip_prefix
- *   * 배포 동작 — build flag, require_2fa, cost_multiplier
+ * What stays in this file:
+ *   - The modal chrome (title, footer Save / Save & re-route /
+ *     Help / Close buttons).
+ *   - The 422 `fields[]` error capture for inline display in the
+ *     editor.
+ *   - The subdomain-mode setup guide (`SubdomainSetupGuide`) +
+ *     its supporting `Step`, `CheckLine`, `CallToActionRow`, and
+ *     `OpenCertGuideButton` helpers — these are deploy-view-specific
+ *     diagnostics, not part of the create/edit form contract.
+ *   - `Save & re-route` — pulls fields out of the editor's FormState
+ *     and forwards them to `rerouteStack` so a running stack picks
+ *     up the new routing without a full re-deploy.
  *
- * Save → `updateEnvironment` persists to `deploy_target_config` +
- * env fields. "Save & re-route" additionally calls `rerouteStack`
- * to immediately re-register Caddy routes with the new config (only
- * useful when a stack is currently running). */
+ * What got deleted vs the pre-Phase-H version:
+ *   - Local `FormState` / `PRESETS` / `readForm` / `writeConfig`
+ *     (now in EnvironmentEditor).
+ *   - Local `Section` / `Field` / `Input` / `Select` / `Toggle` /
+ *     `ModeButton` atoms (duplicated; EnvironmentEditor has its own).
+ */
 
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -27,14 +34,12 @@ import {
   HelpCircle,
   Loader2,
   Settings as SettingsIcon,
-  Sparkles,
   Zap,
 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
   type EnvironmentResponse,
-  type EnvironmentPayload,
   type SubdomainDiagnose,
   diagnoseSubdomainMode,
   rerouteStack,
@@ -42,101 +47,17 @@ import {
 } from "@/api/environments";
 import { ensureCloudflareWildcard } from "@/api/providers";
 import { useI18n } from "@/app/providers/i18n-context";
+import {
+  EnvironmentEditor,
+  type FieldError,
+  type FormState,
+  readForm,
+  writeForm,
+} from "@/environments/EnvironmentEditor";
 import { StackRerouteHelpModal } from "@/ide/StackRerouteHelpModal";
 import { WildcardCertGuide } from "@/ide/WildcardCertGuide";
 import { Button } from "@/ui/Button";
 import { Modal } from "@/ui/Modal";
-import { cn } from "@/ui/cn";
-
-/** Concrete scenario presets. One click sets every field to a known-
- * good combination so the operator doesn't have to translate their
- * stack architecture into knob values from scratch. Each preset is
- * a partial FormState merged onto the current form. */
-interface ScenarioPreset {
-  id: string;
-  // i18n keys — name + one-line description rendered on the chip.
-  name_key: string;
-  hint_key: string;
-  /** Recommended-for matching pattern — when the user's current
-   * config already roughly matches, mark the preset as "current".
-   * Returns true if `form` looks like this preset is already active. */
-  matches: (form: FormState) => boolean;
-  apply: (form: FormState) => FormState;
-}
-
-const PRESETS: ScenarioPreset[] = [
-  {
-    id: "nextjs-dev",
-    name_key: "env_settings.preset.nextjs_dev",
-    hint_key: "env_settings.preset.nextjs_dev_hint",
-    matches: (f) =>
-      f.preview_mode === "path" &&
-      f.strip_prefix === true &&
-      f.upstream_scheme !== "https" &&
-      !f.upstream_tls_insecure,
-    apply: (f) => ({
-      ...f,
-      preview_mode: "path",
-      strip_prefix: true,
-      upstream_scheme: "",
-      upstream_tls_insecure: false,
-      upstream_host_header: "",
-      primary_service: f.primary_service || "frontend",
-      primary_port: f.primary_port || "3000",
-    }),
-  },
-  {
-    id: "nextjs-prod-basepath",
-    name_key: "env_settings.preset.nextjs_prod_basepath",
-    hint_key: "env_settings.preset.nextjs_prod_basepath_hint",
-    matches: (f) =>
-      f.preview_mode === "path" &&
-      f.strip_prefix === false &&
-      f.upstream_scheme !== "https",
-    apply: (f) => ({
-      ...f,
-      preview_mode: "path",
-      strip_prefix: false,
-      upstream_scheme: "",
-      upstream_tls_insecure: false,
-      upstream_host_header: "",
-      primary_service: f.primary_service || "frontend",
-      primary_port: f.primary_port || "3000",
-    }),
-  },
-  {
-    id: "tls-terminator",
-    name_key: "env_settings.preset.tls_terminator",
-    hint_key: "env_settings.preset.tls_terminator_hint",
-    matches: (f) =>
-      f.preview_mode === "path" &&
-      f.upstream_scheme === "https" &&
-      f.upstream_tls_insecure === true,
-    apply: (f) => ({
-      ...f,
-      preview_mode: "path",
-      strip_prefix: true,
-      upstream_scheme: "https",
-      upstream_tls_insecure: true,
-      upstream_host_header: f.upstream_host_header || "",
-      primary_service: f.primary_service || "nginx",
-      primary_port: "443",
-    }),
-  },
-  {
-    id: "subdomain",
-    name_key: "env_settings.preset.subdomain",
-    hint_key: "env_settings.preset.subdomain_hint",
-    matches: (f) => f.preview_mode === "subdomain",
-    apply: (f) => ({
-      ...f,
-      preview_mode: "subdomain",
-      strip_prefix: false, // host-keyed routing, prefix doesn't apply
-      // Upstream fields stay as user-configured; subdomain doesn't
-      // touch them.
-    }),
-  },
-];
 
 interface Props {
   open: boolean;
@@ -145,124 +66,50 @@ interface Props {
   onSaved: (updated: EnvironmentResponse) => void;
 }
 
-interface FormState {
-  // routing
-  preview_mode: "path" | "subdomain";
-  preview_slug: string;
-  // upstream
-  primary_service: string;
-  primary_port: string;
-  upstream_scheme: "" | "http" | "https";
-  upstream_host_header: string;
-  upstream_tls_insecure: boolean;
-  strip_prefix: boolean;
-  // deploy
-  build: boolean;
-  require_2fa: boolean;
-  cost_multiplier: string;
-}
-
-function readForm(env: EnvironmentResponse): FormState {
-  const cfg = env.deploy_target_config ?? {};
-  const mode = cfg.preview_mode === "subdomain" ? "subdomain" : "path";
-  return {
-    preview_mode: mode as "path" | "subdomain",
-    preview_slug:
-      typeof cfg.preview_slug === "string" ? cfg.preview_slug : "",
-    primary_service:
-      typeof cfg.primary_service === "string" ? cfg.primary_service : "",
-    primary_port:
-      typeof cfg.primary_port === "number" ? String(cfg.primary_port) : "",
-    upstream_scheme:
-      cfg.upstream_scheme === "https" || cfg.upstream_scheme === "http"
-        ? cfg.upstream_scheme
-        : "",
-    upstream_host_header:
-      typeof cfg.upstream_host_header === "string"
-        ? cfg.upstream_host_header
-        : "",
-    upstream_tls_insecure: cfg.upstream_tls_insecure === true,
-    strip_prefix:
-      typeof cfg.strip_prefix === "boolean" ? cfg.strip_prefix : true,
-    build: cfg.build === true,
-    require_2fa: env.require_2fa ?? false,
-    cost_multiplier: String(env.cost_multiplier ?? 1),
-  };
-}
-
-function writeConfig(
-  env: EnvironmentResponse,
-  form: FormState,
-): Record<string, unknown> {
-  const cfg = { ...(env.deploy_target_config ?? {}) };
-  cfg.preview_mode = form.preview_mode;
-  const trimmedSlug = form.preview_slug.trim().toLowerCase();
-  if (trimmedSlug) {
-    cfg.preview_slug = trimmedSlug;
-  } else {
-    delete cfg.preview_slug;
-  }
-  if (form.primary_service.trim()) {
-    cfg.primary_service = form.primary_service.trim();
-  } else {
-    delete cfg.primary_service;
-  }
-  const port = Number.parseInt(form.primary_port, 10);
-  if (Number.isFinite(port) && port > 0) {
-    cfg.primary_port = port;
-  } else {
-    delete cfg.primary_port;
-  }
-  if (form.upstream_scheme) {
-    cfg.upstream_scheme = form.upstream_scheme;
-  } else {
-    delete cfg.upstream_scheme;
-  }
-  if (form.upstream_host_header.trim()) {
-    cfg.upstream_host_header = form.upstream_host_header.trim();
-  } else {
-    delete cfg.upstream_host_header;
-  }
-  cfg.upstream_tls_insecure = form.upstream_tls_insecure;
-  cfg.strip_prefix = form.strip_prefix;
-  cfg.build = form.build;
-  return cfg;
-}
-
 export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
   const { t } = useI18n();
   const [form, setForm] = useState<FormState>(() => readForm(env));
   const [saving, setSaving] = useState<"save" | "save_reroute" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldError[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
-  // Bumped every time a save / reroute completes. SubdomainSetupGuide
-  // re-runs its diagnose when this changes, so a freshly-saved env
-  // doesn't stare at stale prerequisite check rows.
+  // Bumped on save / reroute so the `SubdomainSetupGuide` re-runs
+  // its diagnose. Without this the operator sees stale "needs cert"
+  // checks long after they fixed the underlying issue.
   const [saveTick, setSaveTick] = useState(0);
+
+  // Refresh form when the modal opens for a different env. Without
+  // this, the saved form sticks around when the operator hops
+  // between envs without closing the modal.
+  useEffect(() => {
+    setForm(readForm(env));
+    setFieldErrors([]);
+    setErr(null);
+    setFlash(null);
+  }, [env]);
 
   const save = async (alsoReroute: boolean) => {
     setSaving(alsoReroute ? "save_reroute" : "save");
     setErr(null);
     setFlash(null);
+    setFieldErrors([]);
     try {
-      const payload: EnvironmentPayload = {
-        name: env.name,
-        deploy_target_kind: env.deploy_target_kind,
-        deploy_target_config: writeConfig(env, form),
-        require_2fa: form.require_2fa,
-        cost_multiplier: Number(form.cost_multiplier) || 1,
-      };
+      const payload = writeForm(form);
       const updated = await updateEnvironment(env.id, payload);
       onSaved(updated);
       if (alsoReroute) {
+        // Pull the routing-relevant slice out of the form. Only fields
+        // the running stack would care about — leaves preview_slug /
+        // build / cost_multiplier alone.
         const r = await rerouteStack(env.id, {
-          preview_mode: form.preview_mode,
+          preview_mode:
+            form.preview_mode === "" ? null : form.preview_mode,
           primary_service: form.primary_service.trim() || null,
           primary_port: Number.parseInt(form.primary_port, 10) || null,
-          strip_prefix: form.strip_prefix,
-          upstream_scheme:
-            (form.upstream_scheme as "http" | "https") || null,
+          strip_prefix:
+            form.strip_prefix === "" ? null : form.strip_prefix === "true",
+          upstream_scheme: form.upstream_scheme || null,
           upstream_host_header: form.upstream_host_header.trim() || null,
           upstream_tls_insecure: form.upstream_tls_insecure,
         });
@@ -270,30 +117,36 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
           setFlash(t("env_settings.saved_and_rerouted"));
         } else {
           setErr(
-            t("env_settings.reroute_failed") +
-              "\n" +
-              r.output.slice(-300),
+            t("env_settings.reroute_failed") + "\n" + r.output.slice(-300),
           );
         }
       } else {
         setFlash(t("env_settings.saved"));
       }
-      // Save (and especially reroute) changes routing state — the
-      // diagnose card was reflecting the old state. Bump the tick
-      // so SubdomainSetupGuide re-runs.
       setSaveTick((n) => n + 1);
     } catch (e) {
-      setErr(
-        e instanceof ApiError
-          ? e.reason
-          : e instanceof Error
-            ? e.message
-            : String(e),
-      );
+      if (e instanceof ApiError) {
+        // 422 + `fields[]` from H.1's validator → highlight the
+        // exact field that's wrong inline in the editor.
+        const fields = (e.detail as { fields?: FieldError[] } | undefined)?.fields;
+        if (Array.isArray(fields) && fields.length > 0) {
+          setFieldErrors(fields);
+          setErr(
+            fields.map((f) => `${f.loc.join(".")}: ${f.msg}`).join("; "),
+          );
+        } else {
+          setErr(e.reason);
+        }
+      } else {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setSaving(null);
     }
   };
+
+  const showSubdomainGuide =
+    form.kind === "local" && form.preview_mode === "subdomain";
 
   return (
     <Modal
@@ -342,227 +195,19 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
       }
     >
       <div className="max-h-[70vh] space-y-4 overflow-auto pr-1">
-        {/* ── 시나리오 프리셋 (한 클릭 자동 채움) ── */}
-        <Section
-          title={t("env_settings.section.presets")}
-          hint={t("env_settings.section.presets_hint")}
-        >
-          <div className="grid grid-cols-2 gap-2">
-            {PRESETS.map((p) => {
-              const active = p.matches(form);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setForm(p.apply)}
-                  className={cn(
-                    "flex flex-col gap-1 rounded-md border px-3 py-2 text-left transition-colors",
-                    active
-                      ? "border-accent/60 bg-accent/10"
-                      : "border-border bg-bg hover:bg-bg-subtle",
-                  )}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles
-                      className={cn(
-                        "h-3 w-3 shrink-0",
-                        active ? "text-accent" : "text-fg-subtle",
-                      )}
-                      strokeWidth={1.5}
-                    />
-                    <span
-                      className={cn(
-                        "text-[12px] font-semibold",
-                        active ? "text-accent" : "text-fg",
-                      )}
-                    >
-                      {t(p.name_key as never)}
-                    </span>
-                    {active ? (
-                      <span className="ml-auto rounded-full bg-accent/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-accent">
-                        {t("env_settings.preset.current")}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-[10.5px] leading-snug text-fg-muted">
-                    {t(p.hint_key as never)}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-
-        {/* ── 라우팅 전략 ── */}
-        <Section
-          title={t("env_settings.section.routing")}
-          hint={t("env_settings.section.routing_hint")}
-        >
-          <div className="flex gap-2">
-            <ModeButton
-              active={form.preview_mode === "path"}
-              label="path"
-              hint={t("env_settings.mode.path.short")}
-              onClick={() =>
-                setForm((f) => ({ ...f, preview_mode: "path" }))
-              }
-            />
-            <ModeButton
-              active={form.preview_mode === "subdomain"}
-              label="subdomain"
-              hint={t("env_settings.mode.subdomain.short")}
-              onClick={() =>
-                setForm((f) => ({ ...f, preview_mode: "subdomain" }))
-              }
-            />
-          </div>
-          {form.preview_mode === "path" ? (
-            <Field
-              label={t("env_settings.strip_prefix")}
-              hint={t("env_settings.strip_prefix_hint")}
-            >
-              <Toggle
-                value={form.strip_prefix}
-                onChange={(v) => setForm((f) => ({ ...f, strip_prefix: v }))}
-              />
-            </Field>
-          ) : null}
-          <Field
-            label={t("env_settings.preview_slug")}
-            hint={t("env_settings.preview_slug_hint").replace(
-              "{default}",
-              `prod-${env.name}-${env.project_id}`.toLowerCase(),
-            )}
-          >
-            <Input
-              value={form.preview_slug}
-              placeholder={`prod-${env.name}-${env.project_id}`.toLowerCase()}
-              onChange={(v) => setForm((f) => ({ ...f, preview_slug: v }))}
-            />
-          </Field>
-        </Section>
-
-        {form.preview_mode === "subdomain" ? (
-          <SubdomainSetupGuide refreshKey={saveTick} />
-        ) : null}
-
-        {/* ── Upstream ── */}
-        <Section
-          title={t("env_settings.section.upstream")}
-          hint={t("env_settings.section.upstream_hint")}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label={t("env_settings.primary_service")}
-              hint={t("env_settings.primary_service_hint")}
-            >
-              <Input
-                value={form.primary_service}
-                placeholder="nginx / frontend / (자동)"
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, primary_service: v }))
-                }
-              />
-            </Field>
-            <Field
-              label={t("env_settings.primary_port")}
-              hint={t("env_settings.primary_port_hint")}
-            >
-              <Input
-                value={form.primary_port}
-                placeholder="3000 / 80 / 443"
-                inputMode="numeric"
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, primary_port: v }))
-                }
-              />
-            </Field>
-            <Field
-              label={t("env_settings.upstream_scheme")}
-              hint={t("env_settings.upstream_scheme_hint")}
-            >
-              <Select
-                value={form.upstream_scheme}
-                onChange={(v) =>
-                  setForm((f) => ({
-                    ...f,
-                    upstream_scheme: v as "" | "http" | "https",
-                  }))
-                }
-                options={[
-                  { value: "", label: t("env_settings.inherit") },
-                  { value: "http", label: "http" },
-                  { value: "https", label: "https" },
-                ]}
-              />
-            </Field>
-            <Field
-              label={t("env_settings.upstream_tls_insecure")}
-              hint={t("env_settings.upstream_tls_insecure_hint")}
-            >
-              <Toggle
-                value={form.upstream_tls_insecure}
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, upstream_tls_insecure: v }))
-                }
-              />
-            </Field>
-            <Field
-              label={t("env_settings.upstream_host_header")}
-              hint={t("env_settings.upstream_host_header_hint")}
-              span={2}
-            >
-              <Input
-                value={form.upstream_host_header}
-                placeholder="example.com (비우면 passthrough)"
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, upstream_host_header: v }))
-                }
-              />
-            </Field>
-          </div>
-        </Section>
-
-        {/* ── 배포 동작 ── */}
-        <Section
-          title={t("env_settings.section.deploy")}
-          hint={t("env_settings.section.deploy_hint")}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label={t("env_settings.build")}
-              hint={t("env_settings.build_hint")}
-            >
-              <Toggle
-                value={form.build}
-                onChange={(v) => setForm((f) => ({ ...f, build: v }))}
-              />
-            </Field>
-            <Field
-              label={t("env_settings.require_2fa")}
-              hint={t("env_settings.require_2fa_hint")}
-            >
-              <Toggle
-                value={form.require_2fa}
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, require_2fa: v }))
-                }
-              />
-            </Field>
-            <Field
-              label={t("env_settings.cost_multiplier")}
-              hint={t("env_settings.cost_multiplier_hint")}
-            >
-              <Input
-                value={form.cost_multiplier}
-                inputMode="decimal"
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, cost_multiplier: v }))
-                }
-              />
-            </Field>
-          </div>
-        </Section>
+        <EnvironmentEditor
+          mode="edit"
+          projectId={env.project_id}
+          form={form}
+          onFormChange={setForm}
+          fieldErrors={fieldErrors}
+          disabled={saving !== null}
+          extraBelowKindSection={
+            showSubdomainGuide ? (
+              <SubdomainSetupGuide refreshKey={saveTick} />
+            ) : null
+          }
+        />
 
         {err ? (
           <pre
@@ -583,6 +228,8 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
   );
 }
 
+// ─────────────────────────────────── subdomain setup guide ──
+
 /** Step-by-step subdomain-mode prerequisites + live diagnose.
  *
  * Surfaces the THREE things the operator has to get right for
@@ -592,11 +239,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
  *   2. Cloudflare Tunnel ingress including the wildcard (if using
  *      cloudflared).
  *   3. GAPT_CADDY_PREVIEW_DOMAIN env var set on the server.
- *
- * Each step has a copy-able snippet. The diagnose button runs the
- * server-side check and reports which step still needs work — so
- * the operator doesn't have to debug "the URL doesn't load" by
- * hand. */
+ */
 function SubdomainSetupGuide({ refreshKey = 0 }: { refreshKey?: number }) {
   const { t } = useI18n();
   const [running, setRunning] = useState(false);
@@ -622,31 +265,16 @@ function SubdomainSetupGuide({ refreshKey = 0 }: { refreshKey?: number }) {
     }
   }, []);
 
-  // Run diagnose on mount AND every time the parent bumps
-  // `refreshKey` (which happens on Save / Save+Reroute). Without
-  // this re-run, the prerequisite checks stay stuck on whatever
-  // they were before the save — so the operator sees "needs cert"
-  // long after they fixed it.
   useEffect(() => {
     void diagnose();
   }, [diagnose, refreshKey]);
 
-  // "Provider handles DNS + tunnel ingress for us" — collapses the
-  // manual snippets into a compact success card. We deliberately
-  // don't require e2e_reachable here: the wildcard TLS cert is a
-  // separate Cloudflare-side prerequisite the provider can't issue
-  // (Universal SSL doesn't cover wildcards). The diagnose block
-  // below still surfaces that when it's missing.
   const providerHandled =
     !!result &&
     result.provider_configured &&
     result.tunnel_mode === "remote_managed" &&
     result.tunnel_has_wildcard;
 
-  // Best guess for the domain to put in the snippets. If diagnose
-  // ran, use what the server reported; otherwise fall back to a
-  // placeholder. The user will replace the placeholder anyway —
-  // this just makes the snippet less abstract.
   const domain = result?.preview_domain ?? "<your-preview-domain>";
   const cnameSnippet = `Type:    CNAME
 Name:    *
@@ -662,7 +290,7 @@ ingress:
   - service: http_status:404`;
 
   return (
-    <Section
+    <GuideSection
       title={
         providerHandled
           ? t("env_settings.section.subdomain_setup_ready")
@@ -725,7 +353,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
           <Button
             size="sm"
             variant="ghost"
-            onClick={diagnose}
+            onClick={() => void diagnose()}
             disabled={running}
             className="ml-auto"
           >
@@ -735,9 +363,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
             {t("env_settings.subdomain.diagnose.run")}
           </Button>
         </header>
-        {err ? (
-          <p className="text-[11px] text-danger">{err}</p>
-        ) : null}
+        {err ? <p className="text-[11px] text-danger">{err}</p> : null}
         {result ? (
           <div className="space-y-1.5">
             <CheckLine
@@ -831,7 +457,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
           </p>
         )}
       </div>
-    </Section>
+    </GuideSection>
   );
 }
 
@@ -881,17 +507,6 @@ function Step({
   );
 }
 
-/** Inline call-to-action surfaced after the CheckLines. Chooses the
- * single highest-leverage action based on the diagnose state:
- *
- *   provider missing       → "Open Settings → Providers"
- *   local_config mode      → "Open Settings → Migration wizard"
- *   remote_managed + !wc   → "Configure wildcard ingress" (inline)
- *   all green              → nothing (banner above handles it)
- *
- * The inline configure-wildcard call hits the same backend endpoint
- * as the Settings page button — keeps the operator in the env modal
- * when one click is all that's needed. */
 function CallToActionRow({
   diagnose,
   onWildcardConfigured,
@@ -963,11 +578,6 @@ function CallToActionRow({
       </div>
     );
   }
-  // Everything provider-side is green but the e2e probe still fails
-  // — that's almost always the missing wildcard cert from Cloudflare.
-  // Open the dedicated guide modal instead of dumping the whole
-  // "issue an Advanced Certificate or enable Total TLS" wall into
-  // the next_steps list.
   if (
     diagnose.tunnel_mode === "remote_managed" &&
     diagnose.tunnel_has_wildcard &&
@@ -1018,9 +628,10 @@ function CheckLine({
   );
 }
 
-// ─────────────────────────────────────────── small atoms ──
-
-function Section({
+// Local Section container used by the SubdomainSetupGuide block —
+// shaped to match the EnvironmentEditor's outer Section styling so
+// the modal reads as one coherent surface.
+function GuideSection({
   title,
   hint,
   children,
@@ -1041,151 +652,5 @@ function Section({
       </header>
       <div className="space-y-2">{children}</div>
     </section>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  span,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  span?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <label
-      className={cn("flex flex-col gap-1", span === 2 && "col-span-2")}
-    >
-      <span className="text-[10.5px] uppercase tracking-wider text-fg-subtle">
-        {label}
-      </span>
-      {children}
-      {hint ? (
-        <span className="text-[10.5px] text-fg-subtle">{hint}</span>
-      ) : null}
-    </label>
-  );
-}
-
-function Input({
-  value,
-  placeholder,
-  inputMode,
-  onChange,
-}: {
-  value: string;
-  placeholder?: string;
-  inputMode?: "numeric" | "decimal" | "text";
-  onChange: (v: string) => void;
-}) {
-  return (
-    <input
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      inputMode={inputMode}
-      className="rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
-      spellCheck={false}
-    />
-  );
-}
-
-function Select({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg"
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function Toggle({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      onClick={() => onChange(!value)}
-      className={cn(
-        "inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors",
-        value
-          ? "border-accent/40 bg-accent/30"
-          : "border-border bg-bg-subtle",
-      )}
-    >
-      <span
-        className={cn(
-          "h-3.5 w-3.5 rounded-full bg-fg-muted shadow transition-transform",
-          value ? "translate-x-5" : "translate-x-0.5",
-        )}
-      />
-    </button>
-  );
-}
-
-function ModeButton({
-  active,
-  label,
-  hint,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  hint: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex-1 rounded-md border px-3 py-2 text-left transition-colors",
-        active
-          ? "border-accent/60 bg-accent/10"
-          : "border-border bg-bg hover:bg-bg-subtle",
-      )}
-    >
-      <div className="flex items-center gap-1.5">
-        <span
-          className={cn(
-            "inline-block h-2 w-2 rounded-full",
-            active ? "bg-accent" : "bg-fg-subtle/40",
-          )}
-        />
-        <span
-          className={cn(
-            "font-mono text-[12px] font-semibold",
-            active ? "text-accent" : "text-fg",
-          )}
-        >
-          {label}
-        </span>
-      </div>
-      <p className="mt-1 text-[10.5px] leading-snug text-fg-muted">{hint}</p>
-    </button>
   );
 }
