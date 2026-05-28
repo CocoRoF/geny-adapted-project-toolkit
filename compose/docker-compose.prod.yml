@@ -20,13 +20,13 @@
 #   GAPT_DISCORD_WEBHOOK_URL — same for Discord
 #   GAPT_CI_GITHUB_TOKEN     — server-wide GitHub PAT for /_gapt/api/projects/.../ci/runs
 #
-# Profiles:
-#   default  — postgres / redis / seaweedfs / server / caddy
-#   metrics  — adds prometheus (scrape /metrics). Grafana was removed
-#              (AGPLv3); point your own dashboard tool at :9090 if
-#              you need visualisation.
+# No external observability stack. The performance tab in the GAPT
+# UI reads the server's internal MetricsRegistry directly (Phase E.2)
+# — no Prometheus container required. Prometheus + Grafana were
+# removed (AGPLv3 posture on Grafana; Prometheus had no consumer
+# after Grafana left).
 #
-# Bring up: `docker compose -f docker-compose.prod.yml --profile metrics up -d`
+# Bring up: `docker compose -f docker-compose.prod.yml up -d`
 
 name: gapt-prod
 
@@ -149,17 +149,6 @@ services:
       - "443:443"
     # No admin port published — only the gapt-prod network reaches :2019.
 
-  prometheus:
-    profiles: ["metrics"]
-    image: prom/prometheus:v2.55.0
-    restart: unless-stopped
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    # No host port. Point an external dashboard tool at the gapt-prod
-    # network's `prometheus:9090` (Grafana was removed for AGPLv3
-    # licensing reasons; bring your own viz).
-
 volumes:
   postgres-data:
   redis-data:
@@ -167,7 +156,6 @@ volumes:
   caddy-data:
   caddy-config:
   vault-data:
-  prometheus-data:
 
 networks:
   default:

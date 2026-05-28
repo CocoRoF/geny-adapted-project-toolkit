@@ -209,7 +209,7 @@ class SessionMetricsDto(BaseModel):
     has cost $X / used N tokens" without a second round-trip.
 
     Always omitted (set on `SampleDto.session_metrics = None`) for
-    infrastructure containers (caddy / postgres / prometheus) since
+    infrastructure containers (caddy / postgres / redis / …) since
     they don't host agent sessions."""
 
     cost_usd_total: float

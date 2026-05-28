@@ -1,15 +1,15 @@
-"""In-process metrics + Prometheus exposition.
+"""In-process metrics registry.
 
-Rather than pulling in `prometheus_client` (which would bring a global
-default registry and process-wide collectors we don't need), we keep a
-tiny in-process registry and render the standard text exposition
-format ourselves. The format spec is short enough that re-implementing
-it sidesteps a dependency with its own metaclass machinery.
+A tiny `Counter` / `Gauge` registry that lives inside the server's
+process memory. Consumed *directly* by the performance tab (the
+backend reads counter samples and merges them into the SSE payload
+the dashboard renders).
 
-The OTel SDK is already a server dependency — operators who want OTLP
-push can enable `opentelemetry-instrumentation-fastapi` via env. This
-module just covers the *pull* side (/metrics) which is what self-host
-operators run first.
+No external scrape surface — the Prometheus exposition endpoint
+and the Prometheus / Grafana containers were removed; the registry
+is purely an internal data structure now. If you ever need to
+re-introduce external scraping, the `samples()` method on each
+metric returns label-tuple → value pairs ready to format.
 """
 
 from gapt_server.observability.metrics import (
@@ -19,13 +19,11 @@ from gapt_server.observability.metrics import (
     get_registry,
     reset_registry,
 )
-from gapt_server.observability.render import render_prometheus
 
 __all__ = [
     "Counter",
     "Gauge",
     "MetricsRegistry",
     "get_registry",
-    "render_prometheus",
     "reset_registry",
 ]

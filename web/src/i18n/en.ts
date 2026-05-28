@@ -107,8 +107,8 @@ export const en = {
   "workspaces.last_activity": "Last activity",
 
   // --- nav / shell ---
-  "nav.back_to_projects": "← Projects",
-  "nav.back_to_project": "← Project",
+  "nav.back_to_projects": "Projects",
+  "nav.back_to_project": "Project",
   "nav.projects": "Projects",
   "nav.cost": "Cost",
   "nav.performance": "Performance",

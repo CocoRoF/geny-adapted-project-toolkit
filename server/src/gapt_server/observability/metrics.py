@@ -1,13 +1,17 @@
-"""Minimal in-process Prometheus-style metrics.
+"""Minimal in-process metrics registry.
 
-Two metric kinds are enough for M1:
+Two metric kinds are enough today:
 
 - `Counter` — monotonic; `inc(value, labels=...)`. Cannot decrease.
 - `Gauge` — `set(value, labels=...)`. Can be replaced by an async
-  collector (`set_collector(callable)`) that polls on /metrics request.
+  collector (`set_collector(callable)`) that the registry refreshes
+  on `refresh_collectors()` (the performance tab calls this before
+  reading samples).
 
 Both keep one value per label tuple. Label values are stringified at
-registration so we never store unbounded payloads.
+registration so we never store unbounded payloads. No external
+scrape surface — the registry is consumed directly by the
+performance dashboard via `samples()`.
 """
 
 from __future__ import annotations
@@ -81,8 +85,9 @@ CollectorCallable = Callable[[], Awaitable[Mapping[tuple[str, ...], float]]]
 
 class Gauge(_Series):
     """Settable value. Optionally driven by an async collector that
-    runs at /metrics render time — the collector returns a fresh
-    `{label_tuple: value}` snapshot and the gauge swaps its map."""
+    `refresh_collectors()` invokes before the performance tab reads
+    samples — the collector returns a fresh `{label_tuple: value}`
+    snapshot and the gauge swaps its map."""
 
     kind: MetricKind = "gauge"
 

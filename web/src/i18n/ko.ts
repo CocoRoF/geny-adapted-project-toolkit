@@ -106,8 +106,8 @@ export const ko: Record<keyof typeof en, string> = {
   "workspaces.last_activity": "마지막 활동",
 
   // --- nav / shell ---
-  "nav.back_to_projects": "← 프로젝트로",
-  "nav.back_to_project": "← 프로젝트",
+  "nav.back_to_projects": "프로젝트로",
+  "nav.back_to_project": "프로젝트",
   "nav.projects": "프로젝트",
   "nav.cost": "비용",
   "nav.performance": "성능",

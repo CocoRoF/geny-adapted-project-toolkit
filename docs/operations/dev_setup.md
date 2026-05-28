@@ -30,8 +30,7 @@ systemctl --user enable --now gapt-server   # 1회 설치 후 (아래 §4)
 │   ├── postgres        :35432  (control plane DB)
 │   ├── redis           :36379
 │   ├── seaweedfs       :38333 (S3) / :38888 (filer)
-│   ├── caddy           :38080 (HTTP edge) / :32019 (admin)
-│   └── prometheus      :39090 (optional `metrics` profile)
+│   └── caddy           :38080 (HTTP edge) / :32019 (admin)
 ├── 호스트에서 직접 도는 것 (dev mode)
 │   ├── uvicorn         :38001 (FastAPI 서버, hot-reload)
 │   └── vite dev        :35173 (Web IDE SPA)
@@ -61,25 +60,12 @@ docker compose -p gapt-dev ps
 curl -s http://127.0.0.1:32019/config/apps/http/servers | jq 'keys'  # caddy admin
 ```
 
-### 2.1 Prometheus (옵션 — 외부 viz 붙일 때만)
+### 2.1 옵저빌리티 — 내장만
 
-Phase E.3 부터 dev compose 의 `prometheus` 는 `profiles: ["metrics"]`
-뒤로 옮겨져 기본 부팅에 포함되지 않습니다. 서버의 `/metrics` 엔드포인트는
-항상 살아있어서 (`curl http://127.0.0.1:38001/metrics`) 외부 scrape
-도구를 직접 붙여도 됩니다.
-
-성능 탭은 Prometheus 컨테이너에 의존하지 않습니다 — 서버 내부의
-`MetricsRegistry` 를 직접 읽기 때문에 prometheus 가 안 떠 있어도
-agent 비용/토큰이 그대로 표시됩니다.
-
-내부에서 PromQL 쿼리가 필요할 때만:
-```bash
-docker compose -p gapt-dev -f compose/docker-compose.dev.yml \
-    --profile metrics up -d prometheus
-# 끄려면
-docker compose -p gapt-dev -f compose/docker-compose.dev.yml \
-    stop prometheus
-```
+외부 Prometheus / Grafana 스택은 제거됐습니다 (Grafana AGPLv3,
+Prometheus 는 소비자 없음). 성능 탭이 서버 내부의
+`MetricsRegistry` 를 직접 읽어 컨테이너 카드에 agent 비용/토큰을
+표시하므로 별도 viz 가 필요 없습니다.
 
 ---
 

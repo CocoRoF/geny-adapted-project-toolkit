@@ -13,8 +13,15 @@
 > 3. **GPU sampling is one-shot**, not live — performance tab does
 >    a single `nvidia-smi` fetch, not part of the SSE stream.
 
-The three cycles below close all three gaps without expanding scope
-beyond v1's single-admin model.
+Resolution:
+- **E.1** wires GPU policy through the `docker run` argv so the
+  agent inside the workspace actually sees CUDA.
+- **E.2** makes the performance tab the *internal consumer* of
+  `MetricsRegistry` (replaces the Prometheus → Grafana data path)
+  and folds live GPU samples into the SSE stream.
+- **E.3** removes the Prometheus container + `/metrics` HTTP
+  endpoint entirely. `MetricsRegistry` stays as a pure internal
+  data structure the performance tab reads.
 
 ---
 
@@ -98,30 +105,39 @@ orphaned.
 
 ---
 
-## E.3 — Prometheus profile-gate
+## E.3 — Prometheus 인프라 완전 제거
 
-Today: dev compose runs Prometheus always-on at port 39090. The
-metrics profile in prod gates it correctly already.
+Initial plan: keep Prometheus as an opt-in `metrics` profile +
+preserve the server's `/metrics` endpoint for external scrapers.
 
-After E.2, the **internal consumer** of metric values is the
-performance tab reading the registry directly. Prometheus stays as
-an **external** integration point (curl/promtool/your own viz).
+**Revised (operator decision, 2026-05-28)**: after Grafana was
+removed and the performance tab became the *internal* consumer
+(E.2), no part of the system reads `/metrics`. Keeping the endpoint
++ Prometheus image as "future external integration" is speculative
+maintenance; we cut it.
 
-### Design
+### Actual changes
 
-- Move dev Prometheus behind `profiles: ["metrics"]` (matches prod).
-- Default dev boot no longer includes Prometheus.
-- `/metrics` endpoint on the server stays — costs nothing to expose
-  and is the standard for external scrapers.
-- Document in `dev_setup.md`: how to bring up Prometheus when needed.
+- Removed `prometheus` service from both `docker-compose.{dev,prod}`
+- Removed `compose/prometheus/` (scrape config).
+- Removed `routers/metrics.py` (`/metrics` HTTP endpoint).
+- Removed `observability/render.py` (Prometheus text exposition).
+- Kept `observability/metrics.py` (`MetricsRegistry`, `Counter`,
+  `Gauge`) — performance tab depends on it directly. The registry
+  is now a pure internal data structure.
+- Rewrote `tests/observability/test_metrics.py` to verify the
+  registry contract via `samples()` instead of rendered output.
+  7/7 still passing.
+- Stopped + removed the orphan `gapt-dev-prometheus-1` container
+  and `gapt-dev_prometheus-data` volume on the host.
 
 ### DoD
 
-- [ ] `docker compose -f docker-compose.dev.yml up -d` (no profile)
-      does NOT start Prometheus.
-- [ ] `docker compose -f docker-compose.dev.yml --profile metrics
-      up -d prometheus` DOES start it.
-- [ ] `curl localhost:38001/metrics` still works regardless.
+- [x] `docker compose -f docker-compose.dev.yml config --services`
+      does NOT list prometheus.
+- [x] `curl http://127.0.0.1:38001/metrics` returns 404.
+- [x] Performance tab still shows per-container agent cost/token
+      totals (E.2 path — registry-direct).
 
 ---
 

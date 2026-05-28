@@ -1,9 +1,10 @@
 """GAPT-specific metric definitions + live collectors.
 
 `register_default_metrics(container)` is called from app startup so
-that /metrics has something to render even before traffic. The live
-gauges (`gapt_sessions_active`, `gapt_sandbox_count`) install async
-collectors that query the DB on each scrape.
+the registry has something for the performance tab to read even
+before traffic generates counter increments. The live gauges
+(`gapt_sessions_active`, `gapt_sandbox_count`) install async
+collectors that query the DB on each `refresh_collectors()` call.
 """
 
 from __future__ import annotations

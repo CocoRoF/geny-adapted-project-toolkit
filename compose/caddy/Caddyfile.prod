@@ -46,14 +46,8 @@
         reverse_proxy server:8088
     }
 
-    handle /metrics {
-        # /metrics is internal-only. Bind your scraper inside the
-        # gapt-prod network instead. Block it at the edge.
-        respond 403
-    }
-
-    # /health stays at apex root — Prometheus / k8s liveness probes
-    # / uptime monitors all expect it unprefixed.
+    # /health stays at apex root — k8s liveness probes / uptime
+    # monitors expect it unprefixed.
     handle /health {
         reverse_proxy server:8088
     }

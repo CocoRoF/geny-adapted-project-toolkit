@@ -4,9 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { useI18n } from "@/app/providers/i18n-context";
 import { usePaletteAction } from "@/app/usePaletteAction";
 import { ChatPanel } from "@/chat/ChatPanel";
-import { FileEditor } from "@/ide/Editor";
 import { ActivityBar, type SideView } from "@/ide/shell/ActivityBar";
 import { BottomPanel, type BottomTab } from "@/ide/shell/BottomPanel";
+import { EditorArea } from "@/ide/shell/EditorArea";
 import { SidePanel } from "@/ide/shell/SidePanel";
 import { SplitHandle } from "@/ide/shell/SplitHandle";
 import { StatusBar } from "@/ide/shell/StatusBar";
@@ -18,6 +18,18 @@ interface Props {
   workspaceStatus: string;
 }
 
+/** Phase F — what the editor column is showing right now.
+ *
+ * - `file` : Monaco editor on the workspace file at `path`.
+ * - `diff` : Single-file diff view (working tree vs HEAD) for `path`.
+ *
+ * `null` (in the parent state) means the column is empty — the
+ * column either renders a tiny "open something" hint or stays
+ * hidden entirely (controlled by `LayoutState.editorOpen`). */
+export type EditorView =
+  | { kind: "file"; path: string }
+  | { kind: "diff"; path: string };
+
 const STORAGE_KEY_PREFIX = "gapt.ide.shell";
 
 interface LayoutState {
@@ -27,6 +39,11 @@ interface LayoutState {
   bottomHeight: number;
   chatOpen: boolean;
   chatWidth: number;
+  /** Phase F — Editor column visible? When false, the editor area
+   *  hides entirely and the Chat panel grows to fill the freed
+   *  space (or SidePanel + Chat split if Chat is also closed).
+   *  Auto-opens when a file or diff is selected. */
+  editorOpen: boolean;
 }
 
 const DEFAULT_LAYOUT: LayoutState = {
@@ -35,7 +52,8 @@ const DEFAULT_LAYOUT: LayoutState = {
   bottomTab: null,
   bottomHeight: 240,
   chatOpen: true,
-  chatWidth: 380,
+  chatWidth: 480,
+  editorOpen: true,
 };
 
 /** Phase D.5 — Named layout presets selectable from the palette
@@ -52,7 +70,8 @@ const LAYOUT_PRESETS: Record<string, LayoutState> = {
     bottomTab: null,
     bottomHeight: 240,
     chatOpen: true,
-    chatWidth: 560,
+    chatWidth: 720,
+    editorOpen: false,
   },
   debug: {
     sideView: "files",
@@ -60,7 +79,8 @@ const LAYOUT_PRESETS: Record<string, LayoutState> = {
     bottomTab: "terminal",
     bottomHeight: 280,
     chatOpen: true,
-    chatWidth: 360,
+    chatWidth: 420,
+    editorOpen: true,
   },
   minimal: {
     sideView: null,
@@ -69,6 +89,7 @@ const LAYOUT_PRESETS: Record<string, LayoutState> = {
     bottomHeight: 240,
     chatOpen: false,
     chatWidth: 380,
+    editorOpen: true,
   },
 };
 
@@ -104,7 +125,25 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
   const navigate = useNavigate();
   const { t } = useI18n();
   const [layout, setLayout] = useState<LayoutState>(() => readStored(workspaceId));
-  const [openFile, setOpenFile] = useState<string | null>(null);
+  // Phase F — Editor area content. `null` means the area is empty
+  // (placeholder shown when the column is open + auto-collapsed
+  // when paired with `editorOpen=false`). Switching between file
+  // edit and diff is just changing the union tag — same column,
+  // different renderer.
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+
+  const openFileInEditor = useCallback((path: string) => {
+    setEditorView({ kind: "file", path });
+    setLayout((s) => (s.editorOpen ? s : { ...s, editorOpen: true }));
+  }, []);
+  const openDiffInEditor = useCallback((path: string) => {
+    setEditorView({ kind: "diff", path });
+    setLayout((s) => (s.editorOpen ? s : { ...s, editorOpen: true }));
+  }, []);
+  const closeEditor = useCallback(() => {
+    setEditorView(null);
+    setLayout((s) => ({ ...s, editorOpen: false }));
+  }, []);
 
   // Phase D.5 — palette-driven layout presets. One usePaletteAction
   // per preset (the cmdk fuzzy filter handles ranking).
@@ -160,6 +199,9 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
   }, []);
   const setChatWidth = useCallback((n: number) => {
     setLayout((s) => ({ ...s, chatWidth: n }));
+  }, []);
+  const setEditorOpen = useCallback((v: boolean) => {
+    setLayout((s) => ({ ...s, editorOpen: v }));
   }, []);
 
   // Keyboard shortcuts — VSCode-ish parity where reasonable.
@@ -233,7 +275,8 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
               <SidePanel
                 view={layout.sideView}
                 workspaceId={workspaceId}
-                onOpenFile={(p) => setOpenFile(p)}
+                onOpenFile={openFileInEditor}
+                onOpenDiff={openDiffInEditor}
               />
             </div>
             <SplitHandle
@@ -246,35 +289,45 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
           </>
         ) : null}
 
-        {/* Editor column — fills the remaining width */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-hidden bg-bg">
-            <FileEditor workspaceId={workspaceId} openPath={openFile} />
-          </div>
-          {layout.bottomTab !== null ? (
-            <>
-              <SplitHandle
-                axis="vertical"
-                value={layout.bottomHeight}
-                onChange={setBottomHeight}
-                min={120}
-                max={600}
-                invert
-              />
-              <div
-                className="shrink-0 overflow-hidden"
-                style={{ height: `${layout.bottomHeight}px` }}
-              >
-                <BottomPanel
-                  tab={layout.bottomTab}
-                  onTab={setBottomTab}
-                  onClose={() => setBottomTab(null)}
-                  workspaceId={workspaceId}
+        {/* Editor column — fills the remaining width when open. When
+            closed (operator clicked X on the editor header) the
+            column disappears and the Chat panel grows to take the
+            freed space. The bottom panel (terminal) lives inside
+            this column, so closing the editor also closes the
+            terminal — pick "Open editor" or hit Ctrl+\ to bring it
+            back. */}
+        {layout.editorOpen ? (
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <EditorArea
+              workspaceId={workspaceId}
+              view={editorView}
+              onClose={closeEditor}
+            />
+            {layout.bottomTab !== null ? (
+              <>
+                <SplitHandle
+                  axis="vertical"
+                  value={layout.bottomHeight}
+                  onChange={setBottomHeight}
+                  min={120}
+                  max={600}
+                  invert
                 />
-              </div>
-            </>
-          ) : null}
-        </div>
+                <div
+                  className="shrink-0 overflow-hidden"
+                  style={{ height: `${layout.bottomHeight}px` }}
+                >
+                  <BottomPanel
+                    tab={layout.bottomTab}
+                    onTab={setBottomTab}
+                    onClose={() => setBottomTab(null)}
+                    workspaceId={workspaceId}
+                  />
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
 
         {layout.chatOpen ? (
           <>
@@ -282,13 +335,21 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
               axis="horizontal"
               value={layout.chatWidth}
               onChange={setChatWidth}
+              // Chat can grow much wider now that the editor column
+              // collapses. Lower bound stays ~280 for usable input.
               min={280}
-              max={640}
+              max={1400}
               invert
             />
             <div
-              className="h-full shrink-0 overflow-hidden border-l border-border bg-bg-elevated"
-              style={{ width: `${layout.chatWidth}px` }}
+              className={
+                layout.editorOpen
+                  ? "h-full shrink-0 overflow-hidden border-l border-border bg-bg-elevated"
+                  : // Editor hidden → chat grows to fill the row instead
+                    // of being pinned to a fixed pixel width.
+                    "h-full min-w-0 flex-1 overflow-hidden border-l border-border bg-bg-elevated"
+              }
+              style={layout.editorOpen ? { width: `${layout.chatWidth}px` } : undefined}
             >
               <ChatPanel projectId={projectId} workspaceId={workspaceId} />
             </div>
@@ -299,8 +360,10 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
       <StatusBar
         branch={branch}
         workspaceStatus={workspaceStatus}
-        openFile={openFile}
+        openFile={editorView?.kind === "file" ? editorView.path : null}
         onToggleTerminal={onToggleTerminal}
+        editorOpen={layout.editorOpen}
+        onOpenEditor={() => setEditorOpen(true)}
       />
     </div>
   );
