@@ -10,6 +10,9 @@ interface Props {
   view: SideView;
   workspaceId: string;
   onOpenFile: (path: string) => void;
+  /** Phase F — Source Control's per-file row routes its click into
+   *  the editor column's diff view (VSCode parity). */
+  onOpenDiff: (path: string) => void;
 }
 
 const TITLES: Record<SideView, string> = {
@@ -22,7 +25,7 @@ const TITLES: Record<SideView, string> = {
 
 /** The toggleable left panel. Title strip on top, view body fills
  * the rest. Width is controlled by the parent shell. */
-export function SidePanel({ view, workspaceId, onOpenFile }: Props) {
+export function SidePanel({ view, workspaceId, onOpenFile, onOpenDiff }: Props) {
   return (
     <aside
       data-view={view}
@@ -37,7 +40,7 @@ export function SidePanel({ view, workspaceId, onOpenFile }: Props) {
         ) : view === "search" ? (
           <SearchPlaceholder />
         ) : view === "git" ? (
-          <GitPanel workspaceId={workspaceId} />
+          <GitPanel workspaceId={workspaceId} onOpenDiff={onOpenDiff} />
         ) : view === "tests" ? (
           <TestRunnerPanel workspaceId={workspaceId} />
         ) : view === "env" ? (

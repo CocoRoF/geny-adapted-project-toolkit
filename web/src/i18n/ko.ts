@@ -368,6 +368,12 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.editor.dirty": "● 저장 안 됨",
   "ide.editor.saving": "저장 중…",
   "ide.editor.saved": "저장됨",
+  "ide.editor.area.no_selection": "선택된 파일 없음",
+  "ide.editor.area.close": "에디터 닫기 (Chat이 공간 차지)",
+  "ide.editor.area.empty_hint": "탐색기에서 파일을 선택하거나, 소스 컨트롤에서 변경된 파일을 클릭하세요. ×로 이 컬럼을 닫으면 Chat이 전체 너비를 차지합니다.",
+  "ide.file_diff.loading": "diff 불러오는 중…",
+  "ide.file_diff.no_changes": "이 경로에 변경 사항 없음.",
+  "ide.file_diff.refresh": "diff 다시 가져오기",
 
   // --- diff panel ---
   "ide.diff.title": "워킹트리 vs HEAD",

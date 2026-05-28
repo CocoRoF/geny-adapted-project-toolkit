@@ -234,9 +234,6 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
       } else if (code === "KeyA") {
         e.preventDefault();
         setChatOpen(!layout.chatOpen);
-      } else if (code === "KeyD") {
-        e.preventDefault();
-        setBottomTab(layout.bottomTab === "diff" ? null : "diff");
       }
     };
     window.addEventListener("keydown", handler);

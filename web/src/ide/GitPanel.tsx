@@ -36,7 +36,6 @@ import {
   type GitSyncResponse,
   createPr,
   getGitBranches,
-  getGitDiff,
   getGitLog,
   getGitStashList,
   getGitStatus,
@@ -59,6 +58,9 @@ import { cn } from "@/ui/cn";
 
 interface Props {
   workspaceId: string;
+  /** Phase F — clicking a changed-file row hands the diff off to the
+   *  editor column instead of rendering it inside this sidebar. */
+  onOpenDiff: (path: string) => void;
 }
 
 type FlashKind = "info" | "error" | "warn";
@@ -92,7 +94,7 @@ type BusyOp =
  *
  * All endpoints are scoped to one workspace_id; `.gapt/` is filtered
  * server-side so runtime log files never clutter the changes list. */
-export function GitPanel({ workspaceId }: Props) {
+export function GitPanel({ workspaceId, onOpenDiff }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
   const [branchesResp, setBranchesResp] = useState<GitBranchesResponse | null>(null);
@@ -104,7 +106,6 @@ export function GitPanel({ workspaceId }: Props) {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<BusyOp>(null);
-  const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<{
     stash: boolean;
@@ -166,17 +167,15 @@ export function GitPanel({ workspaceId }: Props) {
   };
 
   // ── diff ───────────────────────────────────────────
+  // Phase F — click hands the path to the editor column. The
+  // panel keeps `activePath` only as a visual highlight; the
+  // actual diff is rendered by `FileDiffView` inside `EditorArea`.
   const onDiff = useCallback(
-    async (path: string) => {
+    (path: string) => {
       setActivePath(path);
-      try {
-        const d = await getGitDiff(workspaceId, path);
-        setDiff({ path, text: d.diff || t("git.diff.empty") });
-      } catch (e) {
-        setFlash({ kind: "error", text: errText(e) });
-      }
+      onOpenDiff(path);
     },
-    [workspaceId, t],
+    [onOpenDiff],
   );
 
   // ── discard ────────────────────────────────────────
@@ -199,7 +198,6 @@ export function GitPanel({ workspaceId }: Props) {
         );
         if (activePath === path) {
           setActivePath(null);
-          setDiff(null);
         }
         await refresh();
       } catch (e) {
@@ -453,16 +451,7 @@ export function GitPanel({ workspaceId }: Props) {
 
   return (
     <div
-      className={cn(
-        "grid h-full",
-        // Collapse to single column when no diff is open — without
-        // this the right pane sits empty as a strip with just a
-        // "click a file to see diff" placeholder, eating the panel's
-        // horizontal real estate AND mis-positioning the IdeShell's
-        // splitter bar (the splitter measures from the panel's right
-        // edge, so an unused diff strip throws it off).
-        diff ? "grid-cols-[minmax(320px,400px)_1fr]" : "grid-cols-1",
-      )}
+      className="grid h-full grid-cols-1"
     >
       <aside className="flex h-full flex-col overflow-hidden border-r border-border bg-bg-elevated">
         {/* ── Header (branch · upstream · sync state all on ONE row;
@@ -871,29 +860,6 @@ export function GitPanel({ workspaceId }: Props) {
         </section>
 
       </aside>
-
-      {/* ── Right pane: diff — only mounted when a file is selected ── */}
-      {diff ? (
-        <main className="flex h-full flex-col overflow-hidden bg-bg">
-          <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
-            <span className="font-mono text-[12px] text-fg">{diff.path}</span>
-            <button
-              type="button"
-              className="ml-auto text-fg-subtle hover:text-fg"
-              onClick={() => {
-                setDiff(null);
-                setActivePath(null);
-              }}
-              title={t("git.diff.close")}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </header>
-          <div className="flex-1 overflow-auto bg-bg">
-            <ColoredDiff text={diff.text} />
-          </div>
-        </main>
-      ) : null}
     </div>
   );
 }
@@ -1289,32 +1255,6 @@ function FileRow({
         {shortStatus(entry.status)}
       </span>
     </li>
-  );
-}
-
-function ColoredDiff({ text }: { text: string }) {
-  return (
-    <pre className="whitespace-pre px-3 py-2 font-mono text-[11.5px] leading-relaxed">
-      {text.split("\n").map((line, i) => {
-        let className = "block text-fg-muted";
-        if (line.startsWith("+++") || line.startsWith("---")) {
-          className = "block font-semibold text-fg";
-        } else if (line.startsWith("@@")) {
-          className = "block text-accent";
-        } else if (line.startsWith("+")) {
-          className = "block bg-success/10 text-success";
-        } else if (line.startsWith("-")) {
-          className = "block bg-danger/10 text-danger";
-        } else if (line.startsWith("diff --git")) {
-          className = "block font-semibold text-fg";
-        }
-        return (
-          <span key={i} className={className}>
-            {line || " "}
-          </span>
-        );
-      })}
-    </pre>
   );
 }
 

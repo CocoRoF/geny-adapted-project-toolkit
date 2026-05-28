@@ -369,6 +369,12 @@ export const en = {
   "ide.editor.dirty": "● Unsaved",
   "ide.editor.saving": "Saving…",
   "ide.editor.saved": "Saved",
+  "ide.editor.area.no_selection": "No file selected",
+  "ide.editor.area.close": "Close editor (chat fills the space)",
+  "ide.editor.area.empty_hint": "Pick a file from the Explorer or a changed file from Source Control. Close this column with × to give Chat the full width.",
+  "ide.file_diff.loading": "Loading diff…",
+  "ide.file_diff.no_changes": "No changes for this path.",
+  "ide.file_diff.refresh": "Re-fetch diff",
 
   // --- diff panel ---
   "ide.diff.title": "Working tree vs HEAD",

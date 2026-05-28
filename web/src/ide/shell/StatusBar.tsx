@@ -1,4 +1,4 @@
-import { GitBranch, Server, TerminalSquare } from "lucide-react";
+import { FileText, GitBranch, Server, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/ui/cn";
 
@@ -7,6 +7,11 @@ interface Props {
   workspaceStatus: string;
   openFile: string | null;
   onToggleTerminal: () => void;
+  /** Phase F — when false, the editor column is collapsed. Status
+   *  bar shows an "Open editor" pill so the operator can bring it
+   *  back without hunting through the activity bar. */
+  editorOpen: boolean;
+  onOpenEditor: () => void;
 }
 
 /** Bottom strip — VSCode-style status bar. Single 22px row. Left side
@@ -17,6 +22,8 @@ export function StatusBar({
   workspaceStatus,
   openFile,
   onToggleTerminal,
+  editorOpen,
+  onOpenEditor,
 }: Props) {
   const isRunning = workspaceStatus === "running";
   return (
@@ -43,11 +50,25 @@ export function StatusBar({
           {openFile}
         </span>
       ) : null}
+      {!editorOpen ? (
+        <button
+          type="button"
+          onClick={onOpenEditor}
+          title="Open the editor column"
+          className="ml-auto inline-flex items-center gap-1 rounded px-1.5 hover:bg-surface-hover hover:text-fg"
+        >
+          <FileText className="h-3 w-3" strokeWidth={1.5} />
+          Open editor
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={onToggleTerminal}
         title="Toggle Terminal (Ctrl+`)"
-        className="ml-auto inline-flex items-center gap-1 rounded px-1.5 hover:bg-surface-hover hover:text-fg"
+        className={cn(
+          editorOpen ? "ml-auto" : "",
+          "inline-flex items-center gap-1 rounded px-1.5 hover:bg-surface-hover hover:text-fg",
+        )}
       >
         <TerminalSquare className="h-3 w-3" strokeWidth={1.5} />
         Terminal
