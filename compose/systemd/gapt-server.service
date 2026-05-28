@@ -1,0 +1,86 @@
+# GAPT server — systemd user unit template.
+#
+# Use this when running GAPT directly on a host (no docker compose
+# wrapping the server itself, just Caddy + Postgres in compose). The
+# benefit over `scripts/dev/server.sh` is auto-restart on crash and
+# lifecycle integration with the OS — `systemctl --user enable` makes
+# the server come up on login, `systemctl --user restart` cleanly
+# bounces it.
+#
+# Install:
+#   1. Copy this file (with %h replacing $HOME if your systemd is
+#      old; recent ones expand it automatically):
+#         cp compose/systemd/gapt-server.service \
+#            ~/.config/systemd/user/gapt-server.service
+#   2. Adjust the paths under [Service] if your repo isn't at
+#      $HOME/geny-workspace/geny-adapted-project-toolkit.
+#   3. Edit env vars under [Service] to match your setup.
+#   4. Enable + start:
+#         systemctl --user daemon-reload
+#         systemctl --user enable --now gapt-server
+#   5. Make user sessions start at boot (so the unit runs without
+#      anyone logging in):
+#         sudo loginctl enable-linger $USER
+#
+# Verify:
+#   systemctl --user status gapt-server
+#   journalctl --user -u gapt-server -f
+#
+# Notes:
+#   - This is a USER unit, not a system unit. Picks up the user's
+#     uv-installed Python, no root surface area.
+#   - `Type=exec` makes systemd wait for the process to start
+#     successfully before reporting the unit as active (vs Type=simple
+#     which marks active immediately on fork).
+#   - `Restart=always` + `RestartSec=3` recovers from crashes.
+
+[Unit]
+Description=GAPT control-plane server (uvicorn)
+After=network-online.target
+Wants=network-online.target
+# If you want the unit to wait until docker is up (because GAPT
+# server talks to Caddy/Postgres in compose), uncomment:
+#After=docker.service
+
+[Service]
+Type=exec
+WorkingDirectory=%h/geny-workspace/geny-adapted-project-toolkit/server
+
+Environment=GAPT_ENV=prod
+Environment=GAPT_LOG_FORMAT=console
+Environment=GAPT_POSTGRES_DSN=postgresql+psycopg://gapt:gapt_dev_only@localhost:5432/gapt
+Environment=GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019
+Environment=GAPT_CADDY_PREVIEW_DOMAIN=gapt.hrletsgo.me
+# Vault master key — generate once and KEEP CONSTANT. Rotating it
+# makes existing encrypted secrets unreadable. For production, set
+# this via an environment file (`EnvironmentFile=%h/.gapt.env`) and
+# chmod 600 the file rather than putting the key in this unit.
+#Environment=GAPT_VAULT_MASTER_KEY=replace-me
+
+ExecStart=/usr/bin/env uv run uvicorn gapt_server.app:app \
+    --host 0.0.0.0 --port 38001 \
+    --proxy-headers --forwarded-allow-ips=*
+
+Restart=always
+RestartSec=3
+# A 30 s grace before SIGKILL gives in-flight deploys / SSE streams
+# time to terminate cleanly. Bumping above 60 s starts to annoy
+# `systemctl restart` callers.
+TimeoutStopSec=30
+
+# Light hardening — no network namespaces (uvicorn binds 0.0.0.0)
+# but at least disable obvious risk surfaces.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+# Journal log integration — `journalctl --user -u gapt-server -f`
+# gives the same view as `tail -f /tmp/gapt-server.log` would with
+# the wrapper script.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gapt-server
+
+[Install]
+WantedBy=default.target

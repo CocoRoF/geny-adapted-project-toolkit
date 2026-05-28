@@ -24,15 +24,16 @@ the project_id is bogus.
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 — pydantic introspection
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import sqlalchemy as sa
 from sqlalchemy import select
 
-from gapt_server.agent.hooks import build_hook_runner
+from gapt_server.agent.hooks import ChatModeRef, build_hook_runner
 from gapt_server.agent.hooks.cost_hook import CostAccumulator
 from gapt_server.agent.session_manager import (
     ProjectAwareSessionManager,
@@ -119,6 +120,11 @@ class SessionResponse(BaseModel):
 
 class InvokeRequest(BaseModel):
     message: str = Field(min_length=1, max_length=64_000)
+    # Phase D.1 — Plan/Act mode. When "plan", the per-session policy
+    # hook short-circuits every mutating tool (gapt_edit/gapt_git/
+    # gapt_pr) to a block. Defaults to "act" so legacy clients keep
+    # the prior behaviour.
+    mode: Literal["plan", "act"] = "act"
 
 
 class InvokeResponse(BaseModel):
@@ -186,6 +192,10 @@ def _build_runtime_from_handle(
         sandbox = container.workspace_sandbox.get(
             handle.workspace_id, handle.worktree_path
         )
+    # Phase D.1 — shared Plan/Act mode reference. Plumbed into the
+    # policy hook AND the runtime so `invoke(mode=...)` can mutate it
+    # in place. Default is "act" — Plan mode is opt-in per invoke.
+    mode_ref = ChatModeRef(mode="act")
     runtime = SessionRuntime(
         session_id=handle.session_id,
         project_id=handle.project_id,
@@ -194,7 +204,32 @@ def _build_runtime_from_handle(
         pipeline=handle.pipeline,
         accumulator=placeholder_accumulator,
         sandbox=sandbox,
+        mode_ref=mode_ref,
     )
+
+    # Phase D.3 — persist every published event to `session_events`
+    # so a backend restart doesn't blank the chat. The persister
+    # runs outside the bus lock; failures are swallowed (we keep the
+    # live stream going). Skipped when there's no session factory
+    # (test paths that construct runtimes without a DB).
+    sf = container.session_factory
+    if sf is not None:
+        async def _persist_event(event: Any) -> None:
+            async with sf() as bg_db:
+                bg_db.add(
+                    models.SessionEvent(
+                        session_id=handle.session_id,
+                        seq=event.seq,
+                        kind=event.kind.value
+                        if hasattr(event.kind, "value")
+                        else str(event.kind),
+                        data=event.data or {},
+                        ts=event.ts,
+                    )
+                )
+                await bg_db.commit()
+
+        runtime.bus.persister = _persist_event
 
     _last = {"input": 0, "output": 0, "cost": 0.0}
     _reg = container.registry
@@ -231,6 +266,7 @@ def _build_runtime_from_handle(
         workspace_id=handle.workspace_id,
         session_id=handle.session_id,
         on_cost_update=_on_cost_update,
+        mode_ref=mode_ref,
     )
     runtime.accumulator = accumulator
     handle.pipeline.attach_runtime(hook_runner=hook_runner)
@@ -281,11 +317,26 @@ async def _runtime_or_rehydrate(
         policy_engine=policy_engine,
         audit_sink=audit_sink,
     )
+    # Phase D.3 — seed the in-memory bus seq from the persisted max
+    # so events published *after* rehydration don't collide with
+    # rows already in `session_events`. The chat client then asks
+    # `/messages?since=N` which falls through to the DB for the
+    # pre-restart history.
+    max_seq_row = (
+        await db.execute(
+            sa.select(sa.func.max(models.SessionEvent.seq)).where(
+                models.SessionEvent.session_id == session_id
+            )
+        )
+    ).scalar()
+    if max_seq_row is not None:
+        runtime.bus.seed_seq(int(max_seq_row))
     await registry.register(runtime)
     logger.info(
         "session.rehydrate.registered",
         session_id=session_id,
         project_id=handle.project_id,
+        seeded_seq=int(max_seq_row) if max_seq_row else 0,
     )
     return runtime
 
@@ -446,7 +497,7 @@ async def invoke_session(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     try:
-        await runtime.invoke(payload.message)
+        await runtime.invoke(payload.message, mode=payload.mode)
     except SessionAlreadyInvoking as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -534,8 +585,45 @@ async def replay_messages(
         await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    history = await runtime.bus.replay(since)
-    return [MessageReplayEntry(**e.to_dict()) for e in history]
+    # Phase D.3 — prefer the in-memory ring buffer when it covers
+    # the requested range, otherwise fall back to the durable
+    # `session_events` table. The in-memory bus is faster + carries
+    # the live tail; DB replay handles the "I just restarted the
+    # server, give me everything since seq 0" case.
+    in_memory = await runtime.bus.replay(since)
+    # Detect a gap between `since` and the oldest in-memory event.
+    # If the in-memory buffer was wiped (rehydrate) or trimmed past
+    # `since + 1`, we pull the missing prefix from DB and concat.
+    needs_db_fill = bool(in_memory) and in_memory[0].seq > since + 1
+    no_memory = not in_memory and (
+        runtime.bus._persisted_seq > since  # noqa: SLF001 — internal seed
+    )
+    if no_memory or needs_db_fill:
+        upper = in_memory[0].seq - 1 if in_memory else None
+        db_stmt = (
+            sa.select(models.SessionEvent)
+            .where(
+                models.SessionEvent.session_id == session_id,
+                models.SessionEvent.seq > since,
+            )
+            .order_by(models.SessionEvent.seq.asc())
+        )
+        if upper is not None:
+            db_stmt = db_stmt.where(models.SessionEvent.seq <= upper)
+        rows = (await db.execute(db_stmt)).scalars().all()
+        db_entries = [
+            MessageReplayEntry(
+                seq=r.seq,
+                kind=r.kind,
+                data=r.data or {},
+                ts=r.ts,
+            )
+            for r in rows
+        ]
+        return db_entries + [
+            MessageReplayEntry(**e.to_dict()) for e in in_memory
+        ]
+    return [MessageReplayEntry(**e.to_dict()) for e in in_memory]
 
 
 @by_id.post("/{session_id}/archive", response_model=SessionResponse)

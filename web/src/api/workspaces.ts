@@ -21,6 +21,10 @@ export interface CreateWorkspaceInput {
 export const listWorkspaces = (projectId: string): Promise<WorkspaceResponse[]> =>
   apiGet<WorkspaceResponse[]>(`/_gapt/api/projects/${projectId}/workspaces`);
 
+// Phase C.2.a — every non-archived workspace across every project.
+export const listAllActiveWorkspaces = (): Promise<WorkspaceResponse[]> =>
+  apiGet<WorkspaceResponse[]>(`/_gapt/api/workspaces`);
+
 export const createWorkspace = (
   projectId: string,
   input: CreateWorkspaceInput,
@@ -38,6 +42,15 @@ export const startWorkspace = (workspaceId: string): Promise<WorkspaceResponse> 
 
 export const deleteWorkspace = (workspaceId: string): Promise<void> =>
   apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}`);
+
+// Phase C.2.d — cap stats. `cap=null` means no cap configured.
+export interface WorkspaceStats {
+  active: number;
+  cap: number | null;
+}
+
+export const getWorkspaceStats = (): Promise<WorkspaceStats> =>
+  apiGet<WorkspaceStats>(`/_gapt/api/workspaces/stats`);
 
 /** Fetch the live git-clone log tail (plain text). The runner streams
  * `git clone --progress` stdout/stderr to a file in the worktree so

@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Bot, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, ExternalLink, Eye, EyeOff, FileText, KeyRound, RefreshCw, Settings as SettingsIcon, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, Bot, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, Cpu, ExternalLink, Eye, EyeOff, FileText, KeyRound, RefreshCw, Settings as SettingsIcon, Trash2, X, Zap } from "lucide-react";
 
 import { type AgentPrefs, getAgentPrefs, putAgentPrefs } from "@/api/agent_prefs";
 import { ApiError } from "@/api/client";
 import { diagnoseSubdomainMode } from "@/api/environments";
+import { type GpusResponse, getGpuInfo } from "@/api/performance";
 import {
   type CloudflareConfig,
   type CloudflareConfigResponse,
   type CloudflareVerifyResponse,
   type LocalInspectionResponse,
+  type MigrationDetailResponse,
+  type MigrationHistoryRow,
   type MigrationScriptResponse,
   type MigrationVerifyResponse,
   type RunCutoverResponse,
@@ -18,11 +21,14 @@ import {
   ensureCloudflareWildcard,
   getCloudflareConfig,
   getCloudflareTunnelSnapshot,
+  getMigrationDetail,
   getMigrationScript,
   getRevertScript,
   inspectLocalCloudflared,
+  listMigrationHistory,
   pushLocalToRemote,
   putCloudflareConfig,
+  revertMigration,
   runCutoverScript,
   verifyCloudflareConfig,
   verifyMigration,
@@ -173,6 +179,16 @@ export function Settings() {
           </h2>
         </div>
         <CloudflareProviderCard />
+      </section>
+
+      <section className="mb-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-[15px] font-semibold text-fg">
+            {t("settings.gpu.heading")}
+          </h2>
+        </div>
+        <WorkspaceGpuCard />
       </section>
 
       <section className="space-y-4">
@@ -725,12 +741,16 @@ function MigrationWizard({
   tunnelId,
   onTunnelDetected,
   onSnapshotChanged,
+  onMigrationRecorded,
 }: {
   configured: boolean;
   accountId: string | null;
   tunnelId: string | null;
   onTunnelDetected: (uuid: string) => void;
   onSnapshotChanged: (snapshot: TunnelSnapshotResponse) => void;
+  /** Fired whenever a provider_migrations row is created (dry-run
+   *  or live), so the history section below can refresh. */
+  onMigrationRecorded?: () => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -739,7 +759,7 @@ function MigrationWizard({
   const [pushedSnapshot, setPushedSnapshot] = useState<TunnelSnapshotResponse | null>(null);
   const [script, setScript] = useState<MigrationScriptResponse | null>(null);
   const [verifyResult, setVerifyResult] = useState<MigrationVerifyResponse | null>(null);
-  const [busy, setBusy] = useState<MigrationStep | "autorun" | null>(null);
+  const [busy, setBusy] = useState<MigrationStep | "autorun" | "dryrun" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Auto-run state — password + last run result. Password is kept
   // in component state only, cleared on success and never logged.
@@ -748,6 +768,25 @@ function MigrationWizard({
   const [autorunResult, setAutorunResult] = useState<RunCutoverResponse | null>(
     null,
   );
+  const [dryRunResult, setDryRunResult] = useState<RunCutoverResponse | null>(null);
+
+  const runDryRun = async () => {
+    setBusy("dryrun");
+    setErr(null);
+    setDryRunResult(null);
+    try {
+      const r = await runCutoverScript({
+        dry_run: true,
+        tunnel_id: tunnelId ?? inspect?.tunnel_uuid ?? undefined,
+      });
+      setDryRunResult(r);
+      if (r.migration_id) onMigrationRecorded?.();
+    } catch (e) {
+      setErr(describeApiError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const runAutorun = async () => {
     setBusy("autorun");
@@ -759,6 +798,7 @@ function MigrationWizard({
         tunnel_id: tunnelId ?? inspect?.tunnel_uuid ?? undefined,
       });
       setAutorunResult(r);
+      if (r.migration_id) onMigrationRecorded?.();
       if (r.ok) {
         // Wipe the password buffer the moment the command succeeds.
         setSudoPassword("");
@@ -1014,10 +1054,31 @@ function MigrationWizard({
                           ? "Running…"
                           : t("settings.providers.cloudflare.migration.cutover.autorun_button")}
                       </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={runDryRun}
+                        disabled={!!busy}
+                        type="button"
+                        title={t("settings.providers.cloudflare.migration.dryrun.hint")}
+                      >
+                        {busy === "dryrun"
+                          ? "Previewing…"
+                          : t("settings.providers.cloudflare.migration.dryrun.button")}
+                      </Button>
                     </div>
                     <p className="mt-1.5 text-[11px] text-fg-subtle">
                       {t("settings.providers.cloudflare.migration.cutover.password_disclosure")}
                     </p>
+                    {dryRunResult ? (
+                      <div className="mt-2 rounded border border-accent/40 bg-accent/5 px-2 py-1.5">
+                        <p className="mb-1 text-[11px] font-medium text-accent">
+                          {t("settings.providers.cloudflare.migration.dryrun.banner")}
+                        </p>
+                        <pre className="max-h-40 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10.5px] leading-snug text-fg">
+                          {dryRunResult.stdout}
+                        </pre>
+                      </div>
+                    ) : null}
                     {autorunResult ? (
                       <div
                         className={
@@ -1128,6 +1189,349 @@ function MigrationWizard({
   );
 }
 
+// ─────────────────────────────────────── Migration history ──
+//
+// Shows the `provider_migrations` audit table — past cutover
+// attempts on this GAPT install, with one-click revert when the
+// row isn't already rolled back. The Inspect button opens a
+// modal with the before/after JSON snapshots so the operator can
+// diff what changed.
+
+type RevertTarget = {
+  id: string;
+  kind: string;
+  startedAt: string;
+};
+
+function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
+  const { t } = useI18n();
+  const [rows, setRows] = useState<MigrationHistoryRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [detail, setDetail] = useState<MigrationDetailResponse | null>(null);
+  const [revertTarget, setRevertTarget] = useState<RevertTarget | null>(null);
+  const [revertPassword, setRevertPassword] = useState("");
+  const [showRevertPassword, setShowRevertPassword] = useState(false);
+  const [reverting, setReverting] = useState(false);
+  const [revertErr, setRevertErr] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await listMigrationHistory();
+      setRows(r);
+    } catch (e) {
+      setErr(describeApiError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload, refreshKey]);
+
+  const openDetail = async (id: string) => {
+    setErr(null);
+    try {
+      const r = await getMigrationDetail(id);
+      setDetail(r);
+    } catch (e) {
+      setErr(describeApiError(e));
+    }
+  };
+
+  const confirmRevert = async () => {
+    if (!revertTarget) return;
+    setReverting(true);
+    setRevertErr(null);
+    try {
+      const r = await revertMigration(revertTarget.id, {
+        sudo_password: revertPassword || undefined,
+      });
+      if (!r.ok) {
+        setRevertErr(r.message);
+        return;
+      }
+      // Success — wipe password, close dialog, refresh list.
+      setRevertPassword("");
+      setRevertTarget(null);
+      await reload();
+    } catch (e) {
+      setRevertErr(describeApiError(e));
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  const statusTone = (
+    s: string,
+  ): "success" | "warn" | "danger" | "neutral" => {
+    if (s === "ok") return "success";
+    if (s === "rolled_back") return "warn";
+    if (s === "failed") return "danger";
+    return "neutral";
+  };
+
+  const statusLabel = (s: string): string => {
+    switch (s) {
+      case "ok":
+        return t("settings.providers.cloudflare.migration.history.status.ok");
+      case "failed":
+        return t("settings.providers.cloudflare.migration.history.status.failed");
+      case "dry_run":
+        return t("settings.providers.cloudflare.migration.history.status.dry_run");
+      case "in_progress":
+        return t("settings.providers.cloudflare.migration.history.status.in_progress");
+      case "rolled_back":
+        return t("settings.providers.cloudflare.migration.history.status.rolled_back");
+      default:
+        return s;
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-border bg-bg-subtle">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <div className="flex-1">
+          <p className="text-[12px] font-medium text-fg">
+            {t("settings.providers.cloudflare.migration.history.title")}
+          </p>
+          <p className="mt-0.5 text-[11px] text-fg-muted">
+            {t("settings.providers.cloudflare.migration.history.hint")}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={reload}
+          disabled={loading}
+          title={t("settings.providers.cloudflare.migration.history.refresh")}
+        >
+          <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+        </Button>
+      </div>
+      <div className="px-3 py-2">
+        {err ? <p className="mb-2 text-[11px] text-danger">{err}</p> : null}
+        {rows === null && loading ? (
+          <p className="text-[11px] text-fg-subtle">Loading…</p>
+        ) : rows && rows.length === 0 ? (
+          <p className="text-[11px] text-fg-subtle">
+            {t("settings.providers.cloudflare.migration.history.empty")}
+          </p>
+        ) : rows ? (
+          <table className="w-full border-collapse text-[11px]">
+            <thead>
+              <tr className="border-b border-border text-left text-fg-muted">
+                <th className="py-1 pr-2 font-medium">
+                  {t("settings.providers.cloudflare.migration.history.col.when")}
+                </th>
+                <th className="py-1 pr-2 font-medium">
+                  {t("settings.providers.cloudflare.migration.history.col.kind")}
+                </th>
+                <th className="py-1 pr-2 font-medium">
+                  {t("settings.providers.cloudflare.migration.history.col.status")}
+                </th>
+                <th className="py-1 pr-2 font-medium text-right">
+                  {t("settings.providers.cloudflare.migration.history.col.actions")}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const reverted = r.rolled_back_at !== null || r.status === "rolled_back";
+                return (
+                  <tr key={r.id} className="border-b border-border/60 last:border-0">
+                    <td className="py-1 pr-2 text-fg-subtle">
+                      {formatRelative(r.started_at)}
+                    </td>
+                    <td className="py-1 pr-2 font-mono text-fg-muted">{r.kind}</td>
+                    <td className="py-1 pr-2">
+                      <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>
+                      {r.error ? (
+                        <span
+                          title={r.error}
+                          className="ml-1 inline-block max-w-[160px] truncate align-middle text-[10.5px] text-fg-subtle"
+                        >
+                          {r.error}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void openDetail(r.id)}
+                      >
+                        {t("settings.providers.cloudflare.migration.history.view")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={reverted || r.status === "in_progress"}
+                        onClick={() =>
+                          setRevertTarget({
+                            id: r.id,
+                            kind: r.kind,
+                            startedAt: r.started_at,
+                          })
+                        }
+                        title={
+                          reverted
+                            ? t("settings.providers.cloudflare.migration.history.already_reverted")
+                            : undefined
+                        }
+                      >
+                        {t("settings.providers.cloudflare.migration.history.revert")}
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : null}
+      </div>
+
+      {/* Detail modal */}
+      {detail ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDetail(null);
+          }}
+        >
+          <div className="max-h-[80vh] w-full max-w-3xl overflow-auto rounded-md border border-border bg-bg shadow-lg">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <p className="text-[12px] font-medium text-fg">
+                {t("settings.providers.cloudflare.migration.history.detail.title")}
+                <span className="ml-2 font-mono text-fg-subtle">{detail.id}</span>
+              </p>
+              <Button variant="ghost" size="icon" onClick={() => setDetail(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="space-y-3 px-3 py-3">
+              <div>
+                <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
+                  {t("settings.providers.cloudflare.migration.history.detail.before")}
+                </p>
+                <pre className="max-h-64 overflow-auto rounded border border-border bg-bg-subtle px-2 py-1.5 font-mono text-[10.5px] leading-snug text-fg">
+                  {JSON.stringify(detail.before_snapshot, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
+                  {t("settings.providers.cloudflare.migration.history.detail.after")}
+                </p>
+                <pre className="max-h-64 overflow-auto rounded border border-border bg-bg-subtle px-2 py-1.5 font-mono text-[10.5px] leading-snug text-fg">
+                  {JSON.stringify(detail.after_snapshot, null, 2)}
+                </pre>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="ghost" onClick={() => setDetail(null)}>
+                  {t("settings.providers.cloudflare.migration.history.detail.close")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Revert confirmation — needs sudo password since the revert
+          script runs the same systemctl/rm-drop-in commands as the
+          original cutover. */}
+      {revertTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !reverting) {
+              setRevertTarget(null);
+              setRevertPassword("");
+              setRevertErr(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-md border border-border bg-bg shadow-lg">
+            <div className="border-b border-border px-3 py-2">
+              <p className="text-[12px] font-medium text-fg">
+                {t("settings.providers.cloudflare.migration.history.revert.confirm_title")}
+              </p>
+              <p className="mt-0.5 font-mono text-[10.5px] text-fg-subtle">
+                {revertTarget.kind} · {formatRelative(revertTarget.startedAt)}
+              </p>
+            </div>
+            <div className="space-y-3 px-3 py-3">
+              <p className="text-[11.5px] leading-relaxed text-fg-muted">
+                {t("settings.providers.cloudflare.migration.history.revert.confirm_body")}
+              </p>
+              <Field
+                label={t("settings.providers.cloudflare.migration.history.revert.password_label")}
+              >
+                <div className="flex gap-2">
+                  <Input
+                    type={showRevertPassword ? "text" : "password"}
+                    value={revertPassword}
+                    onChange={(e) => setRevertPassword(e.target.value)}
+                    autoComplete="current-password"
+                    spellCheck={false}
+                    disabled={reverting}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !reverting) {
+                        e.preventDefault();
+                        void confirmRevert();
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    onClick={() => setShowRevertPassword((s) => !s)}
+                    title={showRevertPassword ? "Hide" : "Show"}
+                  >
+                    {showRevertPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </Field>
+              {revertErr ? (
+                <p className="text-[11px] text-danger">{revertErr}</p>
+              ) : null}
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setRevertTarget(null);
+                    setRevertPassword("");
+                    setRevertErr(null);
+                  }}
+                  disabled={reverting}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={confirmRevert} disabled={reverting} variant="primary">
+                  {reverting
+                    ? t("settings.providers.cloudflare.migration.history.reverting")
+                    : t("settings.providers.cloudflare.migration.history.revert.run")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CloudflareProviderCard() {
   const { t } = useI18n();
   const [resp, setResp] = useState<CloudflareConfigResponse | null>(null);
@@ -1138,6 +1542,9 @@ function CloudflareProviderCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Bump after MigrationWizard records a new audit row so the
+  // history table below re-fetches without manual refresh.
+  const [migrationTick, setMigrationTick] = useState(0);
 
   // Local edit buffer for non-secret config — diverges from `resp.config`
   // only between user edit and Save.
@@ -1647,7 +2054,10 @@ function CloudflareProviderCard() {
             setDraft((d) => (d.tunnel_id ? d : { ...d, tunnel_id: uuid }));
           }}
           onSnapshotChanged={(snap) => setSnapshot(snap)}
+          onMigrationRecorded={() => setMigrationTick((n) => n + 1)}
         />
+
+        <MigrationHistorySection refreshKey={migrationTick} />
       </CardContent>
       <ConfirmDialog
         open={confirmDelete}
@@ -1660,6 +2070,165 @@ function CloudflareProviderCard() {
         tone="danger"
         busy={busy === "delete"}
       />
+    </Card>
+  );
+}
+
+// ────────────────────────────────────────────── Workspace GPU card ──
+//
+// Phase E.1 — exposes the global Plan/Act-grade GPU policy for the
+// `gapt-ws-<wid>` containers. Read-only display: changing the
+// policy requires setting `GAPT_WORKSPACE_GPUS` and restarting the
+// server. Mirrors the pattern of `GAPT_MAX_ACTIVE_SANDBOXES` —
+// settings live in env vars, the UI reflects them.
+
+function WorkspaceGpuCard() {
+  const { t } = useI18n();
+  const [resp, setResp] = useState<GpusResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      setResp(await getGpuInfo());
+    } catch (e) {
+      setErr(describeApiError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Translate the applied policy into a tone the user can read at a
+  // glance. `null` = CPU-only — neutral. Anything else = a GPU is
+  // mapped, success.
+  const policyText = resp?.applied_policy ?? t("settings.gpu.policy.cpu_only");
+  const policyTone: "neutral" | "success" =
+    resp?.applied_policy ? "success" : "neutral";
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div className="flex-1">
+          <CardTitle className="flex items-center gap-2">
+            {t("settings.gpu.title")}
+            <Badge tone={policyTone}>{policyText}</Badge>
+          </CardTitle>
+          <CardDescription className="mt-1.5">
+            {t("settings.gpu.description")}
+          </CardDescription>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={refresh}
+          disabled={loading}
+          title={t("settings.gpu.refresh")}
+        >
+          <RefreshCw
+            className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"}
+          />
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {err ? (
+          <p
+            role="alert"
+            className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+          >
+            {err}
+          </p>
+        ) : null}
+
+        {resp ? (
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-md border border-border bg-bg-subtle px-3 py-2">
+                <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  {t("settings.gpu.applied.label")}
+                </p>
+                <p className="font-mono text-[12px] text-fg">
+                  {resp.applied_policy ?? t("settings.gpu.policy.cpu_only")}
+                </p>
+                <p className="mt-1 text-[11px] text-fg-muted">
+                  {resp.applied_policy
+                    ? t("settings.gpu.applied.hint_on")
+                    : t("settings.gpu.applied.hint_off")}
+                </p>
+              </div>
+              <div className="rounded-md border border-border bg-bg-subtle px-3 py-2">
+                <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  {t("settings.gpu.host.label")}
+                </p>
+                <p className="text-[12px] text-fg">
+                  {resp.available
+                    ? t("settings.gpu.host.count").replace(
+                        "{n}",
+                        String(resp.gpus.length),
+                      )
+                    : t("settings.gpu.host.absent")}
+                </p>
+              </div>
+            </div>
+
+            {resp.available && resp.gpus.length > 0 ? (
+              <ul className="space-y-1 rounded-md border border-border bg-bg-elevated px-3 py-2">
+                {resp.gpus.map((g) => (
+                  <li
+                    key={g.index}
+                    className="flex items-center justify-between gap-3 text-[11.5px]"
+                  >
+                    <span className="font-mono text-fg-muted">#{g.index}</span>
+                    <span className="flex-1 truncate text-fg">{g.name}</span>
+                    <span className="text-fg-subtle">
+                      {(g.memory_total_bytes / (1024 * 1024 * 1024)).toFixed(1)}{" "}
+                      GiB
+                    </span>
+                    <span className="text-fg-subtle">
+                      {t("settings.gpu.host.driver")}: {g.driver_version}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <div className="rounded-md border border-border bg-bg-subtle px-3 py-2">
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-subtle">
+                {t("settings.gpu.change.label")}
+              </p>
+              <p className="mb-2 text-[11.5px] text-fg-muted">
+                {t("settings.gpu.change.body")}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[11.5px]">
+                <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
+                  {resp.policy_env_var}=all
+                </code>
+                <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
+                  {resp.policy_env_var}=0
+                </code>
+                <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
+                  {resp.policy_env_var}=0,1
+                </code>
+                <code className="rounded bg-bg px-1.5 py-0.5 text-fg-muted">
+                  {t("settings.gpu.change.unset")}
+                </code>
+              </div>
+              <p className="mt-2 text-[11px] text-warn">
+                {t("settings.gpu.change.restart_hint")}
+              </p>
+            </div>
+          </>
+        ) : (
+          <p className="text-[12px] text-fg-subtle">
+            {t("settings.gpu.loading")}
+          </p>
+        )}
+      </CardContent>
     </Card>
   );
 }

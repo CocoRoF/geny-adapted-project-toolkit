@@ -1,256 +1,198 @@
-# M2~M5 윤곽 (Outline)
+# v1 범위 outline — M2 Phase B-Hardening / C / D
 
 > **상위**: [`00_master_plan.md`](00_master_plan.md)
-> **이유**: 예측 정확도가 낮은 미래 단계를 *현재 디테일하게 짜는 것은 낭비*. M1 종료 시 학습된 현실로 M2를 디테일화, M2 종료 시 M3 디테일화 — 그 시점에 본 파일은 M3+로 축소된다.
-
-각 단계의 *진입 조건 / 주제 / 작업 카테고리 / DoD / 비-목표 풀림 / 리스크*만 윤곽으로.
-
----
-
-## M2 — 멀티 프로젝트 + 워크트리 + UX 다듬기
-
-> **2026-05-25 재정렬**: 본 outline 의 E1~E6 보다 **먼저** Phase A
-> ([`m2_serve_capability.md`](m2_serve_capability.md)) 를 통과해야 한다.
-> 사용자가 IDE 안에서 클론한 프로젝트를 실제로 *띄울 수* 없으면
-> "멀티 프로젝트 운영" 자체가 무의미. Phase A 가 끝난 다음 본 outline 의
-> E1~E6 가 의미를 가진다. 그 시점에 E1~E6 는 다시 재디테일화 예정.
-
-### 진입 조건
-- M1-E4 완료 (Dogfood + Geny 어댑트 통과)
-- **M1.5 ([`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md)) 완료** —
-  1 cycle inner loop (파일 열기 → 편집 → 채팅 → 도구 → diff → apply → PR)
-  외부 IDE 없이 통과
-- **M2 Phase A ([`m2_serve_capability.md`](m2_serve_capability.md)) 완료** —
-  Terminal / Logs / Port exposure / Watch / Deploy UI / CI trigger
-  6 시나리오 사용자 측 통과
-- M1 retrospective (analysis/2026XXXX_m1_retrospective.md) 사용자 검토
-- *최소 1주일* 일상 사용 (사용자 본인 P1 페르소나)
-
-### 주제
-사용자가 *매일* 4개 사이드 프로젝트를 GAPT에서 운영하는 상태. 데스크탑 Cursor 의존도 50% 이하.
-
-### 작업 카테고리 (예상 epic 단위)
-1. **M2-E1: 멀티 프로젝트 동시 운영**
-   - 좌측 트리 다중 프로젝트, 빠른 전환 (`Ctrl+P`)
-   - 프로젝트별 비용 분리 집계 + 대시보드 통합 뷰
-   - 동시 활성 sandbox 수 cap + UI 표시
-2. **M2-E2: 워크트리 1급 시민화**
-   - `git worktree add/remove` 자동
-   - 같은 프로젝트 N개 워크스페이스 동시 (compose stack 격리, 포트 자동 할당)
-   - Caddy subdomain per worktree (`{branch-slug}.{project}.preview.{domain}`)
-3. **M2-E3: 프리뷰 노출 강화**
-   - 와일드카드 DNS + Let's Encrypt DNS-01 자동
-   - cloudflared 토글 (opt-in)
-   - 공유 URL + 만료 + 외부 사용자 인증 옵션
-4. **M2-E4: UX 다듬기**
-   - dockview 레이아웃 프리셋 4종 안정화 + 사용자 정의 5번째
-   - Plan/Act 모드 UX 다듬기 (Roo Code 패턴 학습 결과 반영)
-   - diff 카드 그룹핑 + "모두 Approve"
-   - 단축키 + 명령 팔레트 확장
-   - 다크/라이트 토글
-5. **M2-E5: 알림 + 모바일**
-   - PWA 알림 (web push)
-   - Slack/Discord/Telegram webhook 정식
-   - 폰에서 보조 사용 (Approve / Deploy / 채팅 읽기)
-6. **M2-E6: 빌드 캐시 최적화**
-   - 프로젝트별 inner docker overlay 캐시 효율 (이미지 layer 공유 검토)
-   - 언어 cache (npm/uv/cargo) 공유 옵션
-   - 빌드 시간 측정 + 목표 < M1 대비 30% 단축
-
-### DoD (M2 → M3 게이트)
-- [ ] 4개 프로젝트 일주일 운영, 데스크탑 Cursor 의존도 50% 이하 (사용자 자가 측정)
-- [ ] 골든패스 G3 (다중 워크트리), G5 (헤드리스 인터페이스) 동작
-- [ ] 외부 친구가 프리뷰 URL로 데모 확인 가능 (cloudflared opt-in)
-- [ ] 채팅 UX가 *Cursor에 나쁘지 않음* 수준 (사용자 자체 평가, blind 비교)
-- [ ] 비용/Audit 대시보드가 매일 한 번 이상 사용됨
-
-### 비-목표 풀림
-- (없음 — 모두 M3 이후)
-
-### 리스크 (윤곽)
-- 멀티 프로젝트 동시 = 호스트 자원 폭증 → resource cap UI 필수
-- 와일드카드 도메인 DNS 셋업이 사용자 부담 → 가이드 + 자체 서명 모드 fallback
-- 모바일 UX가 *과제 범위 폭발* → 보조 사용에 한정
+>
+> **v1 범위 확정 (2026-05-28)**: GAPT 는 **single-admin self-hosted** 도구.
+> 멀티유저 / OIDC / RBAC / K8s 백엔드 / 엔터프라이즈 기능은 v1 에서
+> 모두 제외. 추후 확장 가능성은 열어두지만 코드/UX 결정은 단일-admin
+> 가정 위에서 진행 ([[feedback_gapt_single_admin_auth]]).
 
 ---
 
-## M3 — 멀티 사용자 + OIDC + 옵션 모듈
+## 0. 현재까지 완료된 작업 요약
+
+| Milestone | 상태 | 진척 비고 |
+|---|---|---|
+| M0 (PoC 문서) | ✅ | 12 분석 문서 + 부트스트랩 |
+| M1 (Tracer bullet) | ✅ | 4 epic (E1~E4), Dogfood + Geny adapt |
+| M1.5 (Dogfood readiness) | ✅ (3✓/3~) | 1.5-A~F. geny-executor stage-6 블로커는 상위 의존 |
+| M2 Phase A (Serve capability) | ✅ (4✓/2~) | Terminal / Services / Deploy / CI / retrospective |
+| M2 Phase B (Preview domain) | ✅ | Cloudflare provider, subdomain mode, wildcard cert 가이드, migration wizard, deploy UX 재구성 — 본 outline 의 원래 M2-E3 "프리뷰 노출 강화" 가 이 phase 에 모두 들어감 |
+
+---
+
+## M2 Phase B-Hardening — **다음 (선행 필수)**
+
+Phase B 의 production-grade 인프라가 들어간 직후, 누적된 robustness 부채를 갚는 단계.
 
 ### 진입 조건
-- M2 완료 + 1주일 다중 프로젝트 운영
-- (선택) 외부 사용자 한두 명이 GAPT 셋업 시도해서 막힌 점 정리
+- Phase B 종료 (Cloudflare provider live, subdomain mode 사용자 검증 완료)
+- 사용자가 직접 `https://<slug>.<preview-domain>` 1회 이상 외부에서 접근 확인
 
 ### 주제
-P2 (소규모 팀) 진입. RBAC 완성, SSO, 시크릿 강화, 옵션 모듈.
+"기능은 다 들어갔다 — 이제 죽지 않고 회귀 안 나는 상태로 만든다."
 
 ### 작업 카테고리
-1. **M3-E1: 인증 어댑터 확장**
-   - `AuthentikIdp` (OIDC) — 셀프호스트 IDP
-   - SSO + OIDC discovery, refresh token
-   - MFA TOTP 1급 (M1 기본 위에 강화)
-   - (옵션) WebAuthn / passkey
-2. **M3-E2: RBAC 완성**
-   - User → Org → Project → Env 4계층 권한 *전체* 구현 (M1은 기본 정책만)
-   - 멤버 초대 / role 변경 API + UI
-   - 사용자 정의 role (ABAC 전 단계)
-3. **M3-E3: Secret 백엔드 확장**
-   - `InfisicalBackend` (셀프호스트)
-   - SOPS+age 정식 (CI 친화)
-4. **M3-E4: Audit 강화**
-   - `prev_hash` 체인
-   - Vector → Loki / 외부 SIEM 라우터
-   - 일일 체크포인트 서명
-5. **M3-E5: 옵션 모듈**
-   - **Forgejo** 임베드 (compose 옵션) — 셀프호스트 Git
-   - **Woodpecker CI** 임베드 — 오프라인/에어갭 사용자
-   - **openvscode-server** iframe 보조 모드 (Open VSX 한정 — L1 라이선스 함정 회피)
-6. **M3-E6: 모델 확장 — *executor PR로*** ([[feedback_extend_executor_not_adapter_layer]])
-   - geny-executor에 추가 provider PR (Bedrock, Ollama 등)이 필요해지면 그 PR 후 의존 버전 올림
-   - GAPT 측엔 manifest UI에서 provider 선택 가능하도록 강화 (사용자가 키 등록만 하면 OK)
-7. **M3-E7: LSP 1차**
-   - 데몬이 컨테이너 안에서 `pyright` / `tsserver` / `gopls` spawn
-   - WebSocket bridge → Monaco languageclient
-   - 자동완성, go-to-definition, hover
-8. **M3-E8: PWA web push + i18n 확장**
-   - 알림에 OS push 통합
-   - 추가 언어 (일/중/영 확장)
+1. **B.H.1 — 서버 라이프사이클 강건화**
+   - 현재 GAPT server 가 Claude shell 의 자식 process 로만 살아있어 task stop 시 502. 자체 supervisor 필요.
+   - docker compose 안의 `server` 서비스로 통합 + `restart: unless-stopped`
+   - `scripts/dev/server.sh` (start/stop/status/logs) — Claude shell 의존성 차단
+   - Healthcheck + 자동 재시작 (30s 무응답 시)
+   - `docs/operations/dev_setup.md` 가이드
+2. **B.H.2 — Phase B 테스트 백필**
+   - Cloudflare client / service / migration 단위 테스트 (httpx mock)
+   - SubdomainManager host-only splice + slug-change cleanup 회귀 테스트
+   - `_env_with_fallback` (stopped 존중 / success 부활) 시나리오
+   - StackManager.logs() smoke
+   - 목표: server 53 → 75+ 파일, web 21 → 30+ 파일, 신규 모듈 coverage 70%+
+3. **B.H.3 — UX edge case 정리**
+   - 스택 stop 후 미등록 subdomain → GAPT 리다이렉트 버그 (zone-wide 404 fallback)
+   - Cloudflare API 토큰 vault corruption 재현 + 자동 복구 UI
+   - Token scope 자기진단 (Tunnel:Edit / DNS:Edit / SSL:Edit 별 ping)
+   - Subdomain 진단 next_steps 중복 제거
+4. **B.H.4 — Migration 안전망**
+   - Cutover 자동 backup (systemd unit + ingress JSON dump)
+   - 자동 rollback: cutover 후 30s 안에 cloudflared healthy 안 되면 drop-in 제거 + restart
+   - `provider_migrations` 테이블 + history UI + 1-click revert
+   - Cutover dry-run 모드
 
-### DoD (M3 → M4 게이트)
-- [ ] 외부 2~3명 사용자(P2 페르소나) 실제 사용, 멤버 권한 분리 동작
-- [ ] 감사 데이터 외부 SIEM 라우팅 검증
-- [ ] Authentik OIDC SSO 통과
-- [ ] (executor에 추가된 provider가 있다면) 그 provider로 한 세션 완주
+### DoD (B-H → C 게이트)
+- [ ] Claude 세션 / 노트북 절전 / 재부팅 어떤 경우에도 서버 자동 복귀 (10초 이내)
+- [ ] `pnpm vitest && uv run pytest` 신규 코드 70% 이상 라인 커버
+- [ ] 스택 stop 후 외부 URL 방문 시 404 (GAPT 리다이렉트 X)
+- [ ] Migration history 표 + 1-click revert 동작
 
-### 비-목표 풀림
-- 사내 Git 호스팅 (Forgejo) — 옵션으로 사용 가능
-- openvscode-server iframe — 보조 모드 사용 가능
-- 사용자 정의 LLM provider (executor에 추가하는 경로로)
-
-### 리스크 (윤곽)
-- 멀티 사용자 → 권한/감사 *대량 회귀* 위험 (모델은 처음부터 owner_id 있지만 UI 회귀 가능)
-- 옵션 모듈이 *코어 복잡도 증가* — 활성화는 명시 opt-in
-- Forgejo (GPLv3+) 임베드 → 라이선스 가이드 사용자에게 명확
+### 리스크
+- docker compose 안으로 server 옮기면 host 의 Vite 와 통신 경로 변경. `host.docker.internal` 의존성 명시
+- 테스트 백필 중 노출되는 잠복 버그 — 발견되면 fix 후 회귀 추가
 
 ---
 
-## M4 — K8s 백엔드 / 엔터프라이즈 인터페이스
+## M2 Phase C — Multi-project Operations
+
+원래 outline 의 M2-E1 / E2 / E6 (멀티 프로젝트 / 워크트리 / 빌드 캐시). single-user 가정이므로 권한 분리는 없음.
 
 ### 진입 조건
-- M3 완료
-- P3 (사내 플랫폼 엔지니어) 수요 신호 — 실제 사내 엔지니어가 시도 의지 표명
+- Phase B-Hardening 완료
+- 사용자가 동시에 2개 이상 프로젝트 다룰 실제 수요 시점
 
 ### 주제
-멀티 노드 / K8s / 컴플라이언스 준비. P3의 일급 지원 시작.
+하루 종일 GAPT 안에서 N개 프로젝트 + 여러 브랜치를 동시 운영.
 
 ### 작업 카테고리
-1. **M4-E1: SandboxBackend.K8s 구현**
-   - Pod = 컨테이너, namespace 격리, NetworkPolicy
-   - GAPT 컨트롤 플레인 자체도 K8s 배포 가능 (Helm 차트)
-2. **M4-E2: 상태 외부화**
-   - PostgreSQL 외부 매니지드/HA (자체 cluster 또는 RDS/CloudSQL)
-   - SeaweedFS 멀티노드 (Filer + Volume Server 분리, replication ≥ 2)
-3. **M4-E3: 데몬 RPC 네트워크 친화**
-   - unix socket → mTLS HTTP
-   - 데몬이 K8s Pod 안에서도 동작
-4. **M4-E4: 컨트롤 플레인 HA**
-   - 다중 replica + leader election (Redis 또는 etcd)
-   - 세션 affinity (sticky) 또는 세션 상태 외부화
-5. **M4-E5: GitOps 통합**
-   - ArgoCD / Flux 어댑터 (DeployTarget)
-6. **M4-E6: 컴플라이언스 모듈**
-   - SOC 2 증거 수집 자동화
-   - 변경 승인 워크플로 (multi-approver)
-7. **M4-E7: 엔터프라이즈 IDP**
-   - Keycloak / SAML / SCIM provisioning
-8. **M4-E8: ABAC 옵션**
-   - Casbin / Cedar 정책 엔진 (RBAC 위에 layer)
-9. **M4-E9: Helm 차트 + 운영 가이드**
-   - source-available Helm (OpenHands 패턴)
-   - 운영 SOP, 백업/복구 plan
+1. **C.1 — Worktree-1st workspace 모델**
+   - `Workspace.git_worktree_path` 필드 + `(project_id, branch)` unique
+   - `git worktree add/remove` 자동 (workspace lifecycle 에 연동)
+   - UI: 브랜치 chip + 다른 branch 클릭 → 새 workspace 자동 생성
+   - 동시 N개 workspace = N개 컨테이너 (per-workspace `gapt-ws-<wid>` 모델 활용, [[feedback_gapt_two_containers_per_workspace]])
+   - 정리: 가리키는 브랜치 삭제되면 workspace 자동 archive
+2. **C.2 — 멀티 프로젝트 동시 운영 UX**
+   - 좌측 트리 다중 프로젝트, `Ctrl+P` 빠른 전환
+   - 프로젝트별 비용 분리 집계 + 통합 대시보드
+   - 활성 sandbox 수 cap + UI 표시 (리소스 보호)
+3. **C.3 — Build cache**
+   - Docker BuildKit local cache mount (`/var/lib/docker/buildx-cache`)
+   - DeployModal 에 "cache hit/miss/skipped" 표시
+   - env 설정에 build-cache mode (auto/aggressive/off)
+   - 목표: 동일 이미지 재배포 30%+ 단축
+4. **C.4 — 모바일 PWA shell (read-only)**
+   - PWA manifest + Service Worker
+   - `/m/projects/:pid` mobile route — 사이드바 + chat read + deploy status
+   - (옵션) Web push 알림 — deploy 성공/실패
+   - 단일 admin PIN 입력 인증
 
-### DoD (M4 → M5 게이트)
-- [ ] 50명 규모 가상 시나리오에서 멀티노드 동작 (사내 테스트)
-- [ ] K8s에서 OOM/장애 복구 시나리오 통과
-- [ ] OIDC + SAML + SCIM 모두 통과
-- [ ] ArgoCD GitOps 사이클 동작
-- [ ] Helm 차트로 깨끗한 클러스터에 30분 내 설치 가능
+### DoD (C → D 게이트)
+- [ ] 한 프로젝트의 `main` + `feature/x` 두 workspace 동시 열어 chat/edit/deploy 독립 동작
+- [ ] 4개 프로젝트 동시 활성 상태에서 호스트 자원 cap 초과 안 함
+- [ ] 동일 이미지 재배포 시간 30%+ 단축 측정
+- [ ] 모바일 Safari/Chrome 에서 PWA 설치 + chat read + deploy alert 동작
 
 ### 비-목표 풀림
-- K8s 멀티 노드 백엔드 (옵션)
-- 사내 Git 호스팅 필수 옵션
-- GitOps 통합
+- (멀티 워크트리 운영 — 본 단계)
 
-### 리스크 (윤곽)
-- K8s 도입이 *동일 코드를 깨거나 운영 폭증* — SandboxBackend 인터페이스가 M0~M1부터 견고했는지가 관건
-- 엔터프라이즈 기능이 *솔로 P1 UX를 무겁게* — 활성화 토글 필수
-- 컴플라이언스 요구가 *예측 불가* — 사례 기반 점진
+### 리스크
+- N개 workspace 동시 = 호스트 자원 폭증. cap UI + 사용자 알림 필수
+- 모바일 UX 범위 폭발 — 보조 사용 한정 (edit/deploy 는 데스크탑)
 
 ---
 
-## M5 — 자동 운영 + 비즈니스 모델 (옵션)
+## M2 Phase D — Agent UX 폴리시
+
+원래 outline 의 M2-E4 (UX 다듬기). chat 워크플로 개선.
 
 ### 진입 조건
-- M4 완료 + 외부 사용자 누적 (수십 명+)
-- 비즈니스 모델 결정 (코어 OSS 유지 vs 클라우드 라인 추가)
+- Phase C 완료
 
 ### 주제
-P4 (자동 운영) 일급 + 지속 가능성.
+사용자가 매일 chat 으로 코드 변경 ↔ 적용하는 사이클의 마찰을 최소화.
 
 ### 작업 카테고리
-1. **M5-E1: 헤드리스 자동화 1급**
-   - Cron 트리거 UI (`/api/sessions/scheduled`)
-   - Slack/Discord 트리거 → 세션 → 회신
-   - GitHub Issue → 세션 (양방향 webhook)
-   - 정책 엔진 확장: "auto-PR if green CI + small change" 같은 룰
-2. **M5-E2: 에이전트끼리 협업**
-   - 한 프로젝트 안 멀티 에이전트 (planner + executor + reviewer)
-   - geny-executor의 SubPipelineFactory + cross-session 통신 (executor에 PR)
-3. **M5-E3: 모델 비용 최적화**
-   - 모델 라우터 (단순 작업 → Haiku, 복잡 → Opus) — *executor의 Stage 6 router strategy*에 일반화 PR
-   - 캐시 적극 활용 (Stage 5)
-   - 사용자별 50% 비용 절감 목표
-4. **M5-E4: 클라우드 옵션 (비즈니스 결정 시)**
-   - "GAPT Cloud" (자체 호스팅 SaaS)
-   - 사용자 선택: 셀프호스트 vs 우리 클라우드
-   - 코어 OSS 영구 유지
-5. **M5-E5: 마켓플레이스 / 카탈로그 (옵션)**
-   - 프로젝트 템플릿
-   - MCP 서버 큐레이션 카탈로그 (보안 검토 거친 서버만)
+1. **D.1 — Plan/Act mode 분리**
+   - Plan: read-only tools 만 (`Read`, `Grep`, `WebSearch`), markdown 으로 계획 정리
+   - Act: 사용자 승인 후 mutation tools (`Write`, `Edit`, `Bash`) 활성화
+   - Chat header segmented 토글 + 현재 mode 표시
+   - 명시적 선택 안 하면 기존 자유 chat (backward compat)
+2. **D.2 — Diff 그루핑 + 부분 적용**
+   - 한 chat turn 의 diff 를 file/intent 별 그룹
+   - 그룹별 체크박스 — 일부만 commit
+   - 그룹 헤더에 LLM-생성 한 줄 요약
+   - "모두 Approve" 단축
+3. **D.3 — Conversation 영속성 + resume**
+   - Chat events 를 DB 에 영속 (SSE 끊김 후 token-by-token replay)
+   - 세션 검색 (key 단어 → past chats)
+4. **D.4 — 단축키 + 명령 팔레트 확장**
+   - Cmd+P / Cmd+K 표준화
+   - 자주 쓰는 액션 (deploy / open file / search chat / new workspace) 팔레트화
+5. **D.5 — 레이아웃 프리셋**
+   - dockview 4종 프리셋 안정화 (default / chat-focused / debug / minimal)
+   - 사용자 정의 5번째 슬롯
 
-### DoD (M5 안정)
-- [ ] 외부 사용자 베이스 (수십 명+) 6개월 안정 운영
-- [ ] 자동화 시나리오 (cron/webhook → 자동 PR) 사용자 N명이 매일 사용
-- [ ] 모델 라우터로 사용자 측 *50% 비용 절감* 입증
+### DoD (D → v1 종료 게이트)
+- [ ] Plan/Act mode 토글로 위험 변경 차단 시나리오 통과
+- [ ] Diff 부분 apply 로 "이 파일만 OK" 가능
+- [ ] 채팅 UX 가 *Cursor 와 나쁘지 않음* 수준 (사용자 자체 평가)
+- [ ] 일주일 자가 사용 + 외부 1명 친구가 GAPT 셋업 시도해서 막힌 점 정리
 
-### 비-목표 풀림 / 신규 도입
-- 자동 운영 (P4) 일급
-- (옵션) 클라우드 라인
-- (옵션) 마켓플레이스
-
-### 리스크 (윤곽)
-- 비즈니스 모델이 *코어 OSS 정신과 충돌* — 코어 영구 OSS 보장, 클라우드는 옵션
-- 마켓플레이스 보안 책임 — 큐레이션 부담 큼, 자동 다운로드 금지
-- 자동 운영이 *통제 어려운 비용 폭주* 원인 — PolicyEngine + cost cap이 견고해야
+### 리스크
+- Plan/Act 가 *기존 chat 빠른 흐름 방해* — 명시적 opt-in 토글 필수
+- Diff 그루핑이 LLM-생성 요약에 의존 — fallback (file 별 단순 그룹) 필요
 
 ---
 
-## 윤곽 단계의 업데이트 규칙
+## v1 종료 — Phase D 후
 
-- *위 단계 종료 시점에* 해당 단계의 윤곽을 *디테일한 epic 카드들*로 분해 (M1 패턴).
-- 새 분해는 `docs/plan/m{n}/` 폴더에 들어간다.
-- 본 outline 파일에서 분해된 단계는 *제거*하고, *그 다음 단계*만 윤곽으로 남긴다.
-- M1 종료 → 본 파일은 M3~M5만 남고, `m2/` 폴더에 디테일이 생긴다.
+Phase D 종료 시점에 v1 spec 완성. 이후의 발전 방향은 *사용자 본인의 실제 사용 데이터* 기반으로 재정의 (현재 시점에서 미리 짜는 것 = 낭비).
 
 ---
 
-## 비-목표 풀림 시점 (재게재)
+## 명시적 out-of-scope (v1 결정)
+
+추후 확장 가능성은 열려있으나 v1 코드/UX 의사결정에 영향 주지 않음:
+
+| 항목 | 이유 |
+|---|---|
+| 멀티유저 / Org / Membership 모델 | single-admin 결정 ([[feedback_gapt_single_admin_auth]]) |
+| OIDC / SAML / SCIM | single-admin |
+| RBAC 4계층 권한 | single-admin |
+| 옵션 모듈 (Forgejo / Woodpecker / openvscode embed) | self-hosted 도구의 코어 단순성 유지 |
+| K8s SandboxBackend | local docker compose 로 충분 |
+| Helm 차트 + 컴플라이언스 (SOC 2 등) | enterprise 영역, v1 비-목표 |
+| Cloud SaaS / 마켓플레이스 | 비즈니스 모델 결정 후, OSS 코어와 분리 |
+
+v1 의 모든 신규 코드는 위 항목들을 **염두에 두지 않고** 작성. 추후 풀게 되면 별도 marathon 으로.
+
+---
+
+## 비-목표 풀림 (v1 한정 재게재)
 
 | 비-목표 ([00](../00_overview.md) §0.4) | 풀리는 단계 |
 |---|---|
 | 신규 앱 생성 (Lovable/v0) | 영구 비-목표 |
 | 로컬 IDE 확장 | 영구 비-목표 |
 | 자체 모델 학습 | 영구 비-목표 |
-| K8s / 멀티 노드 | M4 |
-| 사내 Git 호스팅 (Forgejo) | M3 옵션, M4 필수 옵션 |
-| 자체 모델 카탈로그 | M5 (옵션, 비즈니스 결정 시) |
-| 데스크탑 앱 | 영구 비-목표 |
+| 멀티 프로젝트 동시 운영 | Phase C |
+| 멀티 워크트리 | Phase C.1 |
+| 외부 프리뷰 노출 (cloudflared 자동) | **Phase B 완료** |
+| 빌드 캐시 최적화 | Phase C.3 |
+| 모바일 PWA (read-only) | Phase C.4 |
+| Plan/Act mode | Phase D.1 |

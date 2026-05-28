@@ -48,10 +48,20 @@ export interface ContainerStats {
   pids: number | null;
 }
 
+/** Phase E.2 — non-archived agent-session counters aggregated for
+ *  the workspace this container hosts. `null` for infra containers. */
+export interface SessionMetrics {
+  cost_usd_total: number;
+  input_tokens_total: number;
+  output_tokens_total: number;
+  session_count: number;
+}
+
 export interface ContainerSample {
   summary: ContainerSummary;
   limits: ContainerLimits;
   stats: ContainerStats | null;
+  session_metrics?: SessionMetrics | null;
 }
 
 export interface ProjectRow {
@@ -109,6 +119,13 @@ export interface ContainersResponse {
   running_containers: number;
   total_cpu_pct: number;
   total_mem_bytes: number;
+  /** Phase E.2 — live host GPU samples, folded into the same payload
+   *  so the dashboard no longer fetches `/gpu` separately. Empty
+   *  array when no NVIDIA driver is present. */
+  gpus?: GpuRow[];
+  /** Phase E.2 — current `--gpus` value applied to new workspace
+   *  containers. `null` = CPU-only. */
+  applied_gpu_policy?: string | null;
 }
 
 export interface HostInfo {
@@ -133,6 +150,13 @@ export interface GpuRow {
 export interface GpusResponse {
   available: boolean;
   gpus: GpuRow[];
+  /** Phase E.1 — normalised `--gpus` value currently applied to new
+   *  workspace containers. `null` = CPU-only. Set via the env var
+   *  named in `policy_env_var`. */
+  applied_policy: string | null;
+  /** Name of the env var the operator should set to change the
+   *  policy. Hard-coded server-side as "GAPT_WORKSPACE_GPUS". */
+  policy_env_var: string;
 }
 
 export interface LogsResponse {

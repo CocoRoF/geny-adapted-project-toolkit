@@ -188,7 +188,11 @@ async def _build_subdomain_manager(
         return None
     transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
     client = CaddyAdminClient(transport=transport)
-    return SubdomainManager(client=client, preview_domain=domain)
+    return SubdomainManager(
+        client=client,
+        preview_domain=domain,
+        gapt_apex_host=settings.caddy_apex_host,
+    )
 
 
 async def _maybe_ensure_cf_wildcard(db: AsyncSession) -> str:
@@ -1410,6 +1414,7 @@ async def stack_down(
             manager = SubdomainManager(
                 client=CaddyAdminClient(transport=transport),
                 preview_domain=effective_domain,
+                gapt_apex_host=settings.caddy_apex_host,
             )
             slug = _resolve_preview_slug(env_row)
             await manager.unregister(slug)
@@ -1585,6 +1590,7 @@ async def stack_reroute(
     manager = SubdomainManager(
         client=CaddyAdminClient(transport=transport),
         preview_domain=effective_preview_domain,
+        gapt_apex_host=settings.caddy_apex_host,
     )
     mode_str = str(
         override.preview_mode

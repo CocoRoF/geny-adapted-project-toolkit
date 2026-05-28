@@ -8,6 +8,7 @@ import pytest
 from geny_executor.hooks import HookEvent, HookEventPayload
 
 from gapt_server.agent.hooks import (
+    ChatModeRef,
     CostAccumulator,
     PolicyHookConfig,
     build_audit_hook,
@@ -52,6 +53,109 @@ async def test_policy_hook_allows_read_only_tools() -> None:
         config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
     )
     outcome = await handler(_payload(tool_name="gapt_read"))
+    assert outcome.continue_ is True
+
+
+# ───────────────────────────────────────── Phase D.1 plan mode ──
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_blocks_gapt_edit() -> None:
+    """Plan mode short-circuits every mutating tool BEFORE the engine
+    runs. The hook returns a block whose reason names the mode so the
+    UI can render a targeted "switch to Act" prompt."""
+    engine = PolicyEngine()
+    mode_ref = ChatModeRef(mode="plan")
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        mode_ref=mode_ref,
+    )
+    outcome = await handler(_payload(tool_name="gapt_edit"))
+    assert outcome.continue_ is False
+    assert "Plan mode" in (outcome.stop_reason or "")
+    assert "gapt_edit" in (outcome.stop_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_blocks_gapt_git_and_gapt_pr() -> None:
+    engine = PolicyEngine()
+    mode_ref = ChatModeRef(mode="plan")
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        mode_ref=mode_ref,
+    )
+    for tool in ("gapt_git", "gapt_pr"):
+        outcome = await handler(_payload(tool_name=tool))
+        assert outcome.continue_ is False, tool
+        assert "Plan mode" in (outcome.stop_reason or ""), tool
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_allows_read_only_tools() -> None:
+    """The whole point of Plan mode — reads, greps, globs stay open."""
+    engine = PolicyEngine()
+    mode_ref = ChatModeRef(mode="plan")
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        mode_ref=mode_ref,
+    )
+    for tool in ("gapt_read", "gapt_glob", "gapt_grep"):
+        outcome = await handler(_payload(tool_name=tool))
+        assert outcome.continue_ is True, tool
+
+
+@pytest.mark.asyncio
+async def test_act_mode_allows_mutating_tools() -> None:
+    """When mode is "act" the plan gate is a no-op — the engine
+    decision (default-allow for unknown actions) wins."""
+    engine = PolicyEngine()
+    mode_ref = ChatModeRef(mode="act")
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        mode_ref=mode_ref,
+    )
+    for tool in ("gapt_edit", "gapt_git", "gapt_pr"):
+        outcome = await handler(_payload(tool_name=tool))
+        assert outcome.continue_ is True, tool
+
+
+@pytest.mark.asyncio
+async def test_mode_flip_after_hook_built_is_observed() -> None:
+    """The `mode_ref` is mutable + shared. Flipping it after the hook
+    is built must affect the next tool call — without this, the
+    SessionRuntime couldn't toggle Plan/Act mid-conversation."""
+    engine = PolicyEngine()
+    mode_ref = ChatModeRef(mode="act")
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        mode_ref=mode_ref,
+    )
+    # Initial: act mode allows the mutating tool.
+    assert (await handler(_payload(tool_name="gapt_edit"))).continue_ is True
+    # Flip to plan — next call blocks.
+    mode_ref.mode = "plan"
+    assert (await handler(_payload(tool_name="gapt_edit"))).continue_ is False
+    # Flip back — allows again.
+    mode_ref.mode = "act"
+    assert (await handler(_payload(tool_name="gapt_edit"))).continue_ is True
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_without_mode_ref_is_legacy_behavior() -> None:
+    """If no mode_ref is passed, the hook behaves exactly as before
+    Phase D.1 — no plan gate, just the engine decision."""
+    engine = PolicyEngine()
+    handler = build_policy_hook(
+        engine=engine,
+        config=PolicyHookConfig(actor_id="u", project_id="p", workspace_id="w"),
+        # mode_ref intentionally omitted
+    )
+    outcome = await handler(_payload(tool_name="gapt_edit"))
     assert outcome.continue_ is True
 
 

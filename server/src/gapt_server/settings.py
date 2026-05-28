@@ -74,6 +74,25 @@ class Settings(BaseSettings):
     sandbox_daemon_token_ttl_s: int = 900  # 15 minutes
     sandbox_idle_pause_s: int = 1800  # 30 minutes → paused
     sandbox_idle_archive_s: int = 86_400  # 24 hours → archive
+    # Phase C.2.d — cap on concurrently-live workspaces to keep host
+    # resources bounded. Counts rows with status IN (CREATING, RUNNING).
+    # Stopped/paused/failed/archived are excluded since they don't hold
+    # an active container. Override via `GAPT_MAX_ACTIVE_SANDBOXES`.
+    max_active_sandboxes: int = 6
+
+    # Phase E.1 — GPU policy for workspace sandboxes (`gapt-ws-<wid>`
+    # containers, NOT the agent sandbox `gapt-<id>` series). Passed
+    # through to `docker run --gpus <value>`. Recognised values:
+    #   None     — no GPU (default; CPU-only)
+    #   "all"    — map every host GPU
+    #   "0"      — single device by index
+    #   "0,1"    — multiple devices, comma-separated
+    # Single-admin scope: one policy for the install. Per-workspace
+    # override is deferred to v1.5 (real demand will tell us if it's
+    # worth a UI). Requires NVIDIA Container Toolkit on the host —
+    # `docker run` fails loud when the toolkit is missing rather than
+    # silently giving the agent a CPU-only container.
+    workspace_gpus: str | None = None
 
     # --- arq / background jobs ---
     arq_queue_name: str = "gapt:default"
@@ -109,6 +128,16 @@ class Settings(BaseSettings):
     # `{workspace_slug}.{caddy_preview_domain}/`. Required when
     # `caddy_admin_url` is set.
     caddy_preview_domain: str | None = None
+    # Public host that serves the GAPT IDE itself (e.g.
+    # `gapt.hrletsgo.me`). Used by SubdomainManager to add a
+    # zone-wide catch-all 404 for unregistered subdomains WHILE
+    # excluding this host (so visiting GAPT itself still works).
+    # Only relevant when `caddy_preview_domain` equals or is a
+    # parent of `caddy_apex_host`. Optional — when unset, the
+    # catch-all is registered for `*.<preview-domain>` without an
+    # exclusion (safe when preview_domain is a strict sub-host
+    # of the GAPT apex, like `previews.gapt.example`).
+    caddy_apex_host: str | None = None
     # Share link HMAC secret. Do not leave the dev default in prod.
     share_link_secret: str = "dev-only-share-secret-change-me"
     # TTL ceiling for share links (seconds). Default 24h.

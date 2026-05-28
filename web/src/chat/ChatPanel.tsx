@@ -14,6 +14,7 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { CostModal } from "@/chat/CostModal";
 import { deriveCostSnapshot, type CostSnapshot as FullCostSnapshot } from "@/chat/cost-snapshot";
 import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
+import { annotateEditGroups } from "@/chat/diff-group";
 import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
 import { ToolCallCard } from "@/chat/ToolCallCard";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
@@ -166,7 +167,11 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           ts: new Date().toISOString(),
         },
       ]);
-      void invokeSession(session.id, outgoing)
+      // Phase D.1 — pass the active mode along so the backend policy
+      // hook short-circuits mutating tools when mode is "plan". The
+      // existing PLAN_PREFIX text prompt is *also* kept so the LLM
+      // produces planning-style output, not just so the gate triggers.
+      void invokeSession(session.id, outgoing, activeMode)
         .catch((err: unknown) => {
           setError(
             err instanceof ApiError
@@ -259,6 +264,14 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
 
   const cost = useMemo<FullCostSnapshot>(() => deriveCostSnapshot(stream.events), [stream.events]);
 
+  // Phase D.2 — pre-compute per-event group markers so the render
+  // loop can wrap a run of consecutive same-file `gapt_edit` cards
+  // under a single header. Keyed by event.seq.
+  const editGroupMarkers = useMemo(
+    () => annotateEditGroups(stream.events, maybeGaptEditPayload),
+    [stream.events],
+  );
+
   // Surface `exec.stage.guard_rejected` errors as a modal alert. We
   // track which seq fired so the modal doesn't re-pop if the user
   // dismissed it and another event arrives.
@@ -296,6 +309,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 type="button"
                 aria-pressed={mode === "plan"}
                 onClick={() => setMode("plan")}
+                title={t("chat.mode.plan.tooltip")}
                 className={
                   mode === "plan"
                     ? "rounded bg-bg px-2 py-0.5 text-[11px] font-medium text-fg shadow-sm"
@@ -308,6 +322,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 type="button"
                 aria-pressed={mode === "act"}
                 onClick={() => setMode("act")}
+                title={t("chat.mode.act.tooltip")}
                 className={
                   mode === "act"
                     ? "rounded bg-bg px-2 py-0.5 text-[11px] font-medium text-fg shadow-sm"
@@ -393,9 +408,43 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               if (event.kind === "tool_result") {
                 const edit = maybeGaptEditPayload(event.data);
                 if (edit) {
+                  // Phase D.2 — wrap a run of consecutive same-file
+                  // edits in a single group header. We render the
+                  // header on the first edit of a run only; the rest
+                  // sit inside the same container so they don't each
+                  // get their own "file:" line.
+                  const marker = editGroupMarkers.get(event.seq);
+                  const isGroupStart = marker !== undefined && marker.groupIndex === 0;
+                  const cardKey = `diff-${event.seq}`;
+                  const card = (
+                    <DiffCard workspaceId={workspaceId} payload={edit} />
+                  );
+                  if (marker && marker.groupSize > 1) {
+                    return (
+                      <div key={cardKey} data-event-kind="tool_result">
+                        {isGroupStart ? (
+                          <div
+                            data-testid="diff-group-header"
+                            className="mb-1 flex items-center gap-2 px-2 text-[11px] text-fg-muted"
+                          >
+                            <span
+                              aria-hidden
+                              className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
+                            />
+                            <span>
+                              {t("diff.group.header")
+                                .replace("{count}", String(marker.groupSize))
+                                .replace("{path}", marker.path)}
+                            </span>
+                          </div>
+                        ) : null}
+                        {card}
+                      </div>
+                    );
+                  }
                   return (
-                    <div key={`diff-${event.seq}`} data-event-kind="tool_result">
-                      <DiffCard workspaceId={workspaceId} payload={edit} />
+                    <div key={cardKey} data-event-kind="tool_result">
+                      {card}
                     </div>
                   );
                 }

@@ -86,6 +86,61 @@ async def test_history_limit_drops_oldest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_persister_called_with_each_event() -> None:
+    """Phase D.3 — the optional persister fires once per publish,
+    outside the bus lock, with the freshly-assigned event."""
+    captured: list[SessionEvent] = []
+
+    async def sink(event: SessionEvent) -> None:
+        captured.append(event)
+
+    bus = SessionEventBus(persister=sink)
+    a = await bus.publish(SessionEventKind.TEXT, {"i": 1})
+    b = await bus.publish(SessionEventKind.TEXT, {"i": 2})
+    assert [e.seq for e in captured] == [a.seq, b.seq]
+
+
+@pytest.mark.asyncio
+async def test_persister_failure_does_not_break_publish() -> None:
+    """A flaky DB sink mustn't drop the live stream. publish() must
+    still return the event and the subscriber must still receive
+    it even when the persister raises."""
+
+    async def angry_sink(_event: SessionEvent) -> None:
+        raise RuntimeError("DB is down")
+
+    bus = SessionEventBus(persister=angry_sink)
+    sub = await bus.subscribe()
+    event = await bus.publish(SessionEventKind.TEXT, {"x": 1})
+    delivered = await asyncio.wait_for(sub.get(), timeout=0.5)
+    assert delivered is not None and delivered.seq == event.seq
+
+
+@pytest.mark.asyncio
+async def test_seed_seq_starts_next_publish_from_correct_value() -> None:
+    """Phase D.3 — rehydrating a session after a restart: tell the
+    bus the highest seq already in DB, then the next publish must
+    be `last + 1` so there's no collision with persisted rows."""
+    bus = SessionEventBus()
+    bus.seed_seq(42)
+    event = await bus.publish(SessionEventKind.TEXT, {"x": 1})
+    assert event.seq == 43
+
+
+@pytest.mark.asyncio
+async def test_seed_seq_does_not_regress() -> None:
+    """seed_seq must be monotonic — accidentally calling it with a
+    lower value than the current seq must NOT roll the counter
+    backwards."""
+    bus = SessionEventBus()
+    await bus.publish(SessionEventKind.TEXT, {})  # seq=1
+    await bus.publish(SessionEventKind.TEXT, {})  # seq=2
+    bus.seed_seq(1)  # lower than current — should be a no-op
+    next_event = await bus.publish(SessionEventKind.TEXT, {})
+    assert next_event.seq == 3
+
+
+@pytest.mark.asyncio
 async def test_close_emits_sentinel_to_subscribers() -> None:
     bus = SessionEventBus()
     q = await bus.subscribe()

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from geny_executor import Pipeline
 
     from gapt_server.agent.hooks.cost_hook import CostAccumulator
+    from gapt_server.agent.hooks.policy_hook import ChatModeRef
     from gapt_server.domains.workspace_sandbox import WorkspaceSandbox
 
 
@@ -69,6 +70,11 @@ class SessionRuntime:
     # runtime is built. None for tests / paths that haven't been
     # migrated yet; the invoke runner falls back to host execution.
     sandbox: WorkspaceSandbox | None = None
+    # Phase D.1 — per-session Plan/Act mode reference shared with
+    # the policy hook. `invoke(mode=...)` mutates it before kicking
+    # off the work; the hook reads it on every PRE_TOOL_USE. None
+    # for legacy paths that don't have a hook chain wired.
+    mode_ref: ChatModeRef | None = None
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -76,12 +82,27 @@ class SessionRuntime:
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def invoke(self, message: str, *, runner: SessionInvokeRunner | None = None) -> None:
+    async def invoke(
+        self,
+        message: str,
+        *,
+        runner: SessionInvokeRunner | None = None,
+        mode: str | None = None,
+    ) -> None:
         """Kick off a background task that runs the pipeline against
         `message` and publishes SSE events. Returns once the task is
         scheduled. The task lifetime tracks the SSE stream lifetime —
         callers should `await` the task only via `wait_done()` (which
-        also handles the cancellation path)."""
+        also handles the cancellation path).
+
+        Phase D.1 — when ``mode`` is provided ("plan" or "act") and a
+        ``mode_ref`` was attached at construction, the runtime updates
+        the reference *before* spawning the task so the policy hook
+        sees the new mode on the first tool call. Unknown values are
+        ignored (default mode stays).
+        """
+        if mode is not None and self.mode_ref is not None and mode in ("plan", "act"):
+            self.mode_ref.mode = mode
         async with self._lock:
             if self.is_running:
                 raise SessionAlreadyInvoking(f"session {self.session_id} is already invoking")

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronDown,
   ChevronLeft,
@@ -18,6 +18,7 @@ import { type ProjectResponse, getProject } from "@/api/projects";
 import {
   type WorkspaceResponse,
   type WorkspaceStatus,
+  createWorkspace,
   deleteWorkspace,
   getWorkspaceCloneLog,
   listWorkspaces,
@@ -29,6 +30,7 @@ import { NewWorkspaceModal } from "@/routes/NewWorkspaceModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { ConfirmDialog } from "@/ui/ConfirmDialog";
+import { Input } from "@/ui/Input";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -53,6 +55,7 @@ const STATUS_TONE: Record<WorkspaceStatus, "neutral" | "accent" | "success" | "w
 /** `/projects/:pid` — project overview + workspace list. */
 export function ProjectDetail() {
   const { pid } = useParams();
+  const navigate = useNavigate();
   const { t } = useI18n();
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
@@ -61,6 +64,11 @@ export function ProjectDetail() {
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<WorkspaceResponse | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Phase C.1: quick-open input. POST /workspaces is now idempotent
+  // for (project, branch), so this single field handles both
+  // "open existing branch" and "spawn fresh workspace for branch X".
+  const [quickBranch, setQuickBranch] = useState("");
+  const [quickOpening, setQuickOpening] = useState(false);
 
   const projectId = pid ?? "";
 
@@ -120,6 +128,37 @@ export function ProjectDetail() {
 
   function onStart(workspaceId: string): void {
     void startWorkspace(workspaceId).then(patchWorkspace).catch(reportError);
+  }
+
+  /** Insert-or-update so an idempotent server response (existing
+   *  workspace returned for same `(project, branch)`) doesn't
+   *  produce a visual duplicate. */
+  function upsertWorkspace(ws: WorkspaceResponse): void {
+    setWorkspaces((prev) => {
+      const idx = prev.findIndex((w) => w.id === ws.id);
+      if (idx === -1) return [ws, ...prev];
+      const next = prev.slice();
+      next[idx] = ws;
+      return next;
+    });
+  }
+
+  /** Quick-open: POST /workspaces is idempotent for (project,
+   *  branch), so this single action either creates or reuses, then
+   *  navigates straight into the IDE. */
+  function onQuickOpen(): void {
+    const branch = quickBranch.trim();
+    if (!branch || !projectId) return;
+    setQuickOpening(true);
+    setError(null);
+    void createWorkspace(projectId, { branch })
+      .then((ws) => {
+        upsertWorkspace(ws);
+        setQuickBranch("");
+        navigate(`/projects/${projectId}/w/${ws.id}`);
+      })
+      .catch(reportError)
+      .finally(() => setQuickOpening(false));
   }
 
   function onDeleteConfirmed(): void {
@@ -187,6 +226,44 @@ export function ProjectDetail() {
             {t("workspaces.new")}
           </Button>
         </div>
+
+        {/* Phase C.1 — quick-open by branch. Single field that
+            either reuses an existing workspace for the branch or
+            spawns a new one, then jumps straight into the IDE. */}
+        {state === "ready" ? (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-bg-elevated px-3 py-2">
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+            <Input
+              type="text"
+              value={quickBranch}
+              onChange={(e) => setQuickBranch(e.currentTarget.value)}
+              placeholder={t("workspaces.quick_open.placeholder")}
+              maxLength={255}
+              disabled={quickOpening}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !quickOpening && quickBranch.trim().length > 0) {
+                  e.preventDefault();
+                  onQuickOpen();
+                }
+              }}
+              className="flex-1"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onQuickOpen}
+              disabled={quickOpening || quickBranch.trim().length === 0}
+              title={t("workspaces.quick_open.hint")}
+            >
+              {quickOpening ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ExternalLink className="h-3 w-3" />
+              )}
+              {t("workspaces.quick_open.button")}
+            </Button>
+          </div>
+        ) : null}
 
         {state === "loading" ? (
           <div className="rounded-lg border border-dashed border-border p-8 text-center text-[12px] text-fg-muted">
@@ -315,7 +392,7 @@ export function ProjectDetail() {
         projectId={projectId}
         onClose={() => setShowCreate(false)}
         onCreated={(ws) => {
-          setWorkspaces((prev) => [ws, ...prev]);
+          upsertWorkspace(ws);
           setShowCreate(false);
         }}
       />

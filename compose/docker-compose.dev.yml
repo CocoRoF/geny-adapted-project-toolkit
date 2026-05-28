@@ -150,6 +150,9 @@ services:
     # No 443 in dev — TLS happens at host level on the real domain.
 
   # ---------- observability (optional `metrics` profile) ----------
+  # Prometheus is here for the `/metrics` scrape — read with curl or
+  # promtool. Grafana was removed (AGPLv3 license posture); use an
+  # external Prometheus client if you want dashboards.
   prometheus:
     profiles: ["metrics"]
     image: prom/prometheus:v2.55.0
@@ -160,21 +163,6 @@ services:
     ports:
       - "127.0.0.1:39090:9090"
 
-  grafana:
-    profiles: ["metrics"]
-    image: grafana/grafana:11.3.0
-    restart: unless-stopped
-    depends_on:
-      - prometheus
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: gapt-dev
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana-data:/var/lib/grafana
-    ports:
-      - "127.0.0.1:33000:3000"
-
 volumes:
   postgres-data:
   redis-data:
@@ -182,7 +170,6 @@ volumes:
   caddy-data:
   caddy-config:
   prometheus-data:
-  grafana-data:
 
 networks:
   default:

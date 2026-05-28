@@ -1,4 +1,4 @@
-import { apiDelete, apiFetch, apiGet } from "@/api/client";
+import { apiDelete, apiFetch, apiGet, apiPost } from "@/api/client";
 
 // ─────────────────────────────────────────────── Cloudflare ──
 
@@ -166,6 +166,9 @@ export const verifyMigration = () =>
 export interface RunCutoverRequest {
   sudo_password?: string;
   tunnel_id?: string;
+  /** When true the script is generated + audit row recorded but
+   *  NOT executed. Used by the Wizard's "Preview script" button. */
+  dry_run?: boolean;
 }
 
 export interface RunCutoverResponse {
@@ -174,12 +177,65 @@ export interface RunCutoverResponse {
   stdout: string;
   stderr: string;
   message: string;
+  /** ID of the `provider_migrations` row recorded for this
+   *  cutover. Lets the UI link to history + 1-click revert. */
+  migration_id?: string | null;
+  /** True when post-cutover health check failed and the system
+   *  auto-reverted the systemd drop-in. */
+  rolled_back?: boolean;
 }
 
 export const runCutoverScript = (body: RunCutoverRequest) =>
   apiFetch<RunCutoverResponse>(
     `/_gapt/api/providers/cloudflare/migration/run-cutover`,
     { method: "POST", json: body },
+  );
+
+// ───────────────────────── migration history + revert ──
+
+export interface MigrationHistoryRow {
+  id: string;
+  kind: string;
+  provider_kind: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  rolled_back_at: string | null;
+  error: string | null;
+}
+
+export interface MigrationDetailResponse extends MigrationHistoryRow {
+  before_snapshot: Record<string, unknown>;
+  after_snapshot: Record<string, unknown>;
+}
+
+export interface RevertMigrationRequest {
+  sudo_password?: string;
+}
+
+export interface RevertMigrationResponse {
+  ok: boolean;
+  message: string;
+  migration_id: string;
+}
+
+export const listMigrationHistory = (limit = 50) =>
+  apiGet<MigrationHistoryRow[]>(
+    `/_gapt/api/providers/cloudflare/migrations?limit=${limit}`,
+  );
+
+export const getMigrationDetail = (migId: string) =>
+  apiGet<MigrationDetailResponse>(
+    `/_gapt/api/providers/cloudflare/migrations/${encodeURIComponent(migId)}`,
+  );
+
+export const revertMigration = (
+  migId: string,
+  body: RevertMigrationRequest = {},
+) =>
+  apiPost<RevertMigrationResponse>(
+    `/_gapt/api/providers/cloudflare/migrations/${encodeURIComponent(migId)}/revert`,
+    body,
   );
 
 // ─────────────────────── wildcard cert helpers ──

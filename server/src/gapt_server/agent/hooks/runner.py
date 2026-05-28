@@ -15,7 +15,11 @@ from gapt_server.agent.hooks.cost_hook import (
     CostCallback,
     build_cost_hook,
 )
-from gapt_server.agent.hooks.policy_hook import PolicyHookConfig, build_policy_hook
+from gapt_server.agent.hooks.policy_hook import (
+    ChatModeRef,
+    PolicyHookConfig,
+    build_policy_hook,
+)
 
 if TYPE_CHECKING:
     from gapt_server.domains.audit.sink import AuditSink
@@ -31,6 +35,7 @@ def build_hook_runner(
     workspace_id: str,
     session_id: str,
     on_cost_update: CostCallback | None = None,
+    mode_ref: ChatModeRef | None = None,
 ) -> tuple[HookRunner, CostAccumulator]:
     """Return ``(runner, cost_accumulator)``. The runner already has
     policy + audit + cost hooks registered.
@@ -55,6 +60,7 @@ def build_hook_runner(
         config=PolicyHookConfig(
             actor_id=actor_id, project_id=project_id, workspace_id=workspace_id
         ),
+        mode_ref=mode_ref,
     )
     pre_audit, post_audit_ok, post_audit_fail = build_audit_hook(
         sink=audit_sink,

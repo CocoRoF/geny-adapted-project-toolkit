@@ -49,12 +49,16 @@ export const listSessions = (projectId: string): Promise<SessionResponse[]> =>
 export const getSession = (sessionId: string): Promise<SessionResponse> =>
   apiGet<SessionResponse>(`/_gapt/api/sessions/${sessionId}`);
 
+export type ChatMode = "plan" | "act";
+
 export const invokeSession = (
   sessionId: string,
   message: string,
+  mode: ChatMode = "act",
 ): Promise<{ session_id: string; status: string }> =>
   apiPost<{ session_id: string; status: string }>(`/_gapt/api/sessions/${sessionId}/invoke`, {
     message,
+    mode,
   });
 
 export const interruptSession = (

@@ -389,6 +389,46 @@ def _subdomain_route_payload(
     }
 
 
+ZONE_CATCHALL_ROUTE_ID = "gapt-preview-zone-catchall"
+
+
+def _zone_catchall_payload(
+    preview_domain: str, exclude_apex_host: str | None
+) -> dict[str, Any]:
+    """`*.<preview-domain>` host wildcard → static 404, terminal.
+
+    Sits just after specific subdomain routes (which are also
+    `terminal: true` and at lower indices). Catches requests to
+    *unregistered* preview slugs so they get a clean 404 instead of
+    falling through to the apex path matchers — without this, a
+    stopped stack's URL ends up redirecting visitors to the GAPT IDE,
+    which is confusing.
+
+    When `exclude_apex_host` is set, we add a `not` clause so the
+    wildcard doesn't accidentally claim the GAPT IDE's own host
+    (happens when preview_domain is the zone apex and GAPT is a
+    one-level subdomain of it — e.g. preview_domain="hrletsgo.me"
+    + GAPT at "gapt.hrletsgo.me"). Without the exclusion, visiting
+    GAPT itself would 404.
+    """
+    wildcard = f"*.{preview_domain.rstrip('.').lower()}"
+    matcher: dict[str, Any] = {"host": [wildcard]}
+    if exclude_apex_host:
+        matcher["not"] = [{"host": [exclude_apex_host.lower()]}]
+    return {
+        "@id": ZONE_CATCHALL_ROUTE_ID,
+        "match": [matcher],
+        "handle": [
+            {
+                "handler": "static_response",
+                "status_code": 404,
+                "body": "Preview not registered.",
+            }
+        ],
+        "terminal": True,
+    }
+
+
 @dataclass
 class SubdomainManager:
     """Register / unregister preview routes via Caddy admin.
@@ -406,6 +446,12 @@ class SubdomainManager:
     # (`https://gapt.hrletsgo.me/preview/<slug>`) regardless of mode.
     # When False, subdomain mode returns `<slug>.<preview_domain>`.
     use_apex_for_path: bool = True
+    # Public host of GAPT itself — used by the zone-wide catch-all
+    # 404 to EXCLUDE itself, so e.g. when preview_domain="hrletsgo.me"
+    # the catch-all `*.hrletsgo.me → 404` doesn't accidentally 404
+    # the GAPT IDE at `gapt.hrletsgo.me`. None = no exclusion
+    # (safe when preview_domain is a strict sub-host of GAPT apex).
+    gapt_apex_host: str | None = None
     # Serialises register/unregister so the DELETE-then-POST splice
     # cycle (see _upsert) never has two callers racing on the same
     # routes array.
@@ -583,8 +629,29 @@ class SubdomainManager:
                 if not _is_header_only(p) and not _is_host_only(p)
             ]
 
+            # Drop any existing zone catch-all — we'll re-insert it
+            # in the right place below. Lets us recompute the
+            # `exclude_apex_host` clause without growing stale.
+            arr = [
+                r
+                for r in arr
+                if not (
+                    isinstance(r, dict)
+                    and r.get("@id") == ZONE_CATCHALL_ROUTE_ID
+                )
+            ]
             for offset, payload in enumerate(host_payloads):
                 arr.insert(offset, payload)
+            # Zone-wide catch-all sits AFTER the specific host
+            # routes (so a registered slug matches its own route
+            # first) but BEFORE the path-keyed matchers. The
+            # `terminal: true` on the catch-all means visiting an
+            # unregistered subdomain returns 404 instead of falling
+            # through to the apex GAPT redirect.
+            arr.insert(
+                len(host_payloads),
+                _zone_catchall_payload(self.preview_domain, self.gapt_apex_host),
+            )
 
             # Anchor for the path-keyed routes: the safety-net 404 or
             # the IDE catch-all, whichever comes first.

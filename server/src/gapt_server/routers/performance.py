@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -34,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from gapt_server.container import AppContainer, get_app_settings, get_container
-from gapt_server.db import models
+from gapt_server.db import enums, models
 from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.domains.performance import (
     ContainerCategory,
@@ -85,11 +86,16 @@ def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
         broadcaster = PerformanceBroadcaster(sampler=_get_sampler())
 
         async def _build_payload(samples: list[ContainerSample]) -> dict:
-            db_ctx, last_deploys = await asyncio.gather(
+            # Phase E.2 — fan out three independent fetches in
+            # parallel: DB context (incl. session metrics), last
+            # deploys, host GPU sample. None of them depends on the
+            # others; gathering them halves wall-clock latency.
+            db_ctx, last_deploys, gpu_samples = await asyncio.gather(
                 _load_db_context_isolated(container),
                 _load_last_deploys(container),
+                sample_gpu(),
             )
-            projects, workspaces, environments = db_ctx
+            projects, workspaces, environments, session_metrics = db_ctx
             svc_by_workspace = _snapshot_workspace_services(container)
             enriched: list[ContainerSample] = []
             for s in samples:
@@ -105,8 +111,15 @@ def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
             total_cpu = sum((s.stats.cpu_pct for s in enriched if s.stats), 0.0)
             total_mem = sum((s.stats.mem_bytes for s in enriched if s.stats), 0)
             running = sum(1 for s in enriched if s.summary.status == "running")
+            from gapt_server.domains.workspace_sandbox.manager import (  # noqa: PLC0415
+                format_gpus_flag,
+            )
+
             return {
-                "samples": [_sample_dto(s).model_dump() for s in enriched],
+                "samples": [
+                    _sample_dto_with_metrics(s, session_metrics).model_dump()
+                    for s in enriched
+                ],
                 "projects": [
                     {
                         "id": p.id,
@@ -129,6 +142,10 @@ def _get_broadcaster(container: AppContainer) -> PerformanceBroadcaster:
                 "running_containers": running,
                 "total_cpu_pct": total_cpu,
                 "total_mem_bytes": total_mem,
+                "gpus": [_gpu_dto(g).model_dump() for g in gpu_samples],
+                "applied_gpu_policy": format_gpus_flag(
+                    container.settings.workspace_gpus
+                ),
             }
 
         broadcaster.set_payload_builder(_build_payload)
@@ -185,10 +202,27 @@ class StatsDto(BaseModel):
     pids: int | None
 
 
+class SessionMetricsDto(BaseModel):
+    """Phase E.2 — agent session counters joined onto a container
+    sample by `workspace_id`. Sums every non-archived AgentSession
+    for that workspace so the perf tab can show "this workspace
+    has cost $X / used N tokens" without a second round-trip.
+
+    Always omitted (set on `SampleDto.session_metrics = None`) for
+    infrastructure containers (caddy / postgres / prometheus) since
+    they don't host agent sessions."""
+
+    cost_usd_total: float
+    input_tokens_total: int
+    output_tokens_total: int
+    session_count: int
+
+
 class SampleDto(BaseModel):
     summary: SummaryDto
     limits: LimitsDto
     stats: StatsDto | None
+    session_metrics: SessionMetricsDto | None = None
 
 
 class ProjectDto(BaseModel):
@@ -247,6 +281,14 @@ class ContainersResponse(BaseModel):
     running_containers: int
     total_cpu_pct: float
     total_mem_bytes: int
+    # Phase E.2 — live host GPU samples folded into the same stream
+    # as the container list. Empty array when no NVIDIA driver is
+    # present. The dashboard no longer needs a separate `/gpu` fetch.
+    gpus: list[GpuDto] = []
+    # Phase E.2 — current `--gpus` value applied to new workspace
+    # containers. `null` = CPU-only. Lets the perf tab show "GPU
+    # device=0,1 — applies to new workspaces" without polling /gpu.
+    applied_gpu_policy: str | None = None
 
 
 class HostInfoResponse(BaseModel):
@@ -271,6 +313,16 @@ class GpuDto(BaseModel):
 class GpusResponse(BaseModel):
     available: bool
     gpus: list[GpuDto]
+    # Phase E.1 — surface the currently-applied workspace GPU policy
+    # so the UI can show "containers are getting GPU X" without a
+    # second round-trip. `null` means workspace containers boot
+    # CPU-only (the default). When non-null, this is exactly what
+    # gets passed to `docker run --gpus <value>` in normalised form.
+    applied_policy: str | None = None
+    # The env var name an operator should set to change the policy.
+    # Hard-coded here so the Settings UI can render a copy-paste
+    # hint without us re-stating the convention in every locale.
+    policy_env_var: str = "GAPT_WORKSPACE_GPUS"
 
 
 class LogsResponse(BaseModel):
@@ -343,17 +395,69 @@ async def _load_db_context(
     dict[str, models.Project],
     dict[str, models.Workspace],
     dict[str, models.Environment],
+    dict[str, "SessionMetricsAccumulator"],
 ]:
-    """Load the projects / workspaces / environments tables once per
-    request. The samples loop joins against these dicts."""
+    """Load the projects / workspaces / environments tables + the
+    workspace→agent_session metric rollup once per request. The
+    samples loop joins against these dicts."""
+    from sqlalchemy import func as _sql_func  # noqa: PLC0415
+
     projects_rows = (await db.execute(select(models.Project))).scalars().all()
     workspaces_rows = (await db.execute(select(models.Workspace))).scalars().all()
     envs_rows = (await db.execute(select(models.Environment))).scalars().all()
+    # Phase E.2 — aggregate non-archived agent_sessions per workspace
+    # so the perf tab can render "this workspace has cost $X / N
+    # tokens" without N+1 queries. The single GROUP BY is cheap; we
+    # do it inside the same short-lived session as the rest.
+    session_rows = (
+        await db.execute(
+            select(
+                models.AgentSession.workspace_id,
+                _sql_func.coalesce(_sql_func.sum(models.AgentSession.cost_usd), 0),
+                _sql_func.coalesce(
+                    _sql_func.sum(models.AgentSession.input_tokens), 0
+                ),
+                _sql_func.coalesce(
+                    _sql_func.sum(models.AgentSession.output_tokens), 0
+                ),
+                _sql_func.count(models.AgentSession.id),
+            )
+            .where(
+                models.AgentSession.status
+                != enums.AgentSessionStatus.ARCHIVED  # type: ignore[attr-defined]
+            )
+            .group_by(models.AgentSession.workspace_id)
+        )
+    ).all()
+    session_metrics: dict[str, SessionMetricsAccumulator] = {
+        row[0]: SessionMetricsAccumulator(
+            cost_usd_total=float(row[1] or 0.0),
+            input_tokens_total=int(row[2] or 0),
+            output_tokens_total=int(row[3] or 0),
+            session_count=int(row[4] or 0),
+        )
+        for row in session_rows
+    }
     return (
         {p.id: p for p in projects_rows},
         {w.id: w for w in workspaces_rows},
         {e.id: e for e in envs_rows},
+        session_metrics,
     )
+
+
+@dataclass(frozen=True)
+class SessionMetricsAccumulator:
+    """Phase E.2 — Pythonic mirror of `SessionMetricsDto` used while
+    holding DB rows. Kept separate from the wire-format DTO so the
+    payload builder can decide which containers deserve metrics
+    (only those with a real workspace_id) without leaking the DB
+    aggregate shape into the response."""
+
+    cost_usd_total: float
+    input_tokens_total: int
+    output_tokens_total: int
+    session_count: int
 
 
 def _enrich_summary(
@@ -468,6 +572,33 @@ def _sample_dto(s: ContainerSample) -> SampleDto:
     )
 
 
+def _sample_dto_with_metrics(
+    s: ContainerSample,
+    session_metrics: dict[str, "SessionMetricsAccumulator"],
+) -> SampleDto:
+    """Phase E.2 — variant of `_sample_dto` that attaches session
+    metrics when the sample belongs to a workspace with active
+    agent sessions. Infra containers (no `workspace_id`) get
+    `session_metrics=None`."""
+    sm: SessionMetricsDto | None = None
+    wid = s.summary.workspace_id
+    if wid is not None:
+        acc = session_metrics.get(wid)
+        if acc is not None:
+            sm = SessionMetricsDto(
+                cost_usd_total=acc.cost_usd_total,
+                input_tokens_total=acc.input_tokens_total,
+                output_tokens_total=acc.output_tokens_total,
+                session_count=acc.session_count,
+            )
+    return SampleDto(
+        summary=_summary_dto(s.summary),
+        limits=_limits_dto(s.limits),
+        stats=_stats_dto(s.stats),
+        session_metrics=sm,
+    )
+
+
 def _gpu_dto(g: GpuSample) -> GpuDto:
     return GpuDto(
         index=g.index,
@@ -491,6 +622,7 @@ async def _load_db_context_isolated(
     dict[str, models.Project],
     dict[str, models.Workspace],
     dict[str, models.Environment],
+    dict[str, "SessionMetricsAccumulator"],
 ]:
     """Open a short-lived session JUST for the projects/workspaces/
     environments lookup, release the connection immediately. The
@@ -500,7 +632,7 @@ async def _load_db_context_isolated(
     when multiple browser tabs poll concurrently. Two empty tables
     + a sub-50ms read does not deserve a long-lived connection."""
     if container.session_factory is None:
-        return ({}, {}, {})
+        return ({}, {}, {}, {})
     async with container.session_factory() as db:
         return await _load_db_context(db)
 
@@ -611,12 +743,16 @@ async def list_containers(
     # DB read uses its own short-lived session (released before the
     # slow docker sampling begins / in parallel with it). The
     # request-scoped session dependency is intentionally NOT used.
-    samples, db_ctx, last_deploys = await asyncio.gather(
+    # Phase E.2 — add `sample_gpu()` to the parallel fan-out so the
+    # poll endpoint matches the SSE payload shape (single fetch
+    # gives the UI everything it needs).
+    samples, db_ctx, last_deploys, gpu_samples = await asyncio.gather(
         sampler.sample_all(),
         _load_db_context_isolated(container),
         _load_last_deploys(container),
+        sample_gpu(),
     )
-    projects, workspaces, environments = db_ctx
+    projects, workspaces, environments, session_metrics = db_ctx
     # In-memory registry — no IO, take in the same thread.
     svc_by_workspace = _snapshot_workspace_services(container)
     enriched: list[ContainerSample] = []
@@ -631,8 +767,12 @@ async def list_containers(
     total_cpu = sum((s.stats.cpu_pct for s in enriched if s.stats), 0.0)
     total_mem = sum((s.stats.mem_bytes for s in enriched if s.stats), 0)
     running = sum(1 for s in enriched if s.summary.status == "running")
+    from gapt_server.domains.workspace_sandbox.manager import (  # noqa: PLC0415
+        format_gpus_flag,
+    )
+
     return ContainersResponse(
-        samples=[_sample_dto(s) for s in enriched],
+        samples=[_sample_dto_with_metrics(s, session_metrics) for s in enriched],
         projects=[
             ProjectDto(
                 id=p.id,
@@ -648,6 +788,8 @@ async def list_containers(
         running_containers=running,
         total_cpu_pct=total_cpu,
         total_mem_bytes=total_mem,
+        gpus=[_gpu_dto(g) for g in gpu_samples],
+        applied_gpu_policy=format_gpus_flag(container.settings.workspace_gpus),
     )
 
 
@@ -664,13 +806,15 @@ async def get_container_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "container.not_found", "reason": container_id},
         )
-    projects, workspaces, environments = await _load_db_context_isolated(container)
+    projects, workspaces, environments, session_metrics = await _load_db_context_isolated(
+        container
+    )
     enriched = ContainerSample(
         summary=_enrich_summary(sample.summary, projects, workspaces, environments),
         limits=sample.limits,
         stats=sample.stats,
     )
-    return _sample_dto(enriched)
+    return _sample_dto_with_metrics(enriched, session_metrics)
 
 
 @router.post("/containers/{container_id}/stop", response_model=ActionResponse)
@@ -1032,7 +1176,21 @@ async def host_info(
 
 @router.get("/gpu", response_model=GpusResponse)
 async def gpu_info(
+    container: AppContainer = Depends(get_container),  # noqa: B008
     _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> GpusResponse:
+    from gapt_server.domains.workspace_sandbox.manager import (  # noqa: PLC0415
+        format_gpus_flag,
+    )
+
     gpus = await sample_gpu()
-    return GpusResponse(available=bool(gpus), gpus=[_gpu_dto(g) for g in gpus])
+    # Phase E.1 — `applied_policy` is the normalised arg we'd pass to
+    # `docker run --gpus`. Surfaces the operator-set policy back to
+    # the UI so the Settings page can say "containers boot with
+    # device=0,1" or "containers boot CPU-only".
+    applied = format_gpus_flag(container.settings.workspace_gpus)
+    return GpusResponse(
+        available=bool(gpus),
+        gpus=[_gpu_dto(g) for g in gpus],
+        applied_policy=applied,
+    )

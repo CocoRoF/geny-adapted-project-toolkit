@@ -35,6 +35,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -218,7 +219,20 @@ class Workspace(Base):
     )
     created_at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (Index("ix_workspaces_project_status", "project_id", "status"),)
+    __table_args__ = (
+        Index("ix_workspaces_project_status", "project_id", "status"),
+        # Phase C.1: one *active* workspace per (project, branch).
+        # Partial index — archived rows can pile up freely so the audit
+        # value is preserved, and re-creating a workspace for a branch
+        # whose prior row was archived still works.
+        Index(
+            "ix_workspaces_project_branch_active",
+            "project_id",
+            "branch",
+            unique=True,
+            postgresql_where=text("status != 'archived'"),
+        ),
+    )
 
 
 # ──────────────────────────────────────────────────────────── sandboxes ──
@@ -278,6 +292,47 @@ class AgentSession(Base):
     )
 
     __table_args__ = (Index("ix_agent_sessions_project_status", "project_id", "status"),)
+
+
+# ─────────────────────────────────────────────────────── session_events ──
+
+
+class SessionEvent(Base):
+    """Phase D.3 — durable SSE event log per agent session.
+
+    Today's `SessionEventBus` keeps the last 1024 events in memory.
+    A backend restart wipes that buffer and the chat panel reloads
+    blank. Mirroring every published event into this table lets
+    the replay endpoint reconstruct the conversation across server
+    restarts.
+
+    Primary key is `(session_id, seq)` because seq is monotonic
+    per-session and the bus assigns it atomically — there's no
+    ambiguity. The table is append-only (no UPDATE / DELETE in the
+    happy path) so size grows with usage; old rows are pruned via
+    background sweep (out of v1 scope — sweep is added when a real
+    user starts hitting the 1MB-per-session threshold).
+    """
+
+    __tablename__ = "session_events"
+
+    session_id: Mapped[str] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_session_events_session_seq", "session_id", "seq"),
+    )
 
 
 # ────────────────────────────────────────────────────────────── secrets ──
@@ -432,4 +487,61 @@ class ProviderConfig(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+# ──────────────────────────────────────────────── provider_migrations ──
+
+
+class ProviderMigration(Base):
+    """One row per destructive provider operation (cloudflared
+    tunnel cutover, etc). Captures the before/after snapshot so the
+    operator can review and 1-click revert later. Without this
+    audit row we have no way to answer "what did the cutover I ran
+    last Tuesday actually change" — the migration scripts are
+    stateless."""
+
+    __tablename__ = "provider_migrations"
+
+    id: Mapped[str] = _pk()
+    kind: Mapped[str] = mapped_column(String(80), nullable=False)
+    """e.g. `cloudflare.tunnel_remote_managed` — namespaced so
+    future provider migrations slot in here too."""
+
+    provider_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    """FK-like reference to ProviderConfig.kind. Not a real FK
+    because a migration may run AFTER the provider config was
+    deleted (you might want to revert post-deletion)."""
+
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    """`in_progress` | `ok` | `failed` | `rolled_back` | `dry_run`."""
+
+    before_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    """Whatever we captured before mutating — for the cloudflared
+    cutover: `{tunnel_ingress: [...], systemd_unit: "...",
+    cloudflared_status: "..."}`."""
+
+    after_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    """Re-fetched state after the operation, same shape as before."""
+
+    error: Mapped[str | None] = mapped_column(Text)
+    """Free-text error description when status=failed."""
+
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When the operator clicked revert. Null = still in effect."""
+
+    __table_args__ = (
+        Index("ix_provider_migrations_started_at", "started_at"),
+        Index(
+            "ix_provider_migrations_provider_kind_started_at",
+            "provider_kind",
+            "started_at",
+        ),
     )

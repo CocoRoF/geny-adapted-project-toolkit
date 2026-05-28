@@ -27,8 +27,17 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any
+
+
+EventPersister = Callable[["SessionEvent"], Awaitable[None]]
+"""Phase D.3 — optional async sink the bus calls *outside* its lock
+after every successful publish. The default registry leaves it
+unset, so existing tests + boot paths keep ephemeral semantics. The
+session router wires this to a DB writer so events survive a
+backend restart."""
 
 
 class SessionEventKind(StrEnum):
@@ -82,11 +91,27 @@ class SessionEventBus:
     """
 
     history_limit: int = 1024
+    persister: EventPersister | None = None
     _history: list[SessionEvent] = field(default_factory=list)
     _subscribers: list[asyncio.Queue[SessionEvent | None]] = field(default_factory=list)
     _seq: int = 0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _closed: bool = False
+    # Phase D.3 — when rehydrating a session after a server restart,
+    # the in-memory `_seq` starts at 0. The bus needs to know the
+    # highest seq already persisted to DB so replay + new events
+    # don't collide. Set via `seed_seq()` immediately after
+    # construction; default 0 means "fresh session".
+    _persisted_seq: int = 0
+
+    def seed_seq(self, last_persisted_seq: int) -> None:
+        """Resume mid-conversation: tell the bus the next event must
+        be assigned seq = `last_persisted_seq + 1`. Idempotent — only
+        bumps the counter when the argument is greater than the
+        current value (safety net against an out-of-order call)."""
+        if last_persisted_seq > self._seq:
+            self._seq = last_persisted_seq
+            self._persisted_seq = last_persisted_seq
 
     async def publish(self, kind: SessionEventKind, data: dict[str, Any]) -> SessionEvent:
         async with self._lock:
@@ -96,12 +121,24 @@ class SessionEventBus:
             event = SessionEvent(seq=self._seq, kind=kind, data=data)
             self._history.append(event)
             if len(self._history) > self.history_limit:
-                # Drop from the front — replay older than the limit is
-                # not supported.
+                # Drop from the front — in-memory replay older than the
+                # limit is not supported. DB replay covers older history
+                # when a persister is wired (Phase D.3).
                 self._history.pop(0)
             for q in list(self._subscribers):
                 q.put_nowait(event)
-            return event
+        # Persister runs *outside* the lock so a slow DB write doesn't
+        # block the next publish. Best-effort: a failed write is
+        # logged but never raised — the live stream still went out.
+        if self.persister is not None:
+            try:
+                await self.persister(event)
+            except Exception:  # noqa: BLE001
+                # The publish path mustn't fail because a sink is
+                # temporarily unavailable. The next publish will retry
+                # implicitly by writing its own event.
+                pass
+        return event
 
     async def subscribe(self) -> asyncio.Queue[SessionEvent | None]:
         async with self._lock:

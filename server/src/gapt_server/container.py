@@ -137,7 +137,7 @@ def build_container(
     if settings.postgres_dsn is None:
         sink_noop = audit_sink or NullAuditSink()
         policy_noop = _engine_from_settings(settings, sink_noop)
-        ws_sandbox_noop = WorkspaceSandboxManager()
+        ws_sandbox_noop = WorkspaceSandboxManager(gpus=settings.workspace_gpus)
         return AppContainer(
             settings=settings,
             engine=None,
@@ -169,7 +169,7 @@ def build_container(
             max_batch_size=settings.audit_max_batch_size,
         )
         sink = pg_sink
-    ws_sandbox = WorkspaceSandboxManager()
+    ws_sandbox = WorkspaceSandboxManager(gpus=settings.workspace_gpus)
     return AppContainer(
         settings=settings,
         engine=engine,

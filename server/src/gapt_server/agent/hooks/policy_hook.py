@@ -16,7 +16,7 @@ deployment never depends on which provider the user picked.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import structlog
@@ -47,6 +47,28 @@ class PolicyHookConfig:
     workspace_id: str
 
 
+# Phase D.1 — tools that mutate workspace state. In Plan mode the
+# policy hook short-circuits to block before the engine even runs.
+# Keep this list narrow and explicit: missing a tool here would let
+# Plan mode silently fall back to allow, which would defeat the gate.
+PLAN_MUTATION_TOOLS: frozenset[str] = frozenset(
+    {"gapt_edit", "gapt_git", "gapt_pr"}
+)
+
+
+@dataclass
+class ChatModeRef:
+    """Mutable per-session container for the Plan/Act mode flag.
+
+    The runtime updates ``mode`` on every `invoke()`; the policy
+    hook reads it at PRE_TOOL_USE time. A shared reference (not a
+    copy) so the hook always sees the latest value without the
+    runtime needing to rebuild the hook chain on each mode switch.
+    """
+
+    mode: str = "act"
+
+
 _TOOL_TO_ACTION: dict[str, str] = {
     # gapt_git push branches into protected vs feature paths; the
     # daemon-side gate already refuses protected, so the engine here
@@ -70,6 +92,7 @@ def build_policy_hook(
     *,
     engine: PolicyEngine,
     config: PolicyHookConfig,
+    mode_ref: ChatModeRef | None = None,
 ) -> PolicyHook:
     """Return an async handler suitable for
     ``HookRunner.register_in_process(HookEvent.PRE_TOOL_USE, handler)``.
@@ -82,12 +105,31 @@ def build_policy_hook(
                      required". Cycle 2.10's SSE layer surfaces the
                      reason text to the UI prompt; M1 ships block-only
                      handling — auto-approval flow is M1-E4.
+
+    When ``mode_ref`` is provided and reports ``mode == "plan"``,
+    every mutating tool (see :data:`PLAN_MUTATION_TOOLS`) is rejected
+    *before* the engine runs. Read-only tools fall through to the
+    normal engine path in either mode. Phase D.1.
     """
 
     actor = Actor(kind=ActorKind.AGENT_SESSION, id=config.actor_id)
     scope = Scope(project_id=config.project_id, workspace_id=config.workspace_id)
 
     async def handler(payload: HookEventPayload) -> HookOutcome:
+        if (
+            mode_ref is not None
+            and mode_ref.mode == "plan"
+            and payload.tool_name in PLAN_MUTATION_TOOLS
+        ):
+            logger.info(
+                "policy_hook.plan_mode_block",
+                tool_name=payload.tool_name,
+                actor_id=config.actor_id,
+            )
+            return HookOutcome.block(
+                f"Plan mode blocks mutating tool {payload.tool_name!r}. "
+                "Switch to Act mode to apply changes."
+            )
         action = _resolve_action(payload.tool_name)
         evaluation = await engine.evaluate(
             action=action,

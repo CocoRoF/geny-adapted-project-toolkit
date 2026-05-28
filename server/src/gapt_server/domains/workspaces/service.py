@@ -48,6 +48,7 @@ from gapt_server.domains.sandbox import (
     SandboxResources,
     SecurityInvariantError,
 )
+from gapt_server.domains.workspaces import worktree as worktree_mod
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -340,11 +341,16 @@ class WorkspaceService:
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         credentials_resolver: CredentialResolver | None = None,
         workspace_sandbox: WorkspaceSandboxManager | None = None,
+        max_active_sandboxes: int | None = None,
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
         self._audit: AuditSink = audit_sink or NullAuditSink()
         self._clone: CloneRunner = clone_runner or _default_clone_runner
+        # Phase C.2.d — cap on concurrent live workspaces. None = no
+        # cap (legacy / test default). Counted across the whole DB
+        # since GAPT is single-admin.
+        self._max_active = max_active_sandboxes
         # `_clone_is_default` lets us safely route to the credential-
         # aware variant only when no custom clone_runner was injected.
         # Tests inject a 3-arg stub and don't supply credentials, so
@@ -376,6 +382,54 @@ class WorkspaceService:
         worktree_path: str | None = None,
     ) -> WorkspaceView:
         project = await fetch_project_for(db, actor=actor, project_id=project_id)
+        # Phase C.1: one *active* workspace per (project, branch). If
+        # the user asks for a branch that already has a live row, hand
+        # it back idempotently — the UI's "open branch X" action then
+        # works regardless of whether the workspace already exists.
+        # Archived rows are intentionally ignored: they don't block
+        # re-creation.
+        existing_stmt = (
+            select(models.Workspace)
+            .where(
+                models.Workspace.project_id == project_id,
+                models.Workspace.branch == branch,
+                models.Workspace.status != enums.WorkspaceStatus.ARCHIVED,
+            )
+            .order_by(models.Workspace.created_at.desc())
+            .limit(1)
+        )
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+        if existing is not None:
+            existing.last_activity_at = _now()
+            await db.flush()
+            return _view(existing)
+
+        # Phase C.2.d — cap on concurrent live workspaces. Counts only
+        # rows holding an active container (CREATING + RUNNING). The
+        # idempotent-reuse branch above is intentionally exempt: opening
+        # an already-live branch should never fail the cap check.
+        if self._max_active is not None:
+            from sqlalchemy import func as _sql_func  # noqa: PLC0415
+
+            active_count_stmt = select(_sql_func.count()).where(
+                models.Workspace.status.in_(
+                    [
+                        enums.WorkspaceStatus.CREATING,
+                        enums.WorkspaceStatus.RUNNING,
+                    ]
+                )
+            )
+            active_count = (await db.execute(active_count_stmt)).scalar_one()
+            if active_count >= self._max_active:
+                raise WorkspaceError(
+                    "workspace.cap_reached",
+                    (
+                        f"active workspace cap reached ({active_count}/"
+                        f"{self._max_active}). Stop or archive an existing "
+                        "workspace, or raise GAPT_MAX_ACTIVE_SANDBOXES."
+                    ),
+                )
+
         workspace_id = new_ulid()
         worktree = worktree_path or f"/workspace/{project.slug}/{workspace_id}"
         row = models.Workspace(
@@ -622,33 +676,93 @@ class WorkspaceService:
         git_remote_url: str,
         credentials: dict[str, str],
     ) -> tuple[str, str | None]:
-        """Clone the project remote into `worktree`.
+        """Materialise the working tree for `branch` at `worktree`.
 
-        Only ensures the *parent* directory exists — git refuses any
-        non-empty destination, so the worktree itself must be empty
-        (or missing). If the worktree already exists and is non-empty,
-        we treat it as a resume case and skip clone.
+        Default path (production, Phase C.1+): a bare repo per project
+        + one real `git worktree` per workspace. The bare lives at
+        `<project_root>/.bare` next to the workspace dir; first
+        workspace creates it via `git clone --bare`, subsequent
+        workspaces just `git worktree add`.
+
+        Legacy path (tests with `clone_runner=...` injected): keeps
+        the original `git clone --depth=1 --branch=<x>` shape so the
+        stub remains a 3-arg callable.
 
         Returns `(outcome, detail)`:
         - `("cloned", None)` on success.
-        - `("exists", "<reason>")` when the dir was already non-empty.
+        - `("exists", "<reason>")` when the dir was already non-empty
+          (resume case — we treat the existing files as authoritative).
         - `("error", "<stderr>")` when git failed.
         - `("skipped", "<reason>")` when we don't even try.
         """
         if not git_remote_url:
             return ("skipped", "git_remote_url empty")
 
-        outcome, detail = await asyncio.to_thread(
-            _check_worktree, worktree
-        )
+        # Resume case: a previous create attempt may have already
+        # materialised the dir. We honour it regardless of layout
+        # (bare-backed or legacy clone).
+        outcome, detail = await asyncio.to_thread(_check_worktree, worktree)
         if outcome != "proceed":
             return (outcome, detail)
 
+        # Default path → bare + worktree. Only when no custom clone
+        # runner is injected (tests pass `clone_runner=...` to control
+        # what clone does, and that stub has the legacy 3-arg shape).
+        if self._clone_is_default:
+            return await self._prepare_via_worktree(
+                worktree=worktree,
+                branch=branch,
+                git_remote_url=git_remote_url,
+                credentials=credentials,
+            )
+
+        # Legacy clone path (kept for the existing test surface).
         exit_code, _stdout, stderr = await self._do_clone(
             git_remote_url, branch, worktree, credentials=credentials
         )
         if exit_code != 0:
             return ("error", stderr.strip()[-400:] or f"git clone exit={exit_code}")
+        return ("cloned", None)
+
+    async def _prepare_via_worktree(
+        self,
+        *,
+        worktree: str,
+        branch: str,
+        git_remote_url: str,
+        credentials: dict[str, str],
+    ) -> tuple[str, str | None]:
+        """Bare + `git worktree add` path. Used by production; tests
+        can also opt in by leaving `clone_runner` unset and patching
+        `worktree_mod.ensure_bare` / `add_worktree`."""
+        project_root = os.path.dirname(worktree.rstrip("/")) or "/"
+        github_token = credentials.get("github_token")
+        extra_config: list[str] | None = None
+        if github_token:
+            extra_config = [
+                "-c",
+                f"http.extraHeader={_github_basic_header(github_token)}",
+            ]
+        bare = await worktree_mod.ensure_bare(
+            project_root,
+            git_remote_url=git_remote_url,
+            extra_config=extra_config,
+        )
+        if not bare.ok:
+            return (
+                "error",
+                bare.stderr.strip()[-400:] or f"bare init exit={bare.exit_code}",
+            )
+        add = await worktree_mod.add_worktree(
+            project_root,
+            worktree_path=worktree,
+            branch=branch,
+        )
+        if not add.ok:
+            return (
+                "error",
+                add.stderr.strip()[-400:] or f"worktree add exit={add.exit_code}",
+            )
         return ("cloned", None)
 
     async def _do_clone(
@@ -706,6 +820,38 @@ class WorkspaceService:
         return ref
 
     # ───────────────────────────────────────────────────── read ──
+
+    async def list_all_active(
+        self, db: AsyncSession
+    ) -> list[WorkspaceView]:
+        """Phase C.2.a — every non-archived workspace across every
+        project. Powers the "see what I'm working on right now"
+        view on the projects index. Single-admin model means no
+        project-level filtering is needed."""
+        stmt = (
+            select(models.Workspace)
+            .where(models.Workspace.status != enums.WorkspaceStatus.ARCHIVED)
+            .order_by(models.Workspace.last_activity_at.desc())
+        )
+        rows = (await db.execute(stmt)).scalars().all()
+        return [_view(r) for r in rows]
+
+    async def active_stats(self, db: AsyncSession) -> tuple[int, int | None]:
+        """Phase C.2.d helper. Returns `(active_count, cap)` so the UI
+        can surface "5 of 6 workspaces active" — and warn when the
+        cap is close. `cap=None` means no cap is configured."""
+        from sqlalchemy import func as _sql_func  # noqa: PLC0415
+
+        stmt = select(_sql_func.count()).where(
+            models.Workspace.status.in_(
+                [
+                    enums.WorkspaceStatus.CREATING,
+                    enums.WorkspaceStatus.RUNNING,
+                ]
+            )
+        )
+        count = (await db.execute(stmt)).scalar_one()
+        return count, self._max_active
 
     async def list_for_project(
         self,
@@ -785,10 +931,29 @@ class WorkspaceService:
         row = await self._fetch(
             db, actor=actor, workspace_id=workspace_id
         )
+        worktree_path = row.worktree_path
         await self._sandbox_for(db, row, action="destroy", swallow_missing=True)
         row.status = enums.WorkspaceStatus.ARCHIVED
         row.last_activity_at = _now()
         await db.flush()
+        # Phase C.1: remove the on-disk worktree (or legacy clone dir).
+        # Best-effort — the DB row is already archived, so a transient
+        # FS failure shouldn't block the user from rebuilding for the
+        # same branch. Skipped entirely on the test path because the
+        # injected `clone_runner` stub doesn't materialise real dirs.
+        if self._clone_is_default and worktree_path:
+            project_root = os.path.dirname(worktree_path.rstrip("/")) or "/"
+            try:
+                await worktree_mod.remove_worktree(
+                    project_root, worktree_path=worktree_path
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning(
+                    "workspace.worktree.cleanup_failed",
+                    workspace_id=workspace_id,
+                    worktree=worktree_path,
+                    error=str(exc),
+                )
         await self._audit.log(
             AuditEvent(
                 action=AuditAction.WORKSPACE_DELETE,

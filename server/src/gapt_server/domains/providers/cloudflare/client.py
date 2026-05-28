@@ -23,12 +23,18 @@ so the caller can surface specific messages
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
 
 
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
+
+
+def _default_client_factory(timeout_s: float) -> httpx.AsyncClient:
+    """Production factory — fresh `httpx.AsyncClient` per request."""
+    return httpx.AsyncClient(timeout=timeout_s)
 
 
 class CloudflareApiError(RuntimeError):
@@ -69,10 +75,15 @@ class CloudflareClient:
         *,
         timeout_s: float = 10.0,
         base_url: str = CLOUDFLARE_API_BASE,
+        client_factory: Callable[[float], httpx.AsyncClient] | None = None,
     ) -> None:
         self._token = token
         self._timeout = timeout_s
         self._base = base_url.rstrip("/")
+        # Test seam — pass a factory that returns `httpx.AsyncClient
+        # (transport=httpx.MockTransport(...))` to swap out the
+        # network for a fixture without touching production code.
+        self._client_factory = client_factory or _default_client_factory
 
     # ───────────────────────────────────────── low-level transport ──
 
@@ -89,7 +100,7 @@ class CloudflareClient:
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as c:
+        async with self._client_factory(self._timeout) as c:
             resp = await c.request(
                 method, url, headers=headers, json=json_body, params=params
             )

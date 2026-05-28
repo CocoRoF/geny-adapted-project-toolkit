@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { useI18n } from "@/app/providers/i18n-context";
+import { usePaletteAction } from "@/app/usePaletteAction";
 import { ChatPanel } from "@/chat/ChatPanel";
 import { FileEditor } from "@/ide/Editor";
 import { ActivityBar, type SideView } from "@/ide/shell/ActivityBar";
@@ -36,6 +38,40 @@ const DEFAULT_LAYOUT: LayoutState = {
   chatWidth: 380,
 };
 
+/** Phase D.5 — Named layout presets selectable from the palette
+ *  (Cmd/Ctrl+K). Each preset is a complete `LayoutState` so
+ *  switching is a single set-state call. Operator-saved layouts
+ *  (current behaviour: workspace localStorage entry) survive a
+ *  preset switch — selecting "default" doesn't wipe the LS value
+ *  for OTHER workspaces, only the current one's. */
+const LAYOUT_PRESETS: Record<string, LayoutState> = {
+  default: DEFAULT_LAYOUT,
+  chat_focused: {
+    sideView: null,
+    sideWidth: 260,
+    bottomTab: null,
+    bottomHeight: 240,
+    chatOpen: true,
+    chatWidth: 560,
+  },
+  debug: {
+    sideView: "files",
+    sideWidth: 240,
+    bottomTab: "terminal",
+    bottomHeight: 280,
+    chatOpen: true,
+    chatWidth: 360,
+  },
+  minimal: {
+    sideView: null,
+    sideWidth: 260,
+    bottomTab: null,
+    bottomHeight: 240,
+    chatOpen: false,
+    chatWidth: 380,
+  },
+};
+
 function storageKey(workspaceId: string): string {
   return `${STORAGE_KEY_PREFIX}.${workspaceId}`;
 }
@@ -66,8 +102,40 @@ function writeStored(workspaceId: string, state: LayoutState): void {
  * persists in localStorage per workspace. */
 export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Props) {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [layout, setLayout] = useState<LayoutState>(() => readStored(workspaceId));
   const [openFile, setOpenFile] = useState<string | null>(null);
+
+  // Phase D.5 — palette-driven layout presets. One usePaletteAction
+  // per preset (the cmdk fuzzy filter handles ranking).
+  usePaletteAction({
+    id: "layout.preset.default",
+    title: t("ide.layout.preset.default"),
+    section: t("palette.section.layout"),
+    keywords: ["layout", "preset", "default"],
+    run: () => setLayout(LAYOUT_PRESETS.default),
+  });
+  usePaletteAction({
+    id: "layout.preset.chat_focused",
+    title: t("ide.layout.preset.chat_focused"),
+    section: t("palette.section.layout"),
+    keywords: ["layout", "preset", "chat", "focused"],
+    run: () => setLayout(LAYOUT_PRESETS.chat_focused),
+  });
+  usePaletteAction({
+    id: "layout.preset.debug",
+    title: t("ide.layout.preset.debug"),
+    section: t("palette.section.layout"),
+    keywords: ["layout", "preset", "debug", "terminal"],
+    run: () => setLayout(LAYOUT_PRESETS.debug),
+  });
+  usePaletteAction({
+    id: "layout.preset.minimal",
+    title: t("ide.layout.preset.minimal"),
+    section: t("palette.section.layout"),
+    keywords: ["layout", "preset", "minimal", "editor"],
+    run: () => setLayout(LAYOUT_PRESETS.minimal),
+  });
 
   // Persist layout to LS whenever it changes (debounced via state
   // batching — write happens on every effect tick which is rare).

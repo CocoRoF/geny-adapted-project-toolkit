@@ -101,6 +101,7 @@ def get_workspace_service(
         session_factory=session_factory,
         credentials_resolver=resolve_credentials,
         workspace_sandbox=container.workspace_sandbox,
+        max_active_sandboxes=settings.max_active_sandboxes,
     )
 
 
@@ -131,10 +132,26 @@ class WorkspaceResponse(BaseModel):
         return cls(**v.__dict__)
 
 
+class WorkspaceStatsResponse(BaseModel):
+    """Phase C.2.d — surface "X of Y workspaces are live" to the UI
+    so it can warn before the operator hits the cap."""
+
+    active: int
+    cap: int | None
+
+
 def _http_from_workspace_error(exc: WorkspaceError) -> HTTPException:
     if exc.code == "workspace.not_found":
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "reason": str(exc)},
+        )
+    if exc.code == "workspace.cap_reached":
+        # Phase C.2.d — 429 communicates "load shedding" (operator
+        # needs to free up capacity), distinct from a 409 (conflict
+        # with current state).
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={"code": exc.code, "reason": str(exc)},
         )
     if exc.code in {
@@ -205,6 +222,31 @@ async def list_workspaces(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return [WorkspaceResponse.from_view(v) for v in views]
+
+
+@by_id.get("", response_model=list[WorkspaceResponse])
+async def list_all_active_workspaces(
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> list[WorkspaceResponse]:
+    """Phase C.2.a — every non-archived workspace across every
+    project. The projects index page uses this to surface "what
+    am I working on right now" with cross-project visibility."""
+    views = await svc.list_all_active(db)
+    return [WorkspaceResponse.from_view(v) for v in views]
+
+
+@by_id.get("/stats", response_model=WorkspaceStatsResponse)
+async def workspace_stats(
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> WorkspaceStatsResponse:
+    """Phase C.2.d — cap-aware stats. UI shows a banner once
+    `active / cap >= 0.8`."""
+    active, cap = await svc.active_stats(db)
+    return WorkspaceStatsResponse(active=active, cap=cap)
 
 
 @by_id.get("/{workspace_id}", response_model=WorkspaceResponse)

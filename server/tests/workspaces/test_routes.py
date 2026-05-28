@@ -81,8 +81,42 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
         return (0, "stub clone\n", "")
 
     from gapt_server.domains.workspaces import service as ws_service
+    from gapt_server.domains.workspaces import worktree as worktree_mod
 
     monkeypatch.setattr(ws_service, "_default_clone_runner", _noop_clone)
+
+    # Phase C.1: the default service path now uses bare-repo + worktree
+    # primitives, which would also try to run real git against the
+    # fake remote URL. Stub them out to mirror the clone stub above —
+    # the lifecycle test only cares about DB+sandbox state, not the
+    # working-tree contents.
+    async def _ok_ensure_bare(
+        _project_root: str,
+        *,
+        git_remote_url: str = "",
+        extra_config: list[str] | None = None,
+    ) -> worktree_mod.GitRunResult:
+        return worktree_mod.GitRunResult(0, "stub bare", "")
+
+    async def _ok_add_worktree(
+        _project_root: str, *, worktree_path: str, branch: str
+    ) -> worktree_mod.GitRunResult:
+        import os as _os  # noqa: PLC0415
+
+        _os.makedirs(worktree_path, exist_ok=True)
+        return worktree_mod.GitRunResult(0, "stub add", "")
+
+    async def _ok_remove_worktree(
+        _project_root: str, *, worktree_path: str
+    ) -> worktree_mod.GitRunResult:
+        import shutil as _shutil  # noqa: PLC0415
+
+        _shutil.rmtree(worktree_path, ignore_errors=True)
+        return worktree_mod.GitRunResult(0, "stub remove", "")
+
+    monkeypatch.setattr(worktree_mod, "ensure_bare", _ok_ensure_bare)
+    monkeypatch.setattr(worktree_mod, "add_worktree", _ok_add_worktree)
+    monkeypatch.setattr(worktree_mod, "remove_worktree", _ok_remove_worktree)
 
     app = create_app(settings=settings, container=container)
     try:
@@ -197,6 +231,162 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
         assert ("workspace.create", "error") in actions
     finally:
         fx.sandbox.create = original_create  # type: ignore[assignment]
+
+
+@pytest.mark.asyncio
+async def test_workspace_stats_reflects_cap(fx: _Fx) -> None:
+    """Phase C.2.d — GET /workspaces/stats reports the active count
+    + configured cap so the UI can warn the operator before the cap
+    is hit."""
+    async with AsyncClient(
+        transport=ASGITransport(app=fx.app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/_gapt/api/workspaces/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "active" in body
+        assert "cap" in body
+        assert body["active"] == 0
+
+
+@pytest.mark.asyncio
+async def test_create_at_cap_returns_429(fx: _Fx) -> None:
+    """Phase C.2.d — once the cap is reached, POST /workspaces
+    rejects with 429 + a stable error code so the UI can render a
+    targeted "free up capacity" message."""
+    # Override the service dependency with a cap=1 instance so the
+    # test doesn't have to create six workspaces just to verify the
+    # 7th gets rejected.
+    from gapt_server.domains.workspaces.service import WorkspaceService
+
+    original = fx.app.dependency_overrides.copy()
+
+    def low_cap_service() -> WorkspaceService:
+        return WorkspaceService(
+            sandbox_backend=fx.sandbox,
+            sandbox_image="gapt-workspace:latest",
+            audit_sink=fx.audit,
+            max_active_sandboxes=1,
+        )
+
+    from gapt_server.routers.workspaces import get_workspace_service
+
+    fx.app.dependency_overrides[get_workspace_service] = low_cap_service
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=fx.app), base_url="http://test"
+        ) as client:
+            project_id = await _create_project(client)
+
+            first = await client.post(
+                f"/_gapt/api/projects/{project_id}/workspaces",
+                json={"branch": "main"},
+            )
+            assert first.status_code == 201
+
+            # Different branch — still hits the cap because (cap=1) and
+            # the first row is already CREATING/RUNNING.
+            second = await client.post(
+                f"/_gapt/api/projects/{project_id}/workspaces",
+                json={"branch": "feature/x"},
+            )
+            assert second.status_code == 429
+            assert second.json()["detail"]["code"] == "workspace.cap_reached"
+
+            # Idempotent reuse still works even when the cap is
+            # exhausted — opening an existing branch must never get
+            # rate-limited.
+            repeat_main = await client.post(
+                f"/_gapt/api/projects/{project_id}/workspaces",
+                json={"branch": "main"},
+            )
+            assert repeat_main.status_code in (200, 201)
+            assert repeat_main.json()["id"] == first.json()["id"]
+    finally:
+        fx.app.dependency_overrides = original
+
+
+@pytest.mark.asyncio
+async def test_create_with_existing_active_branch_returns_same_workspace(
+    fx: _Fx,
+) -> None:
+    """Phase C.1: POST /workspaces with a (project, branch) that
+    already has a live row hands the existing workspace back instead
+    of creating a duplicate. Lets the UI's "open branch X" action
+    work whether or not the workspace already exists."""
+    async with AsyncClient(
+        transport=ASGITransport(app=fx.app), base_url="http://test"
+    ) as client:
+        project_id = await _create_project(client)
+
+        first = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "main"},
+        )
+        assert first.status_code == 201
+        first_id = first.json()["id"]
+
+        # Same branch again — should NOT create a second row.
+        second = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "main"},
+        )
+        assert second.status_code in (200, 201)
+        assert second.json()["id"] == first_id
+
+        # Exactly one workspace listed.
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/workspaces")
+        assert len([w for w in listed.json() if w["branch"] == "main"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_after_archive_succeeds_with_new_id(fx: _Fx) -> None:
+    """Phase C.1: archived rows don't block re-creation. The partial
+    unique index has `WHERE status != 'archived'` so once a row is
+    archived the (project, branch) slot is free again."""
+    async with AsyncClient(
+        transport=ASGITransport(app=fx.app), base_url="http://test"
+    ) as client:
+        project_id = await _create_project(client)
+
+        first = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "main"},
+        )
+        assert first.status_code == 201
+        first_id = first.json()["id"]
+
+        archive = await client.delete(f"/_gapt/api/workspaces/{first_id}")
+        assert archive.status_code == 200
+        assert archive.json()["status"] == "archived"
+
+        second = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "main"},
+        )
+        assert second.status_code == 201
+        assert second.json()["id"] != first_id
+
+
+@pytest.mark.asyncio
+async def test_create_different_branches_makes_separate_rows(fx: _Fx) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=fx.app), base_url="http://test"
+    ) as client:
+        project_id = await _create_project(client)
+
+        a = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "main"},
+        )
+        b = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "feature/x"},
+        )
+        assert a.status_code == 201
+        assert b.status_code == 201
+        assert a.json()["id"] != b.json()["id"]
 
 
 @pytest.mark.asyncio

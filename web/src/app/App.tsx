@@ -2,6 +2,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { AppPaletteActions } from "@/app/AppPaletteActions";
 import { CommandPalette } from "@/app/CommandPalette";
+import { ProjectsPaletteActions } from "@/app/ProjectsPaletteActions";
 import { AppRouter } from "@/app/router";
 import { AuthProvider } from "@/app/providers/AuthProvider";
 import { I18nProvider } from "@/app/providers/I18nProvider";
@@ -23,6 +24,7 @@ export default function App() {
           <AuthProvider>
             <PaletteProvider>
               <AppPaletteActions />
+              <ProjectsPaletteActions />
               <CommandPalette />
               <AppRouter />
             </PaletteProvider>

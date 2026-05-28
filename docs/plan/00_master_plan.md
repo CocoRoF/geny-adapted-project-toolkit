@@ -31,12 +31,16 @@
 | **M1** 첫 통합 워크플로 | M1-E1, M1-E2, M1-E3, M1-E4 | **상세** | [`m1/`](m1/) |
 | **M1.5** dogfood readiness | 1.5-A ~ 1.5-F | **상세** | [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) |
 | **M2 Phase A** serving capability | M2-A1 ~ M2-A5 | **상세** | [`m2_serve_capability.md`](m2_serve_capability.md) |
-| M2 Phase B (멀티 프로젝트 / 워크트리 본 cycle / UX 다듬기) | (M2 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
-| M3 멀티 사용자 + OIDC | (M3 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
-| M4 K8s / 엔터프라이즈 | (M4 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
-| M5 자동 운영 / 비즈니스 | (M5 윤곽만) | 윤곽 | [`m2_m5_outline.md`](m2_m5_outline.md) |
+| **M2 Phase B** preview domain + Cloudflare provider | (이번 세션에서 완료) | 메모리 | [[project_gapt_cloudflare_provider]] |
+| **M2 Phase B-Hardening** robustness + 테스트 백필 | B.H.1 ~ B.H.4 | **완료** (2026-05-28) | [`m2_phase_b_hardening.md`](m2_phase_b_hardening.md) |
+| **M2 Phase C** worktree workspace (C.1) → multi-project UX (C.2) | **완료** (C.1+C.2 — 2026-05-28); C.3/C.4 보류 | **상세** | [`m2_phase_c.md`](m2_phase_c.md) |
+| **M2 Phase D** agent UX 폴리시 (Plan/Act / diff 그루핑 / 영속화) | **완료** (D.1+D.2+D.3+D.5 — 2026-05-28) | **상세** | [`m2_phase_d.md`](m2_phase_d.md) |
+| **M2 Phase E** 리소스 모델 정합성 (GPU passthrough / perf 매시업 / Prometheus 정리) | E.1 → E.2 → E.3 진행 중 | **상세** | [`m2_phase_e.md`](m2_phase_e.md) |
+| ~~M3 멀티 사용자~~ | **out of v1 scope** | — | single-admin 결정 |
+| ~~M4 K8s / 엔터프라이즈~~ | **out of v1 scope** | — | single-admin 결정 |
+| ~~M5 자동 운영 / SaaS~~ | **out of v1 scope** | — | OSS self-hosted 코어 유지 |
 
-> *주의*: M2~M5는 *지금 디테일하게 짜지 않는다*. M1 종료 시점에 학습된 현실을 반영해 M2를 디테일화하고, 그 시점에 M3 윤곽을 다시 손본다. 예측 정확도가 낮은 단계를 같은 깊이로 짜는 건 낭비.
+> *v1 범위 (2026-05-28 확정)*: Phase D 까지가 v1. 멀티유저 / K8s / SaaS 는 v1 코드/UX 결정에 영향 주지 않는 영구 out-of-scope. 추후 확장 여지는 단일-admin 가정과 충돌 없는 범위 안에서만 검토.
 
 cycle 간 의존성은 [`dependencies.md`](dependencies.md).
 
@@ -140,9 +144,22 @@ cycle 간 의존성은 [`dependencies.md`](dependencies.md).
 | **M1-E3** | [Web IDE 셸 (Monaco/dockview/xterm/chat SSE/diff)](m1/e3_web_ide_shell.md) | planned | 12d / 14 PR |
 | **M1-E4** | [통합 (Deploy/Audit/Policy/Dogfood/Geny 어댑트)](m1/e4_integration_dogfood_geny.md) | planned | 10d / 12 PR |
 
-### M2~M5 — 윤곽
+### M1.5 — Dogfood Readiness (완료)
 
-[`m2_m5_outline.md`](m2_m5_outline.md) 참조.
+[`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) 참조.
+
+### M2 — Serving / Preview Domain / Hardening / Multi-project / UX
+
+| Phase | Status | 위치 |
+|---|---|---|
+| Phase A (serving capability) | ✅ done | [`m2_serve_capability.md`](m2_serve_capability.md) |
+| Phase B (preview domain + Cloudflare provider) | ✅ done | memory: [[project_gapt_cloudflare_provider]] |
+| Phase B-Hardening (robustness) | ✅ done (2026-05-28) | [`m2_phase_b_hardening.md`](m2_phase_b_hardening.md) |
+| Phase C (worktree workspace → multi-project UX) | ✅ done (C.1+C.2 — 2026-05-28; C.3/C.4 보류) | [`m2_phase_c.md`](m2_phase_c.md) |
+| Phase D (agent UX 폴리시) | ✅ done (D.1+D.2+D.3+D.5 — 2026-05-28; D.4는 C.2.b로 흡수) | [`m2_phase_d.md`](m2_phase_d.md) |
+| Phase E (리소스 모델 정합성) | 진행 중 (E.1 → E.2 → E.3) | [`m2_phase_e.md`](m2_phase_e.md) |
+
+Phase D 종료 = v1 종료. 그 이후는 사용자 본인 사용 데이터 기반 재정의.
 
 ---
 

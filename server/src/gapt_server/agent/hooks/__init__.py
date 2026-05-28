@@ -24,12 +24,14 @@ class because the runner itself is the stateful object.
 from gapt_server.agent.hooks.audit_hook import build_audit_hook
 from gapt_server.agent.hooks.cost_hook import CostAccumulator, build_cost_hook
 from gapt_server.agent.hooks.policy_hook import (
+    ChatModeRef,
     PolicyHookConfig,
     build_policy_hook,
 )
 from gapt_server.agent.hooks.runner import build_hook_runner
 
 __all__ = [
+    "ChatModeRef",
     "CostAccumulator",
     "PolicyHookConfig",
     "build_audit_hook",

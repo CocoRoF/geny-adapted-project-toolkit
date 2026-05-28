@@ -236,6 +236,10 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Bumped every time a save / reroute completes. SubdomainSetupGuide
+  // re-runs its diagnose when this changes, so a freshly-saved env
+  // doesn't stare at stale prerequisite check rows.
+  const [saveTick, setSaveTick] = useState(0);
 
   const save = async (alsoReroute: boolean) => {
     setSaving(alsoReroute ? "save_reroute" : "save");
@@ -274,6 +278,10 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
       } else {
         setFlash(t("env_settings.saved"));
       }
+      // Save (and especially reroute) changes routing state — the
+      // diagnose card was reflecting the old state. Bump the tick
+      // so SubdomainSetupGuide re-runs.
+      setSaveTick((n) => n + 1);
     } catch (e) {
       setErr(
         e instanceof ApiError
@@ -434,7 +442,9 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
           </Field>
         </Section>
 
-        {form.preview_mode === "subdomain" ? <SubdomainSetupGuide /> : null}
+        {form.preview_mode === "subdomain" ? (
+          <SubdomainSetupGuide refreshKey={saveTick} />
+        ) : null}
 
         {/* ── Upstream ── */}
         <Section
@@ -587,7 +597,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
  * server-side check and reports which step still needs work — so
  * the operator doesn't have to debug "the URL doesn't load" by
  * hand. */
-function SubdomainSetupGuide() {
+function SubdomainSetupGuide({ refreshKey = 0 }: { refreshKey?: number }) {
   const { t } = useI18n();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SubdomainDiagnose | null>(null);
@@ -612,13 +622,14 @@ function SubdomainSetupGuide() {
     }
   }, []);
 
-  // Run diagnose once on mount so we can decide whether the manual
-  // setup snippets are still relevant — if the Cloudflare provider
-  // is fully wired up, the operator should never see CNAME / yaml
-  // snippets, just confirmation that everything's handled.
+  // Run diagnose on mount AND every time the parent bumps
+  // `refreshKey` (which happens on Save / Save+Reroute). Without
+  // this re-run, the prerequisite checks stay stuck on whatever
+  // they were before the save — so the operator sees "needs cert"
+  // long after they fixed it.
   useEffect(() => {
     void diagnose();
-  }, [diagnose]);
+  }, [diagnose, refreshKey]);
 
   // "Provider handles DNS + tunnel ingress for us" — collapses the
   // manual snippets into a compact success card. We deliberately

@@ -661,6 +661,177 @@ async def test_fallback_routes_exclude_gapt_reserved_paths() -> None:
 
 
 @pytest.mark.asyncio
+async def test_zone_catchall_404_inserted_after_specific_hosts() -> None:
+    """When a subdomain route is registered, a zone-wide catch-all
+    404 lands right after the specific host routes. Unregistered
+    `<random-slug>.<preview-domain>` requests hit the 404 (terminal)
+    instead of falling through to apex path matchers → no more
+    "stack stopped → URL redirects to GAPT IDE" bug."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {"match": [{"path": ["/_gapt/app/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/"]}], "handle": [{"handler": "static_response"}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(
+        client=client,
+        preview_domain="hrletsgo.me",
+        gapt_apex_host="gapt.hrletsgo.me",
+    )
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="test",
+            upstream_host="upstream",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    posted = calls[2][2]
+    # [0] specific host route → terminal
+    # [1] zone catch-all 404 → terminal, with `not` clause for the
+    #     GAPT apex so visiting GAPT itself still works
+    assert posted[0].get("@id") == "gapt-preview-test"
+    assert posted[1].get("@id") == "gapt-preview-zone-catchall"
+    assert posted[1].get("terminal") is True
+    catchall_match = posted[1].get("match", [{}])[0]
+    assert catchall_match.get("host") == ["*.hrletsgo.me"]
+    assert catchall_match.get("not") == [{"host": ["gapt.hrletsgo.me"]}]
+    handler = posted[1].get("handle", [{}])[0]
+    assert handler.get("handler") == "static_response"
+    assert handler.get("status_code") == 404
+
+
+@pytest.mark.asyncio
+async def test_zone_catchall_no_exclusion_when_apex_unset() -> None:
+    """When `gapt_apex_host` is None (preview_domain is a strict
+    sub-host of the GAPT apex — e.g. `previews.gapt.example`), the
+    catch-all skips the `not` clause."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    manager = SubdomainManager(
+        client=CaddyAdminClient(transport=transport),
+        preview_domain="previews.gapt.example",
+        gapt_apex_host=None,
+    )
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="abc",
+            upstream_host="upstream",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    posted = calls[2][2]
+    catchall = next(p for p in posted if p.get("@id") == "gapt-preview-zone-catchall")
+    matcher = catchall.get("match", [{}])[0]
+    assert matcher.get("host") == ["*.previews.gapt.example"]
+    assert "not" not in matcher
+
+
+@pytest.mark.asyncio
+async def test_subdomain_mode_host_route_inserted_at_index_0() -> None:
+    """Subdomain-mode routes are HOST-matched and `terminal: true`.
+    Without splicing them at index 0, the apex Caddyfile's path-only
+    handlers (`/_gapt/api/*`, `/_gapt/app/*`, `/`, etc.) win for any
+    request to `<slug>.<preview-domain>` because path matchers don't
+    care about Host. That's the bug that made `test.hrletsgo.me/`
+    serve the GAPT IDE instead of the user's prod stack."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {"match": [{"path": ["/_gapt/api/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/_gapt/app/*"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/health"]}], "handle": [{"handler": "reverse_proxy"}]},
+        {"match": [{"path": ["/"]}], "handle": [{"handler": "static_response"}]},
+        {
+            "match": [{"path": ["/preview", "/preview/*"]}],
+            "handle": [{"handler": "static_response", "status_code": 404}],
+        },
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="hrletsgo.me")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="test",
+            upstream_host="gapt-prod-01x-frontend",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    posted = calls[2][2]
+    # The subdomain host route must be at index 0 — before every
+    # path matcher.
+    host_route = posted[0]
+    assert host_route.get("@id") == "gapt-preview-test"
+    assert host_route.get("terminal") is True
+    match = host_route.get("match", [{}])[0]
+    assert match.get("host") == ["test.hrletsgo.me"]
+    assert "path" not in match
+
+
+@pytest.mark.asyncio
+async def test_subdomain_register_clears_old_mode_routes() -> None:
+    """When a binding flips from path-mode to subdomain-mode (or
+    slug changes), the previous mode's family (`-asset`, `-cookie`,
+    `-cookie-doc`) must be cleared so they don't keep serving the
+    old URL pattern forever."""
+    calls: list[tuple[str, str, Any]] = []
+    # Pre-existing path-mode family — should all be dropped.
+    existing = [
+        {"@id": "gapt-preview-01kws", "match": [{"path": ["/preview/01kws/*"]}]},
+        {"@id": "gapt-preview-01kws-asset", "match": [{"header_regexp": {}}]},
+        {"@id": "gapt-preview-01kws-cookie", "match": [{"header": {}}]},
+        {"@id": "gapt-preview-01kws-cookie-doc", "match": [{"header_regexp": {}}]},
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01kws",
+            upstream_host="gapt-ws-01kws",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    posted = calls[2][2]
+    ids = [r.get("@id") for r in posted]
+    # All path-mode family entries dropped, only the new subdomain
+    # host route should reference the slug.
+    assert ids.count("gapt-preview-01kws") == 1
+    assert "gapt-preview-01kws-asset" not in ids
+    assert "gapt-preview-01kws-cookie" not in ids
+    assert "gapt-preview-01kws-cookie-doc" not in ids
+
+
+@pytest.mark.asyncio
 async def test_subdomain_manager_http_upstream_omits_transport() -> None:
     """Default HTTP upstream — no `transport`, no `headers` keys on
     the reverse_proxy handler. Keeps the route payload compact and

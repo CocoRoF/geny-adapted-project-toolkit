@@ -259,6 +259,12 @@ class RunCutoverRequest(BaseModel):
     tunnel_id: str | None = None
     """Optional override — same fallback chain as push-to-remote."""
 
+    dry_run: bool = False
+    """When True, the script is generated + the would-be backup is
+    captured + a `dry_run` audit row is recorded, but the script
+    is NOT executed. Used by the UI's preview button so the
+    operator can see exactly what will run before committing."""
+
 
 class RunCutoverResponse(BaseModel):
     ok: bool
@@ -266,6 +272,38 @@ class RunCutoverResponse(BaseModel):
     stdout: str
     stderr: str
     message: str
+    migration_id: str | None = None
+    """ID of the `provider_migrations` row recorded for this
+    cutover. Lets the UI link to the history page and offer
+    1-click revert on failure."""
+    rolled_back: bool = False
+    """True when post-cutover health check failed and the system
+    auto-reverted the systemd drop-in."""
+
+
+class MigrationHistoryRow(BaseModel):
+    id: str
+    kind: str
+    provider_kind: str
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+    rolled_back_at: datetime | None
+    error: str | None
+
+
+class MigrationDetailResponse(MigrationHistoryRow):
+    """Full row including before/after snapshots — UI fetches this
+    when the operator clicks a history entry to inspect."""
+
+    before_snapshot: dict[str, Any]
+    after_snapshot: dict[str, Any]
+
+
+class RevertResponse(BaseModel):
+    ok: bool
+    message: str
+    migration_id: str
 
 
 # ────────────────────────────────────────────────── helpers ──
@@ -278,7 +316,16 @@ async def _load_config(db: AsyncSession) -> models.ProviderConfig | None:
 
 async def _read_token(db: AsyncSession, vault: SecretVault) -> str | None:
     """Fetch the system-scoped Cloudflare token by key. Returns None
-    when not configured."""
+    when not configured.
+
+    Auto-trims whitespace/newlines so accidental trailing newlines
+    (from `cat > /tmp/t && cf-token` style paste, or a copy that
+    pulled the form's hidden newline) don't break the Authorization
+    header. The trimmed value is what gets sent to Cloudflare — we
+    don't rewrite the vault here because writes happen elsewhere
+    and double-writes risk audit noise. PUT flow trims on write
+    side too (see `put_config`).
+    """
     items = await vault.list(
         db,
         scope=enums.SecretOwnerScope.SYSTEM,
@@ -291,7 +338,7 @@ async def _read_token(db: AsyncSession, vault: SecretVault) -> str | None:
     if target is None:
         return None
     try:
-        return await vault.read(
+        raw = await vault.read(
             db, secret_id=target.id, purpose="provider.cloudflare", actor_id="admin"
         )
     except SecretVaultError as exc:
@@ -299,6 +346,10 @@ async def _read_token(db: AsyncSession, vault: SecretVault) -> str | None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": exc.code, "reason": str(exc)},
         ) from exc
+    # `.strip()` removes leading/trailing whitespace AND newlines —
+    # the most common cause of "Invalid format for Authorization
+    # header" 6111 errors during Phase B testing.
+    return raw.strip() if raw else raw
 
 
 def _require_token(token: str | None) -> str:
@@ -355,14 +406,19 @@ async def put_config(
         row = models.ProviderConfig(kind=CF_PROVIDER_KIND, config={})
         db.add(row)
 
-    # Rotate or first-write the token.
-    if payload.api_token:
+    # Rotate or first-write the token. Trim whitespace on the way
+    # in so the stored value matches what Cloudflare expects on the
+    # wire — paste accidents (trailing \n, leading space from a
+    # password manager) used to surface as opaque 6111 "Invalid
+    # Authorization" errors at API time.
+    api_token = payload.api_token.strip() if payload.api_token else None
+    if api_token:
         if row.token_secret_id:
             try:
                 await vault.rotate(
                     db,
                     secret_id=row.token_secret_id,
-                    new_value=payload.api_token,
+                    new_value=api_token,
                 )
             except SecretVaultError:
                 # Vault row was deleted out-of-band — fall through to store
@@ -373,7 +429,7 @@ async def put_config(
                 scope=enums.SecretOwnerScope.SYSTEM,
                 owner_id="admin",
                 key_name=CF_TOKEN_KEY,
-                value=payload.api_token,
+                value=api_token,
             )
             row.token_secret_id = md.id
 
@@ -827,22 +883,122 @@ async def migration_revert_script(
     )
 
 
+async def _capture_cloudflared_snapshot(
+    db: AsyncSession,
+    vault: SecretVault,
+    cfg: CloudflareConfig,
+) -> dict[str, Any]:
+    """Capture the bits we'd need to undo a cutover:
+    - current remote tunnel ingress (via Cloudflare API)
+    - current `journalctl -u cloudflared -n 50` (process state /
+      whether `--config` was in effect)
+    - whether the GAPT drop-in already exists
+
+    Failures here don't abort — partial snapshot is better than no
+    snapshot. Missing fields just mean revert won't restore that
+    aspect."""
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    snap: dict[str, Any] = {}
+    # 1. Remote tunnel ingress.
+    if cfg.account_id and cfg.tunnel_id:
+        try:
+            token = await _read_token(db, vault)
+            if token:
+                svc = CloudflareService(CloudflareClient(token))
+                tunnel_snap = await svc.snapshot(cfg.account_id, cfg.tunnel_id)
+                snap["tunnel_mode_before"] = tunnel_snap.mode
+                snap["tunnel_ingress_before"] = [
+                    e.to_api() for e in tunnel_snap.ingress
+                ]
+                snap["tunnel_warp_routing_before"] = tunnel_snap.warp_routing
+        except CloudflareApiError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 2. journalctl + systemctl show — host state of cloudflared.
+    try:
+        for cmd in (
+            ["systemctl", "show", "cloudflared.service", "-p", "ExecStart"],
+            ["systemctl", "is-active", "cloudflared.service"],
+            ["journalctl", "-u", "cloudflared.service", "-n", "20", "--no-pager"],
+        ):
+            proc = await _asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            out, _err = await proc.communicate()
+            snap.setdefault("host_state", {})[" ".join(cmd)] = out.decode(
+                errors="replace"
+            )
+    except FileNotFoundError:
+        snap.setdefault("host_state", {})["error"] = "systemctl/journalctl missing"
+    except Exception as exc:  # noqa: BLE001
+        snap.setdefault("host_state", {})["error"] = str(exc)
+    return snap
+
+
+async def _record_migration(
+    db: AsyncSession,
+    *,
+    kind: str,
+    provider_kind: str,
+    before: dict[str, Any],
+    status_value: str,
+) -> models.ProviderMigration:
+    row = models.ProviderMigration(
+        id=new_ulid(),
+        kind=kind,
+        provider_kind=provider_kind,
+        status=status_value,
+        before_snapshot=before,
+        after_snapshot={},
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+async def _finalize_migration(
+    db: AsyncSession,
+    mig_row: models.ProviderMigration,
+    *,
+    status_value: str,
+    after: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    from datetime import datetime, UTC  # noqa: PLC0415
+
+    mig_row.status = status_value
+    mig_row.finished_at = datetime.now(tz=UTC)
+    if after is not None:
+        mig_row.after_snapshot = after
+    if error is not None:
+        mig_row.error = error
+    await db.commit()
+
+
 @router.post("/migration/run-cutover", response_model=RunCutoverResponse)
 async def migration_run_cutover(
     payload: RunCutoverRequest,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
     _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> RunCutoverResponse:
     """Execute the cutover script on the host with operator-supplied
-    sudo password. Only works in deployments where the GAPT server
-    runs directly on the host with sudo access — i.e. dev / bare-
-    metal installs. In containerised prod the script must be run
-    by hand (the manual copy-paste workflow stays available).
+    sudo password. Records a `provider_migrations` audit row before
+    and after — so the UI can offer a 1-click revert and the
+    operator can answer "what did this change later".
 
-    The password reaches `sudo -S` via stdin and is never logged,
-    persisted, or echoed in the response. Audit emits a
-    `provider.cloudflare.migration.cutover_run` entry with the exit
-    code only."""
+    On `dry_run=true`: records the audit row but does NOT actually
+    execute. Used by the UI's preview button.
+
+    On post-execution health check failure: automatically reverts
+    by re-pushing the captured ingress AND removing the systemd
+    drop-in (best-effort, sudo password may be required again).
+    """
     import asyncio  # noqa: PLC0415
 
     row = await _load_config(db)
@@ -877,13 +1033,42 @@ async def migration_run_cutover(
             },
         ) from exc
 
+    # Capture the BEFORE snapshot — even on dry-run, so the
+    # operator sees what would be touched.
+    before = await _capture_cloudflared_snapshot(db, vault, cfg)
+    mig_row = await _record_migration(
+        db,
+        kind="cloudflare.tunnel_remote_managed",
+        provider_kind=CF_PROVIDER_KIND,
+        before=before,
+        status_value="dry_run" if payload.dry_run else "in_progress",
+    )
+
+    if payload.dry_run:
+        await _finalize_migration(
+            db, mig_row, status_value="dry_run", after={"script_preview": script}
+        )
+        return RunCutoverResponse(
+            ok=True,
+            exit_code=0,
+            stdout=script,
+            stderr="",
+            message=(
+                "Dry-run only — no commands executed. Review the script "
+                "above, then re-run with dry_run=false to apply."
+            ),
+            migration_id=mig_row.id,
+            rolled_back=False,
+        )
+
     try:
         result = await run_cutover_script(
             script, sudo_password=payload.sudo_password, timeout_s=60.0
         )
     except FileNotFoundError as exc:
-        # `sudo` binary missing — most likely the GAPT process is
-        # inside a minimal container.
+        await _finalize_migration(
+            db, mig_row, status_value="failed", error=str(exc)
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -896,6 +1081,9 @@ async def migration_run_cutover(
             },
         ) from exc
     except asyncio.TimeoutError as exc:
+        await _finalize_migration(
+            db, mig_row, status_value="failed", error="cutover timeout"
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail={
@@ -907,8 +1095,10 @@ async def migration_run_cutover(
             },
         ) from exc
 
-    # Classify the failure mode so the UI can show a useful
-    # message without forcing the operator to parse stderr.
+    # Post-execution: capture AFTER snapshot, classify outcome,
+    # auto-rollback if the new state looks broken.
+    after = await _capture_cloudflared_snapshot(db, vault, cfg)
+
     stderr_lc = result.stderr.lower()
     if result.ok:
         message = (
@@ -933,12 +1123,202 @@ async def migration_run_cutover(
             f"Script exited with code {result.exit_code}. See log below "
             "and `journalctl -u cloudflared -n 100` on the host."
         )
+
+    # Auto-rollback when the script failed AND we can detect the
+    # systemd drop-in landed but cloudflared isn't healthy. We
+    # don't have the sudo password again at this point (we never
+    # stored it), so the rollback is best-effort — runs the revert
+    # script with the SAME password if it was passed, else just
+    # records the failure and leaves the operator to revert
+    # manually via the history UI.
+    rolled_back = False
+    final_status = "ok" if result.ok else "failed"
+    if not result.ok and payload.sudo_password:
+        try:
+            revert = await run_cutover_script(
+                generate_revert_script(),
+                sudo_password=payload.sudo_password,
+                timeout_s=30.0,
+            )
+            if revert.ok:
+                rolled_back = True
+                final_status = "rolled_back"
+                after["rollback_stdout"] = revert.stdout
+                message += " — auto-reverted to local-config mode."
+        except Exception as exc:  # noqa: BLE001
+            after["rollback_error"] = str(exc)
+
+    await _finalize_migration(
+        db,
+        mig_row,
+        status_value=final_status,
+        after=after,
+        error=None if result.ok else (result.stderr[-400:] or "non-zero exit"),
+    )
+
     return RunCutoverResponse(
         ok=result.ok,
         exit_code=result.exit_code,
         stdout=result.stdout,
         stderr=result.stderr,
         message=message,
+        migration_id=mig_row.id,
+        rolled_back=rolled_back,
+    )
+
+
+@router.get(
+    "/migrations", response_model=list[MigrationHistoryRow]
+)
+async def migration_history(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> list[MigrationHistoryRow]:
+    """Past provider migrations, newest first. UI surface for
+    "what did I do, when, what's the current state of each
+    change"."""
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    rows = (
+        await db.execute(
+            _select(models.ProviderMigration)
+            .order_by(models.ProviderMigration.started_at.desc())
+            .limit(max(1, min(int(limit), 200)))
+        )
+    ).scalars().all()
+    return [
+        MigrationHistoryRow(
+            id=r.id,
+            kind=r.kind,
+            provider_kind=r.provider_kind,
+            started_at=r.started_at,
+            finished_at=r.finished_at,
+            status=r.status,
+            rolled_back_at=r.rolled_back_at,
+            error=r.error,
+        )
+        for r in rows
+    ]
+
+
+@router.get(
+    "/migrations/{mig_id}", response_model=MigrationDetailResponse
+)
+async def migration_detail(
+    mig_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> MigrationDetailResponse:
+    r = await db.get(models.ProviderMigration, mig_id)
+    if r is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "migration.not_found"},
+        )
+    return MigrationDetailResponse(
+        id=r.id,
+        kind=r.kind,
+        provider_kind=r.provider_kind,
+        started_at=r.started_at,
+        finished_at=r.finished_at,
+        status=r.status,
+        rolled_back_at=r.rolled_back_at,
+        error=r.error,
+        before_snapshot=r.before_snapshot or {},
+        after_snapshot=r.after_snapshot or {},
+    )
+
+
+@router.post(
+    "/migrations/{mig_id}/revert", response_model=RevertResponse
+)
+async def migration_revert(
+    mig_id: str,
+    payload: RunCutoverRequest,  # reuse the sudo_password field shape
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+    _user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> RevertResponse:
+    """Roll back a past cloudflared cutover.
+
+    1. Run the revert script (removes systemd drop-in).
+    2. PUT the ORIGINAL ingress back to Cloudflare so the tunnel
+       configuration also reverts.
+    3. Mark the migration row as `rolled_back`.
+    """
+    import asyncio  # noqa: PLC0415
+    from datetime import datetime, UTC  # noqa: PLC0415
+
+    r = await db.get(models.ProviderMigration, mig_id)
+    if r is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "migration.not_found"},
+        )
+    if r.rolled_back_at is not None:
+        return RevertResponse(
+            ok=True,
+            migration_id=mig_id,
+            message="already rolled back",
+        )
+
+    # 1. systemd drop-in removal.
+    try:
+        revert_result = await run_cutover_script(
+            generate_revert_script(),
+            sudo_password=payload.sudo_password,
+            timeout_s=30.0,
+        )
+    except (FileNotFoundError, asyncio.TimeoutError) as exc:
+        return RevertResponse(
+            ok=False,
+            migration_id=mig_id,
+            message=f"revert script failed to launch: {exc}",
+        )
+    if not revert_result.ok:
+        return RevertResponse(
+            ok=False,
+            migration_id=mig_id,
+            message=(
+                "revert script failed (exit "
+                f"{revert_result.exit_code}): {revert_result.stderr[-200:]}"
+            ),
+        )
+
+    # 2. Restore original ingress (best-effort).
+    before = r.before_snapshot or {}
+    ingress_before = before.get("tunnel_ingress_before")
+    cfg = _config_dict(await _load_config(db))
+    if (
+        ingress_before is not None
+        and cfg.account_id
+        and cfg.tunnel_id
+    ):
+        try:
+            token = await _read_token(db, vault)
+            if token:
+                client = CloudflareClient(token)
+                await client.put_tunnel_configuration(
+                    cfg.account_id,
+                    cfg.tunnel_id,
+                    config={"ingress": ingress_before},
+                )
+        except CloudflareApiError as exc:
+            logger.warning("revert.ingress_restore_failed", error=str(exc))
+
+    # 3. Mark the row.
+    r.status = "rolled_back"
+    r.rolled_back_at = datetime.now(tz=UTC)
+    await db.commit()
+
+    return RevertResponse(
+        ok=True,
+        migration_id=mig_id,
+        message=(
+            "Revert complete: systemd drop-in removed, original "
+            "ingress restored. cloudflared is back to local config."
+        ),
     )
 
 

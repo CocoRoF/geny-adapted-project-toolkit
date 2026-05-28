@@ -31,7 +31,6 @@ import {
   type ProjectRow,
   type WorkspaceRow,
   type WorkspaceServiceRow,
-  getGpuInfo,
   getHostInfo,
   killContainer,
   restartContainer,
@@ -226,7 +225,6 @@ type ViewFilter = "all" | "project" | "orphan" | "infra" | "other";
 export function PerformanceDashboard() {
   const { t } = useI18n();
   const [host, setHost] = useState<HostInfo | null>(null);
-  const [gpu, setGpu] = useState<GpusResponse | null>(null);
   const [logsFor, setLogsFor] = useState<{ id: string; name: string } | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [view, setView] = useState<ViewFilter>("all");
@@ -260,13 +258,25 @@ export function PerformanceDashboard() {
     bump((n) => n + 1);
   }, [resp]);
 
-  // One-shot fetches: host info + GPU. These don't need streaming —
-  // host CPU count + total memory are constants for the process's
-  // lifetime, and GPU stats rarely move per-second.
+  // One-shot fetch: host info. Constants for the process lifetime.
+  // GPU live samples come from the SSE stream now (Phase E.2); no
+  // need for a separate fetch.
   useEffect(() => {
     void getHostInfo().then(setHost).catch(() => undefined);
-    void getGpuInfo().then(setGpu).catch(() => undefined);
   }, []);
+
+  // Phase E.2 — derive a GpusResponse-shaped object straight from
+  // the streaming payload so GpuTiles keeps its existing prop
+  // contract. Hidden when the host has no GPU.
+  const gpu: GpusResponse | null = useMemo(() => {
+    if (!resp || !resp.gpus || resp.gpus.length === 0) return null;
+    return {
+      available: true,
+      gpus: resp.gpus,
+      applied_policy: resp.applied_gpu_policy ?? null,
+      policy_env_var: "GAPT_WORKSPACE_GPUS",
+    };
+  }, [resp]);
 
   const tree = useMemo(() => (resp ? buildTree(resp) : null), [resp]);
 
@@ -1203,9 +1213,19 @@ function ContainerRow({
 
 function Drilldown({ sample }: { sample: ContainerSample }) {
   const { t } = useI18n();
-  const { summary, limits, stats } = sample;
+  const { summary, limits, stats, session_metrics } = sample;
+  // Phase E.2 — workspace containers expand to 4 cards when there's
+  // agent session data to show. Infra/orphan containers keep the
+  // 3-card layout.
+  const showAgent = session_metrics != null && session_metrics.session_count > 0;
   return (
-    <div className="grid grid-cols-1 gap-3 text-[12px] md:grid-cols-3">
+    <div
+      className={
+        showAgent
+          ? "grid grid-cols-1 gap-3 text-[12px] md:grid-cols-2 lg:grid-cols-4"
+          : "grid grid-cols-1 gap-3 text-[12px] md:grid-cols-3"
+      }
+    >
       <Card title={t("performance.detail.identity")}>
         <KV k={t("performance.detail.id")} v={summary.id.slice(0, 12)} />
         <KV k={t("performance.detail.name")} v={summary.name} />
@@ -1275,6 +1295,26 @@ function Drilldown({ sample }: { sample: ContainerSample }) {
           <p className="text-[12px] text-fg-subtle">{t("performance.detail.not_running")}</p>
         )}
       </Card>
+      {showAgent && session_metrics ? (
+        <Card title={t("performance.detail.agent_sessions")}>
+          <KV
+            k={t("performance.detail.agent.cost")}
+            v={`$${session_metrics.cost_usd_total.toFixed(4)}`}
+          />
+          <KV
+            k={t("performance.detail.agent.input_tokens")}
+            v={session_metrics.input_tokens_total.toLocaleString()}
+          />
+          <KV
+            k={t("performance.detail.agent.output_tokens")}
+            v={session_metrics.output_tokens_total.toLocaleString()}
+          />
+          <KV
+            k={t("performance.detail.agent.session_count")}
+            v={String(session_metrics.session_count)}
+          />
+        </Card>
+      ) : null}
     </div>
   );
 }

@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import shlex
 from dataclasses import dataclass, field
 
@@ -142,6 +143,47 @@ def _container_name(workspace_id: str) -> str:
     return f"gapt-ws-{workspace_id.lower()}"
 
 
+_GPU_INDEX_RE = re.compile(r"^\d+(,\d+)*$")
+
+
+def format_gpus_flag(spec: str | None) -> str | None:
+    """Phase E.1 — translate a `Settings.workspace_gpus` value into
+    the value docker's `--gpus` flag expects.
+
+    Returns `None` to mean "omit --gpus entirely".
+
+    Accepts (and ONLY accepts):
+    - ``"all"`` → ``"all"``
+    - integer string (``"1"``, ``"2"``) → unchanged; docker reads
+      this as device-count.
+    - comma-separated index list (``"0"``, ``"0,1"``, ``"2,3,4"``)
+      → ``"device=<csv>"``.
+
+    Anything else returns ``None`` so a malformed config doesn't
+    leak into the docker argv (which would either fail loud or, on
+    older docker versions, silently substitute defaults).
+    """
+    if spec is None:
+        return None
+    s = spec.strip()
+    if not s:
+        return None
+    if s.lower() == "all":
+        return "all"
+    if _GPU_INDEX_RE.match(s):
+        # `device=0,1` is the explicit form. The bare count form
+        # ("2" meaning "any 2 GPUs") only works when the string is a
+        # single integer; we prefer the device= form for multi-index
+        # lists since it's unambiguous.
+        if "," in s:
+            return f"device={s}"
+        # Single integer: could be count OR index. Treat single
+        # digits as device index for parity with the multi-index
+        # case — the operator can use "all" if they want auto-count.
+        return f"device={s}"
+    return None
+
+
 async def _ensure_network(name: str) -> None:
     """Create the shared `gapt-net` network if it doesn't already
     exist. `docker network inspect` is cheap (single RPC) so we run
@@ -207,6 +249,13 @@ class WorkspaceSandbox:
     # claude refreshes its tokens in place.
     host_claude_dir: str | None = None
     host_claude_config: str | None = None
+    # Phase E.1 — GPU policy. `None` (default) → CPU-only container,
+    # argv unchanged. `"all"` → every host GPU. `"0"` / `"0,1"` →
+    # specific indices. Passed straight through to `docker run --gpus`
+    # which accepts either a count, "all", or `device=<csv>` shape.
+    # Validated by `_format_gpus_flag` below so we never emit a
+    # malformed flag.
+    gpus: str | None = None
 
     async def ensure(self) -> None:
         """Idempotent: start the container if it doesn't already
@@ -267,6 +316,12 @@ class WorkspaceSandbox:
             argv += ["-v", f"{self.host_claude_dir}:/home/ubuntu/.claude:rw"]
         if self.host_claude_config:
             argv += ["-v", f"{self.host_claude_config}:/home/ubuntu/.claude.json:rw"]
+        # Phase E.1 — GPU passthrough. `format_gpus_flag` returns
+        # `None` for unset / malformed config, in which case we omit
+        # `--gpus` entirely so CPU-only hosts keep working unchanged.
+        gpu_arg = format_gpus_flag(self.gpus)
+        if gpu_arg is not None:
+            argv += ["--gpus", gpu_arg]
         argv += [
             "-w",
             "/workspace",
@@ -466,6 +521,12 @@ class WorkspaceSandboxManager:
     # time; same value applied to every workspace.
     host_claude_dir: str | None = field(default=None)
     host_claude_config: str | None = field(default=None)
+    # Phase E.1 — single GPU policy for the install. Read from
+    # `Settings.workspace_gpus` at construction and stamped onto
+    # every WorkspaceSandbox handle. A change to the setting takes
+    # effect on the next workspace boot (existing containers retain
+    # their original GPU mapping until restarted).
+    gpus: str | None = field(default=None)
     _entries: dict[str, WorkspaceSandbox] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -480,6 +541,11 @@ class WorkspaceSandboxManager:
         idempotent and cheap."""
         existing = self._entries.get(workspace_id)
         if existing is not None and existing.worktree_path == worktree_path:
+            # Keep the existing handle's gpus value in sync with the
+            # manager — lets the operator flip the setting and have
+            # the next ensure() pick it up without us re-creating the
+            # entry. Container itself only sees the change on restart.
+            existing.gpus = self.gpus
             return existing
         sandbox = WorkspaceSandbox(
             workspace_id=workspace_id,
@@ -488,6 +554,7 @@ class WorkspaceSandboxManager:
             container_name=_container_name(workspace_id),
             host_claude_dir=self.host_claude_dir,
             host_claude_config=self.host_claude_config,
+            gpus=self.gpus,
         )
         self._entries[workspace_id] = sandbox
         return sandbox
