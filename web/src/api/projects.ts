@@ -38,3 +38,18 @@ export const getProject = (projectId: string): Promise<ProjectResponse> =>
 
 export const archiveProject = (projectId: string): Promise<void> =>
   apiDelete<void>(`/_gapt/api/projects/${projectId}`);
+
+export interface RemoteBranchesResponse {
+  head: string | null;
+  branches: string[];
+}
+
+export const getRemoteBranches = (
+  projectId: string,
+  opts: { refresh?: boolean } = {},
+): Promise<RemoteBranchesResponse> => {
+  const query = opts.refresh ? "?refresh=true" : "";
+  return apiGet<RemoteBranchesResponse>(
+    `/_gapt/api/projects/${projectId}/remote-branches${query}`,
+  );
+};

@@ -29,6 +29,11 @@ from gapt_server.container import (
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001
 from gapt_server.domains.auth import AdminPrincipal
+from gapt_server.domains.git_remote import (
+    RemoteBranchesError,
+    invalidate as invalidate_remote_branches,
+    list_remote_branches,
+)
 from gapt_server.domains.projects.service import (
     EnvironmentView,
     ProjectError,
@@ -36,7 +41,9 @@ from gapt_server.domains.projects.service import (
     ProjectView,
     fetch_project_for,
 )
+from gapt_server.domains.secrets.vault import SecretVault  # noqa: TC001
 from gapt_server.routers.auth import get_current_user
+from gapt_server.routers.secrets import get_vault
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -427,6 +434,92 @@ def _build_workspace_service_for_cleanup(
         credentials_resolver=None,
         workspace_sandbox=container.workspace_sandbox,
     )
+
+
+class RemoteBranchesResponse(BaseModel):
+    """Heads (and default branch) advertised by the project's git
+    remote. Backs the workspace-create modal's branch combobox so the
+    operator picks from a real list instead of typing blind."""
+
+    head: str | None
+    branches: list[str]
+
+
+@router.get(
+    "/{project_id}/remote-branches",
+    response_model=RemoteBranchesResponse,
+)
+async def get_remote_branches(
+    project_id: str,
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+) -> RemoteBranchesResponse:
+    """List the branches advertised by `project.git_remote_url`.
+
+    Cached for ~60s per project so close-and-reopen of the workspace
+    modal doesn't re-hit the network. `?refresh=true` busts the cache
+    — useful when a branch was just pushed and isn't showing up yet.
+
+    Errors map to:
+      - 404 if the project doesn't exist or the user can't see it
+      - 502 if the remote rejects auth / DNS fails / hangs
+    The frontend treats 502 as "fall back to free-text input".
+    """
+    try:
+        await fetch_project_for(db, actor=user, project_id=project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    # Re-fetch the row directly — `fetch_project_for` returns a view
+    # without the raw `git_remote_url` / `git_auth_secret_ref` we need
+    # for ls-remote. Cheap (PK lookup, same session).
+    project = (
+        await db.execute(select(models.Project).where(models.Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "project.not_found", "reason": project_id},
+        )
+
+    # Token resolution mirrors `routers.git._read_github_token`:
+    # project vault secret → host fallback → anon.
+    github_token: str | None = None
+    if project.git_auth_secret_ref:
+        try:
+            github_token = await vault.read(
+                db,
+                secret_id=project.git_auth_secret_ref,
+                purpose="workspace.git",
+                actor_id=user.id,
+            )
+        except Exception:  # noqa: BLE001 — fall through to host fallback
+            github_token = None
+    if not github_token and container.host_github_token:
+        github_token = container.host_github_token
+
+    if refresh:
+        invalidate_remote_branches(project_id)
+
+    try:
+        result = await list_remote_branches(
+            project_id=project_id,
+            git_remote_url=project.git_remote_url,
+            github_token=github_token,
+        )
+    except RemoteBranchesError as exc:
+        # 502: the remote (not GAPT) is the failing party. The modal
+        # surfaces this as a hint and falls back to free-text so the
+        # operator isn't blocked.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "git.ls_remote_failed", "reason": exc.reason},
+        ) from exc
+
+    return RemoteBranchesResponse(head=result.head, branches=result.branches)
 
 
 @router.post(

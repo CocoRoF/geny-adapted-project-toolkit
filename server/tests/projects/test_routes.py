@@ -179,3 +179,75 @@ async def test_environment_crud(proj_fx: _ProjFixture) -> None:
         )
         assert dup.status_code == 409
         assert dup.json()["detail"]["code"] == "environment.name_taken"
+
+
+@pytest.mark.asyncio
+async def test_remote_branches_endpoint(
+    proj_fx: _ProjFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: the modal asks for branches → 200 with parsed
+    heads. Then ls-remote fails → 502 with the reason surfaced so
+    the frontend can fall back to free-text."""
+    from gapt_server.domains import git_remote
+
+    git_remote._cache.clear()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=proj_fx.app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/_gapt/api/projects",
+            json={
+                "slug": "branchtest",
+                "display_name": "Branch test",
+                "git_remote_url": "https://github.com/example/branchtest.git",
+            },
+        )
+        project_id = created.json()["id"]
+
+        # Stub the ls-remote call so we don't actually hit the network.
+        captured: dict[str, object] = {}
+
+        async def _stub_list(
+            *, project_id: str, git_remote_url: str, github_token: str | None
+        ) -> git_remote.RemoteBranches:
+            captured["project_id"] = project_id
+            captured["git_remote_url"] = git_remote_url
+            captured["github_token"] = github_token
+            return git_remote.RemoteBranches(
+                head="main", branches=["main", "develop"], cached_at=0.0
+            )
+
+        monkeypatch.setattr(
+            "gapt_server.routers.projects.list_remote_branches", _stub_list
+        )
+
+        ok = await client.get(f"/_gapt/api/projects/{project_id}/remote-branches")
+        assert ok.status_code == 200, ok.text
+        body = ok.json()
+        assert body == {"head": "main", "branches": ["main", "develop"]}
+        # The project has no `git_auth_secret_ref`, so the token must
+        # come from the host fallback (or be None if the test env has
+        # no GH_TOKEN). What the endpoint must NOT do is silently lose
+        # the URL on the way to ls-remote — that's the wiring under test.
+        assert captured["git_remote_url"] == "https://github.com/example/branchtest.git"
+
+        # ls-remote failure → 502 with the reason exposed to the UI.
+        async def _stub_fail(**_kwargs: object) -> None:
+            raise git_remote.RemoteBranchesError(
+                "fatal: Authentication failed for 'https://…'"
+            )
+
+        monkeypatch.setattr(
+            "gapt_server.routers.projects.list_remote_branches", _stub_fail
+        )
+
+        bad = await client.get(f"/_gapt/api/projects/{project_id}/remote-branches")
+        assert bad.status_code == 502, bad.text
+        assert bad.json()["detail"]["code"] == "git.ls_remote_failed"
+        assert "Authentication failed" in bad.json()["detail"]["reason"]
+
+        # Unknown project = 404 (sanity — guards against IDOR if a
+        # future change makes the endpoint less strict).
+        nope = await client.get("/_gapt/api/projects/does-not-exist/remote-branches")
+        assert nope.status_code == 404
