@@ -44,7 +44,7 @@ export function SidePanel({ view, workspaceId, onOpenFile, onOpenDiff }: Props) 
         ) : view === "tests" ? (
           <TestRunnerPanel workspaceId={workspaceId} />
         ) : view === "env" ? (
-          <EnvEditor workspaceId={workspaceId} />
+          <EnvEditor workspaceId={workspaceId} onOpenFile={onOpenFile} />
         ) : null}
       </div>
     </aside>
