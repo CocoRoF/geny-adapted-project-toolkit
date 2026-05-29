@@ -94,6 +94,21 @@ class Settings(BaseSettings):
     # silently giving the agent a CPU-only container.
     workspace_gpus: str | None = None
 
+    # Where bare repos live on the host. Each project gets a
+    # `<workspace_bare_root>/<project_slug>/` subdirectory holding the
+    # `git clone --bare` of its remote. The workspace's `.git` file
+    # references that absolute path, and the workspace container
+    # mounts the same path inside so commits resolve.
+    #
+    # MUST be outside `/workspace` (and any other path mounted as a
+    # workspace worktree) — otherwise the bare's parent directories
+    # show up as untracked entries inside the worktree (the bug that
+    # caused this setting to exist). Default `/var/lib/gapt-bare`
+    # is system-style and cleanly disjoint from typical workspace
+    # roots. Override via `GAPT_WORKSPACE_BARE_ROOT` when running on
+    # a host where `/var/lib` isn't writable by the GAPT user.
+    workspace_bare_root: str = "/var/lib/gapt-bare"
+
     # --- arq / background jobs ---
     arq_queue_name: str = "gapt:default"
 

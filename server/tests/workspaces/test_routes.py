@@ -93,15 +93,20 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
     # the lifecycle test only cares about DB+sandbox state, not the
     # working-tree contents.
     async def _ok_ensure_bare(
-        _project_root: str,
         *,
+        bare_root: str = "",
+        project_slug: str = "",
         git_remote_url: str = "",
         extra_config: list[str] | None = None,
     ) -> worktree_mod.GitRunResult:
         return worktree_mod.GitRunResult(0, "stub bare", "")
 
     async def _ok_add_worktree(
-        _project_root: str, *, worktree_path: str, branch: str
+        *,
+        bare_root: str = "",
+        project_slug: str = "",
+        worktree_path: str,
+        branch: str,
     ) -> worktree_mod.GitRunResult:
         import os as _os  # noqa: PLC0415
 
@@ -109,7 +114,10 @@ async def fx(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Fx]:
         return worktree_mod.GitRunResult(0, "stub add", "")
 
     async def _ok_remove_worktree(
-        _project_root: str, *, worktree_path: str
+        *,
+        bare_root: str = "",
+        project_slug: str = "",
+        worktree_path: str,
     ) -> worktree_mod.GitRunResult:
         import shutil as _shutil  # noqa: PLC0415
 

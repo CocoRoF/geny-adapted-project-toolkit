@@ -102,6 +102,7 @@ def get_workspace_service(
         credentials_resolver=resolve_credentials,
         workspace_sandbox=container.workspace_sandbox,
         max_active_sandboxes=settings.max_active_sandboxes,
+        workspace_bare_root=settings.workspace_bare_root,
     )
 
 
@@ -513,6 +514,16 @@ async def tree(
         )
     except fs.WorkspaceFileError as exc:
         raise _http_from_fs_error(exc) from exc
+    # Hide GAPT's runtime scratch dir from the file explorer. It holds
+    # service log tails + session caches and the user never edits
+    # there; surfacing it just makes their repo look noisier than it
+    # is. Same predicate the git router uses for status/diff so the
+    # two surfaces agree. Tree entries arrive with a leading `/`
+    # (e.g. `/.gapt`) — strip before comparing.
+    def _is_gapt(p: str) -> bool:
+        stripped = p.lstrip("/")
+        return stripped == ".gapt" or stripped.startswith(".gapt/")
+    entries = [e for e in entries if not _is_gapt(e.path)]
     return [TreeEntryResponse(**vars(e)) for e in entries]
 
 

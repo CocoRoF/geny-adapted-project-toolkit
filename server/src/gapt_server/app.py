@@ -75,6 +75,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 .values(status=enums.WorkspaceStatus.FAILED)
             )
             await db.commit()
+    # One-shot bare-repo migration. Moves any legacy
+    # `<workspace_root>/<slug>/.bare/` to the new
+    # `<workspace_bare_root>/<slug>/` layout and rewrites the
+    # affected worktrees' `.git` files. Idempotent — projects already
+    # on the new layout are skipped. Without this every legacy
+    # workspace's container would either (a) fail every `git` command
+    # (no bare mount) or (b) leak the bare's parent dir into the
+    # worktree's git status (the bug this layout fixes). See
+    # `domains/workspaces/bare_migration.py`.
+    if container.session_factory is not None:
+        from gapt_server.domains.workspaces.bare_migration import (  # noqa: PLC0415
+            run_bare_migration,
+        )
+
+        try:
+            report = await run_bare_migration(
+                session_factory=container.session_factory,
+                # Hardcoded to match service.py's worktree-path shape
+                # `/workspace/<slug>/<wid>` — paired with the workspace
+                # creation default. If we ever expose a settable
+                # workspace_root, update both together.
+                workspace_root="/workspace",
+                workspace_bare_root=settings.workspace_bare_root,
+            )
+            if (
+                report.migrated
+                or report.skipped_target_exists
+                or report.failed
+            ):
+                logger.info(
+                    "workspace.bare_migration.done",
+                    migrated=len(report.migrated),
+                    skipped_no_legacy=len(report.skipped_no_legacy),
+                    skipped_target_exists=len(report.skipped_target_exists),
+                    failed=len(report.failed),
+                )
+        except Exception:
+            logger.exception("workspace.bare_migration.crashed")
+
     # Deploy runs whose task died with the previous server life
     # are now orphans too — flip them to `aborted` so the UI doesn't
     # show a forever-spinning bar.

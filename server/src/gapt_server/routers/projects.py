@@ -448,6 +448,7 @@ def _build_workspace_service_for_cleanup(
         session_factory=container.session_factory,
         credentials_resolver=None,
         workspace_sandbox=container.workspace_sandbox,
+        workspace_bare_root=settings.workspace_bare_root,
     )
 
 

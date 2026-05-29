@@ -48,6 +48,12 @@ export GAPT_CADDY_PREVIEW_DOMAIN="${GAPT_CADDY_PREVIEW_DOMAIN:-gapt.hrletsgo.me}
 # `not host=<apex>` clause to that catch-all so GAPT's own
 # requests pass through.
 export GAPT_CADDY_APEX_HOST="${GAPT_CADDY_APEX_HOST:-gapt.hrletsgo.me}"
+# Bare-repo root MUST be outside `/workspace` so the bare's parent
+# dirs don't show up as untracked entries inside workspace worktrees
+# (the bug fix landed 2026-05-29). The default in `Settings` is
+# `/var/lib/gapt-bare` which needs root to create; dev runs as the
+# host user so we override to `~/.local/share/gapt-bare` instead.
+export GAPT_WORKSPACE_BARE_ROOT="${GAPT_WORKSPACE_BARE_ROOT:-${HOME}/.local/share/gapt-bare}"
 
 # ─────────────────────────────────────────── helpers ──
 

@@ -143,6 +143,40 @@ def _container_name(workspace_id: str) -> str:
     return f"gapt-ws-{workspace_id.lower()}"
 
 
+def _bare_from_worktree(worktree_path: str) -> str | None:
+    """Read `<worktree>/.git` (a file in worktree layout) and return
+    the absolute host path of the *bare* this worktree belongs to.
+
+    The `.git` file contains `gitdir: <abs path>/worktrees/<wid>`;
+    we strip the trailing `worktrees/<wid>` to recover the bare dir
+    so the container mount targets the right host directory without
+    needing to thread the bare root setting through every caller.
+
+    Returns None when `.git` isn't a file (legacy clone layout) or
+    when the content doesn't match the expected shape — both cases
+    skip the bare mount (the sandbox boots, git just won't work for
+    legacy clones, which is the same as pre-Phase-C.1 behaviour)."""
+    git_file = os.path.join(worktree_path, ".git")
+    if not os.path.isfile(git_file):
+        return None
+    try:
+        with open(git_file, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    gitdir: str | None = None
+    for line in content.splitlines():
+        if line.startswith("gitdir:"):
+            gitdir = line[len("gitdir:") :].strip()
+            break
+    if not gitdir or not os.path.isabs(gitdir):
+        return None
+    parts = gitdir.rstrip("/").split("/")
+    if len(parts) < 3 or parts[-2] != "worktrees":
+        return None
+    return "/".join(parts[:-2])
+
+
 _GPU_INDEX_RE = re.compile(r"^\d+(,\d+)*$")
 
 
@@ -311,6 +345,23 @@ class WorkspaceSandbox:
             "-v",
             f"{self.worktree_path}:/workspace",
         ]
+        # Worktree-layout workspaces (Phase C.1+) have `.git` as a
+        # *file* with `gitdir: <abs path>/worktrees/<wid>` pointing at
+        # the shared bare. That absolute host path must also exist
+        # inside the container — otherwise every `git` command fails
+        # with `fatal: not a git repository: …/worktrees/<wid>`.
+        #
+        # We read the `.git` file and mount the bare at the *same
+        # absolute host path* inside the container. As of 2026-05-29
+        # the bare lives at `<workspace_bare_root>/<slug>/` outside
+        # `/workspace`, so the mount doesn't overlap with the worktree
+        # mount (the earlier "test/ shows up as untracked" bug).
+        # Mount rw so commits land new objects in `<bare>/objects/`
+        # and update `<bare>/worktrees/<wid>/HEAD`; `--user` already
+        # matches the host owner so permissions just work.
+        bare_dir = _bare_from_worktree(self.worktree_path)
+        if bare_dir is not None and os.path.isdir(bare_dir):
+            argv += ["-v", f"{bare_dir}:{bare_dir}:rw"]
         if self.host_claude_dir:
             # rw — the CLI refreshes OAuth tokens in place.
             argv += ["-v", f"{self.host_claude_dir}:/home/ubuntu/.claude:rw"]

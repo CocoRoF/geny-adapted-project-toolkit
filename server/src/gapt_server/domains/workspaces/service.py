@@ -342,11 +342,17 @@ class WorkspaceService:
         credentials_resolver: CredentialResolver | None = None,
         workspace_sandbox: WorkspaceSandboxManager | None = None,
         max_active_sandboxes: int | None = None,
+        # Where the per-project bare repos live on the host. Required
+        # for the worktree clone path (production); tests that inject
+        # their own `clone_runner` and never hit the worktree branch
+        # can pass any string (or omit and accept the placeholder).
+        workspace_bare_root: str = "/var/lib/gapt-bare",
     ) -> None:
         self._sandbox = sandbox_backend
         self._image = sandbox_image
         self._audit: AuditSink = audit_sink or NullAuditSink()
         self._clone: CloneRunner = clone_runner or _default_clone_runner
+        self._bare_root = workspace_bare_root
         # Phase C.2.d — cap on concurrent live workspaces. None = no
         # cap (legacy / test default). Counted across the whole DB
         # since GAPT is single-admin.
@@ -518,6 +524,7 @@ class WorkspaceService:
                     branch=branch,
                     git_remote_url=project.git_remote_url,
                     credentials=credentials,
+                    project_slug=project.slug,
                 ),
                 name=f"workspace-clone-{workspace_id}",
             )
@@ -531,6 +538,7 @@ class WorkspaceService:
                 branch=branch,
                 git_remote_url=project.git_remote_url,
                 credentials=credentials,
+                project_slug=project.slug,
             )
             row.status = (
                 enums.WorkspaceStatus.RUNNING
@@ -562,6 +570,7 @@ class WorkspaceService:
         branch: str,
         git_remote_url: str,
         credentials: dict[str, str] | None = None,
+        project_slug: str | None = None,
     ) -> tuple[str, str | None]:
         try:
             return await self._prepare_worktree(
@@ -569,6 +578,7 @@ class WorkspaceService:
                 branch=branch,
                 git_remote_url=git_remote_url,
                 credentials=credentials or {},
+                project_slug=project_slug,
             )
         except Exception as exc:
             logger.exception("workspace.clone.crashed", worktree=worktree)
@@ -584,6 +594,7 @@ class WorkspaceService:
         branch: str,
         git_remote_url: str,
         credentials: dict[str, str] | None = None,
+        project_slug: str | None = None,
     ) -> None:
         """Run the clone in the background + flip workspace.status when
         done. Opens a fresh DB session because the request session has
@@ -600,6 +611,7 @@ class WorkspaceService:
             branch=branch,
             git_remote_url=git_remote_url,
             credentials=credentials or {},
+            project_slug=project_slug,
         )
         new_status = (
             enums.WorkspaceStatus.RUNNING
@@ -675,6 +687,7 @@ class WorkspaceService:
         branch: str,
         git_remote_url: str,
         credentials: dict[str, str],
+        project_slug: str | None = None,
     ) -> tuple[str, str | None]:
         """Materialise the working tree for `branch` at `worktree`.
 
@@ -714,6 +727,7 @@ class WorkspaceService:
                 branch=branch,
                 git_remote_url=git_remote_url,
                 credentials=credentials,
+                project_slug=project_slug,
             )
 
         # Legacy clone path (kept for the existing test surface).
@@ -731,11 +745,29 @@ class WorkspaceService:
         branch: str,
         git_remote_url: str,
         credentials: dict[str, str],
+        project_slug: str | None,
     ) -> tuple[str, str | None]:
         """Bare + `git worktree add` path. Used by production; tests
         can also opt in by leaving `clone_runner` unset and patching
-        `worktree_mod.ensure_bare` / `add_worktree`."""
-        project_root = os.path.dirname(worktree.rstrip("/")) or "/"
+        `worktree_mod.ensure_bare` / `add_worktree`.
+
+        `project_slug` selects the subdirectory under
+        `self._bare_root` for this project's bare repo. We tolerate
+        None by falling back to the worktree-parent basename — that's
+        the shape default-created worktrees use (`/workspace/<slug>/
+        <wid>`) so the fallback is correct for the normal path. Tests
+        that supply a custom `worktree_path` should also pass slug
+        explicitly to avoid relying on the fallback.
+        """
+        slug = project_slug or os.path.basename(
+            os.path.dirname(worktree.rstrip("/")) or "/"
+        )
+        # Defensive: refuse to call ensure_bare with an empty slug — the
+        # bare would land directly under bare_root and collide with
+        # every other project that hits the same default. Never happens
+        # on the production code path; protects test misuse.
+        if not slug:
+            return ("error", "project_slug missing — refusing to ensure bare")
         github_token = credentials.get("github_token")
         extra_config: list[str] | None = None
         if github_token:
@@ -744,7 +776,8 @@ class WorkspaceService:
                 f"http.extraHeader={_github_basic_header(github_token)}",
             ]
         bare = await worktree_mod.ensure_bare(
-            project_root,
+            bare_root=self._bare_root,
+            project_slug=slug,
             git_remote_url=git_remote_url,
             extra_config=extra_config,
         )
@@ -754,7 +787,8 @@ class WorkspaceService:
                 bare.stderr.strip()[-400:] or f"bare init exit={bare.exit_code}",
             )
         add = await worktree_mod.add_worktree(
-            project_root,
+            bare_root=self._bare_root,
+            project_slug=slug,
             worktree_path=worktree,
             branch=branch,
         )
@@ -942,10 +976,33 @@ class WorkspaceService:
         # same branch. Skipped entirely on the test path because the
         # injected `clone_runner` stub doesn't materialise real dirs.
         if self._clone_is_default and worktree_path:
-            project_root = os.path.dirname(worktree_path.rstrip("/")) or "/"
+            # `remove_worktree` needs the project slug to locate the
+            # bare. Fetching the project row is cheap (PK lookup) and
+            # we already have the project_id from the workspace row.
+            proj_slug: str | None = None
+            try:
+                proj = (
+                    await db.execute(
+                        select(models.Project).where(
+                            models.Project.id == row.project_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if proj is not None:
+                    proj_slug = proj.slug
+            except Exception:  # noqa: BLE001 — best-effort
+                proj_slug = None
+            if proj_slug is None:
+                # Fall back to parent-basename heuristic — same shape the
+                # default `create()` writes.
+                proj_slug = os.path.basename(
+                    os.path.dirname(worktree_path.rstrip("/")) or ""
+                )
             try:
                 await worktree_mod.remove_worktree(
-                    project_root, worktree_path=worktree_path
+                    bare_root=self._bare_root,
+                    project_slug=proj_slug,
+                    worktree_path=worktree_path,
                 )
             except Exception as exc:  # noqa: BLE001 — best-effort
                 logger.warning(
