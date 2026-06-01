@@ -40,6 +40,7 @@ import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Card, CardContent } from "@/ui/Card";
 import { cn } from "@/ui/cn";
+import { MarkdownText } from "@/ui/MarkdownText";
 
 export function SessionDetail() {
   const { pid, sid } = useParams<{ pid: string; sid: string }>();
@@ -138,8 +139,27 @@ export function SessionDetail() {
                   ${transcript.total_cost_usd.toFixed(4)}
                 </span>{" "}
                 · ↑{transcript.total_input_tokens.toLocaleString()} ↓
-                {transcript.total_output_tokens.toLocaleString()} ·{" "}
-                {transcript.turns.length} turn
+                {transcript.total_output_tokens.toLocaleString()}
+                {/* Phase K.2 — cache tokens make the "6 tokens but
+                    $0.013" mystery readable: the cost includes a
+                    cache_write of N thousand tokens. */}
+                {transcript.total_cache_write_tokens ? (
+                  <>
+                    {" "}⊕{transcript.total_cache_write_tokens.toLocaleString()}{" "}
+                    <span className="text-[10.5px] text-fg-subtle">
+                      cache_write
+                    </span>
+                  </>
+                ) : null}
+                {transcript.total_cache_read_tokens ? (
+                  <>
+                    {" "}⊖{transcript.total_cache_read_tokens.toLocaleString()}{" "}
+                    <span className="text-[10.5px] text-fg-subtle">
+                      cache_read
+                    </span>
+                  </>
+                ) : null}
+                {" "}· {transcript.turns.length} turn
                 {transcript.turns.length === 1 ? "" : "s"}
               </p>
             </div>
@@ -211,9 +231,10 @@ function TurnView({ index, turn }: { index: number; turn: TranscriptTurn }) {
 
       {turn.assistant ? (
         <div className="mr-auto max-w-[95%] rounded-md border border-border bg-bg-subtle px-3 py-2">
-          <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
-            {turn.assistant}
-          </pre>
+          {/* Phase K.1 — markdown render to mirror what the live
+              ChatPanel now does, so an archived viewing reads the
+              same as the original conversation. */}
+          <MarkdownText>{turn.assistant}</MarkdownText>
         </div>
       ) : null}
 

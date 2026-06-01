@@ -39,6 +39,25 @@ export function CostModal({ snapshot, onClose }: Props) {
         <dt className="text-fg-muted">{t("cost.tokens.output")}</dt>
         <dd className="font-mono tabular-nums">{snapshot.output_tokens.toLocaleString()}</dd>
 
+        {/* Phase K.2 — only show cache rows when non-zero so the
+            modal stays compact for short turns. */}
+        {snapshot.cache_write_tokens > 0 ? (
+          <>
+            <dt className="text-fg-muted">{t("cost.tokens.cache_write")}</dt>
+            <dd className="font-mono tabular-nums">
+              {snapshot.cache_write_tokens.toLocaleString()}
+            </dd>
+          </>
+        ) : null}
+        {snapshot.cache_read_tokens > 0 ? (
+          <>
+            <dt className="text-fg-muted">{t("cost.tokens.cache_read")}</dt>
+            <dd className="font-mono tabular-nums">
+              {snapshot.cache_read_tokens.toLocaleString()}
+            </dd>
+          </>
+        ) : null}
+
         <dt className="text-fg-muted">{t("cost.tool_calls")}</dt>
         <dd className="font-mono tabular-nums">{snapshot.tool_calls}</dd>
 

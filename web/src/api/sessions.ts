@@ -12,6 +12,10 @@ export interface SessionResponse {
   cost_usd: number;
   input_tokens: number;
   output_tokens: number;
+  // Phase K.2 — Anthropic cache token counts. Older server responses
+  // may omit them — surface as 0 on the UI when undefined.
+  cache_write_tokens?: number;
+  cache_read_tokens?: number;
   last_active_at: string;
   created_at: string;
   // Phase J.1 — list-view enrichments. Both default to 0 / null on
@@ -93,6 +97,10 @@ export interface SessionTranscript {
   total_cost_usd: number;
   total_input_tokens: number;
   total_output_tokens: number;
+  // Phase K.2 — Anthropic cache token totals. Default to 0 when
+  // the server didn't emit them (older transcript responses).
+  total_cache_write_tokens?: number;
+  total_cache_read_tokens?: number;
   turns: TranscriptTurn[];
 }
 

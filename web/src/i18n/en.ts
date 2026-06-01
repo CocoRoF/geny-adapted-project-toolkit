@@ -517,6 +517,8 @@ export const en = {
   "cost.session_total": "Total this session",
   "cost.tokens.input": "Input tokens",
   "cost.tokens.output": "Output tokens",
+  "cost.tokens.cache_write": "Cache write tokens",
+  "cost.tokens.cache_read": "Cache read tokens",
   "cost.tool_calls": "Tool calls",
   "cost.tool_duration": "Tool wall time",
   "cost.by_tool": "By tool",

@@ -19,6 +19,7 @@ import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
 import { annotateEditGroups } from "@/chat/diff-group";
 import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
 import { ToolCallCard } from "@/chat/ToolCallCard";
+import { MarkdownText } from "@/ui/MarkdownText";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { TraceStrip } from "@/chat/TraceStrip";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
@@ -1072,9 +1073,17 @@ function EventRow({ event, workspaceId }: EventRowProps) {
             : "mr-auto max-w-[95%] rounded-md border border-border bg-bg-subtle px-3 py-2"
         }
       >
-        <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
-          {text}
-        </pre>
+        {/* Phase K.1 — assistant responses render as markdown so code
+            blocks, inline code, and lists actually look right. User
+            echoes stay as raw text — the operator typed it literally,
+            it shouldn't get reformatted. */}
+        {isUser ? (
+          <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
+            {text}
+          </pre>
+        ) : (
+          <MarkdownText>{text}</MarkdownText>
+        )}
       </div>
     );
   }

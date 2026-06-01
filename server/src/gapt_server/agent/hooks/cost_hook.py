@@ -33,6 +33,13 @@ class CostAccumulator:
     session_id: str
     input_tokens: int = 0
     output_tokens: int = 0
+    # Phase K.2 — explicit Anthropic cache token tracking. The cost
+    # already reflects these (Phase I.3's pricing-fallback computes
+    # them off the executor's `cache_write` / `cache_read` payload
+    # fields); these counters surface the counts so the UI can say
+    # "you paid $0.013 because 3400 cache_write tokens were primed".
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
     cost_usd: float = 0.0
     tool_calls: int = 0
     tool_duration_ms: int = 0
@@ -44,6 +51,8 @@ class CostAccumulator:
             "session_id": self.session_id,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
             "cost_usd": round(self.cost_usd, 6),
             "tool_calls": self.tool_calls,
             "tool_duration_ms": self.tool_duration_ms,

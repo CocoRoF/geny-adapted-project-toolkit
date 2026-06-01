@@ -9,6 +9,9 @@ export interface CostSnapshot {
   cost_usd: number;
   input_tokens: number;
   output_tokens: number;
+  // Phase K.2 — Anthropic cache tokens (default 0 for legacy events).
+  cache_write_tokens: number;
+  cache_read_tokens: number;
   tool_calls: number;
   tool_duration_ms: number;
   by_tool: Record<string, number>;
@@ -18,6 +21,8 @@ const EMPTY: CostSnapshot = {
   cost_usd: 0,
   input_tokens: 0,
   output_tokens: 0,
+  cache_write_tokens: 0,
+  cache_read_tokens: 0,
   tool_calls: 0,
   tool_duration_ms: 0,
   by_tool: {},
@@ -46,6 +51,8 @@ export function deriveCostSnapshot(events: SessionStreamEvent[]): CostSnapshot {
       cost_usd: num(ev.data, "cost_usd"),
       input_tokens: num(ev.data, "input_tokens"),
       output_tokens: num(ev.data, "output_tokens"),
+      cache_write_tokens: num(ev.data, "cache_write_tokens"),
+      cache_read_tokens: num(ev.data, "cache_read_tokens"),
       tool_calls: num(ev.data, "tool_calls"),
       tool_duration_ms: num(ev.data, "tool_duration_ms"),
       by_tool: byToolFrom(ev.data),

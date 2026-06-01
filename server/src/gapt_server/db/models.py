@@ -286,6 +286,18 @@ class AgentSession(Base):
     cost_usd: Mapped[float] = mapped_column(Numeric(14, 6), nullable=False, server_default="0")
     input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    # Phase K.2 — Anthropic-style prompt cache token counts. The cost
+    # is already correct (Phase I.3's fallback uses these via the
+    # token.tracked payload's `cache_write` / `cache_read` keys), but
+    # surfacing the counts here lets the cost dashboard explain
+    # "6 input + 6 output ≈ $0.0001, yet you paid $0.013 because the
+    # turn primed a 3400-token cache".
+    cache_write_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
+    cache_read_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
     created_at: Mapped[datetime] = _created_at()
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

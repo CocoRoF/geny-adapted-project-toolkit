@@ -211,6 +211,13 @@ function SessionCard({
           </p>
           <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">
             ↑{session.input_tokens} ↓{session.output_tokens}
+            {/* Phase K.2 — only show cache when non-zero to keep the
+                card from getting noisy for tool-heavy turns. */}
+            {(session.cache_write_tokens ?? 0) > 0 ? (
+              <span title="cache_write tokens">
+                {" "}⊕{session.cache_write_tokens}
+              </span>
+            ) : null}
           </p>
         </div>
       </div>

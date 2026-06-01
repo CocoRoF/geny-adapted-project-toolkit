@@ -203,6 +203,45 @@ async def test_alias_fallback_fills_cost_when_executor_reports_zero() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cache_tokens_tracked_in_accumulator() -> None:
+    """Phase K.2 — the token.tracked payload's `cache_write` /
+    `cache_read` keys must end up on the accumulator + propagate to
+    the cost_callback so the DB row + cost dashboard can show them.
+    Pre-K.2 these were used inside `compute_cost_usd` but discarded
+    after, leaving the operator with "6 tokens for $0.013" and no
+    way to see where the money went."""
+    pipeline = _FakePipeline(
+        events=[
+            _FakeEvent(
+                type="token.tracked",
+                data={
+                    "input_tokens": 6,
+                    "output_tokens": 6,
+                    "cache_write": 3400,
+                    "cache_read": 200,
+                    "cost_usd": 0.0,
+                },
+            ),
+        ]
+    )
+    seen: list[CostAccumulator] = []
+
+    async def _cb(acc: CostAccumulator) -> None:
+        seen.append(acc)
+
+    runtime = _make_runtime(pipeline, model_name="sonnet", cost_callback=_cb)
+    await _default_invoke_runner(runtime, "hi")
+    assert seen, "cost_callback must fire when cache tokens land"
+    acc = seen[-1]
+    assert acc.cache_write_tokens == 3400
+    assert acc.cache_read_tokens == 200
+    # Snapshot must surface them too — the SSE COST frame relies on it.
+    snap = acc.snapshot()
+    assert snap["cache_write_tokens"] == 3400
+    assert snap["cache_read_tokens"] == 200
+
+
+@pytest.mark.asyncio
 async def test_alias_fallback_skipped_when_executor_supplies_cost() -> None:
     """When the executor's `cost_usd` is non-zero, the fallback path
     must NOT run — otherwise a session running against a properly-

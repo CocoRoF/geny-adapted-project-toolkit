@@ -109,6 +109,11 @@ class SessionResponse(BaseModel):
     cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    # Phase K.2 — Anthropic cache token counts. Default 0 so the
+    # response shape stays compatible with clients that haven't
+    # learned about them yet.
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
     last_active_at: datetime
     created_at: datetime
     # Phase J.1 — list-view enrichments. `turn_count` is the count
@@ -130,6 +135,8 @@ class SessionResponse(BaseModel):
             cost_usd=float(row.cost_usd),
             input_tokens=row.input_tokens,
             output_tokens=row.output_tokens,
+            cache_write_tokens=row.cache_write_tokens,
+            cache_read_tokens=row.cache_read_tokens,
             last_active_at=row.last_active_at,
             created_at=row.created_at,
         )
@@ -313,6 +320,11 @@ def _build_runtime_from_handle(
                     row.cost_usd = acc.cost_usd
                     row.input_tokens = acc.input_tokens
                     row.output_tokens = acc.output_tokens
+                    # Phase K.2 — cache tokens are unconditionally
+                    # written so the dashboard shows their growth in
+                    # real time. Idempotent (set to acc snapshot).
+                    row.cache_write_tokens = acc.cache_write_tokens
+                    row.cache_read_tokens = acc.cache_read_tokens
                     await bg_db.commit()
 
     hook_runner, accumulator = build_hook_runner(

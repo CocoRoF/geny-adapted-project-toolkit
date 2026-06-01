@@ -516,6 +516,8 @@ export const ko: Record<keyof typeof en, string> = {
   "cost.session_total": "이 세션 누적",
   "cost.tokens.input": "입력 토큰",
   "cost.tokens.output": "출력 토큰",
+  "cost.tokens.cache_write": "Cache write 토큰",
+  "cost.tokens.cache_read": "Cache read 토큰",
   "cost.tool_calls": "도구 호출",
   "cost.tool_duration": "도구 실행 시간",
   "cost.by_tool": "도구별",

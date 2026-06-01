@@ -169,6 +169,46 @@ def test_to_dict_is_json_friendly() -> None:
     assert payload["turns"][0]["user"] == "hi"
 
 
+def test_cache_tokens_surfaced_in_totals() -> None:
+    """Phase K.2 — the transcript builder must propagate cache token
+    counts from the latest `cost` (or `done`) snapshot into the
+    Transcript totals so the SessionDetail header can render them."""
+    events = _evs(
+        ("user_message", {"text": "prime the cache"}),
+        (
+            "cost",
+            {
+                "cost_usd": 0.013,
+                "input_tokens": 6,
+                "output_tokens": 6,
+                "cache_write_tokens": 3400,
+                "cache_read_tokens": 200,
+            },
+        ),
+        (
+            "done",
+            {
+                "cost": {
+                    "cost_usd": 0.013,
+                    "input_tokens": 6,
+                    "output_tokens": 6,
+                    "cache_write_tokens": 3400,
+                    "cache_read_tokens": 200,
+                }
+            },
+        ),
+    )
+    t = build_transcript(session_id="sk", events=events)
+    assert t.total_cache_write_tokens == 3400
+    assert t.total_cache_read_tokens == 200
+    payload = to_dict(t)
+    assert payload["total_cache_write_tokens"] == 3400
+    assert payload["total_cache_read_tokens"] == 200
+    md = render_markdown(t)
+    assert "cache_write tokens: 3,400" in md
+    assert "cache_read tokens: 200" in md
+
+
 def test_datetime_started_at_parsed_from_iso() -> None:
     """`started_at` should be a real datetime so the markdown render
     can call `.isoformat()` directly. The event grouper parses the

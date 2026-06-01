@@ -61,6 +61,11 @@ class Transcript:
     total_cost_usd: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    # Phase K.2 — Anthropic cache token totals so the SessionDetail
+    # header can explain "$0.013 for 6 tokens" (because 3.4k tokens
+    # were primed into the cache that turn).
+    total_cache_write_tokens: int = 0
+    total_cache_read_tokens: int = 0
 
 
 def build_transcript(
@@ -82,6 +87,11 @@ def build_transcript(
         "cost_usd": 0.0,
         "input_tokens": 0,
         "output_tokens": 0,
+        # Phase K.2 — same delta-tracking semantics as the input/output
+        # counts above; carried separately because the SessionDetail
+        # header surfaces them as their own line.
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
     }
     turn_start_cost: dict[str, float] = dict(last_cost_snapshot)
 
@@ -164,11 +174,15 @@ def build_transcript(
             new_cost = float(data.get("cost_usd", 0.0) or 0.0)
             new_in = int(data.get("input_tokens", 0) or 0)
             new_out = int(data.get("output_tokens", 0) or 0)
+            new_cw = int(data.get("cache_write_tokens", 0) or 0)
+            new_cr = int(data.get("cache_read_tokens", 0) or 0)
             if current is not None:
                 current.cost_usd = new_cost - turn_start_cost["cost_usd"]
             last_cost_snapshot["cost_usd"] = new_cost
             last_cost_snapshot["input_tokens"] = new_in
             last_cost_snapshot["output_tokens"] = new_out
+            last_cost_snapshot["cache_write_tokens"] = new_cw
+            last_cost_snapshot["cache_read_tokens"] = new_cr
         elif kind == "done":
             # The DONE frame carries the final accumulator snapshot;
             # use it to close out the turn's cost if no `cost` events
@@ -184,6 +198,20 @@ def build_transcript(
                 last_cost_snapshot["output_tokens"] = int(
                     snap.get("output_tokens", last_cost_snapshot["output_tokens"]) or 0
                 )
+                last_cost_snapshot["cache_write_tokens"] = int(
+                    snap.get(
+                        "cache_write_tokens",
+                        last_cost_snapshot["cache_write_tokens"],
+                    )
+                    or 0
+                )
+                last_cost_snapshot["cache_read_tokens"] = int(
+                    snap.get(
+                        "cache_read_tokens",
+                        last_cost_snapshot["cache_read_tokens"],
+                    )
+                    or 0
+                )
 
     return Transcript(
         session_id=session_id,
@@ -191,6 +219,8 @@ def build_transcript(
         total_cost_usd=last_cost_snapshot["cost_usd"],
         total_input_tokens=int(last_cost_snapshot["input_tokens"]),
         total_output_tokens=int(last_cost_snapshot["output_tokens"]),
+        total_cache_write_tokens=int(last_cost_snapshot["cache_write_tokens"]),
+        total_cache_read_tokens=int(last_cost_snapshot["cache_read_tokens"]),
     )
 
 
@@ -204,9 +234,17 @@ def render_markdown(transcript: Transcript) -> str:
         f"- Total cost: ${transcript.total_cost_usd:.6f}",
         f"- Total input tokens: {transcript.total_input_tokens:,}",
         f"- Total output tokens: {transcript.total_output_tokens:,}",
-        f"- Turns: {len(transcript.turns)}",
-        "",
     ]
+    if transcript.total_cache_write_tokens:
+        lines.append(
+            f"- Total cache_write tokens: {transcript.total_cache_write_tokens:,}"
+        )
+    if transcript.total_cache_read_tokens:
+        lines.append(
+            f"- Total cache_read tokens: {transcript.total_cache_read_tokens:,}"
+        )
+    lines.append(f"- Turns: {len(transcript.turns)}")
+    lines.append("")
     for idx, turn in enumerate(transcript.turns, start=1):
         lines.append(f"## Turn {idx}")
         if turn.started_at is not None:
@@ -264,6 +302,8 @@ def to_dict(transcript: Transcript) -> dict[str, Any]:
         "total_cost_usd": round(transcript.total_cost_usd, 6),
         "total_input_tokens": transcript.total_input_tokens,
         "total_output_tokens": transcript.total_output_tokens,
+        "total_cache_write_tokens": transcript.total_cache_write_tokens,
+        "total_cache_read_tokens": transcript.total_cache_read_tokens,
         "turns": [
             {
                 "user": t.user,

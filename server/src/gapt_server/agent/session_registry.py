@@ -436,19 +436,35 @@ def _update_accumulator(runtime: SessionRuntime, data: dict[str, object]) -> Non
     if out_delta:
         acc.output_tokens += out_delta
 
+    # Phase K.2 — track Anthropic cache tokens. The executor's
+    # `token.tracked` payload uses the bare keys `cache_write` and
+    # `cache_read` (not `*_tokens` — matches the Anthropic API names
+    # `cache_creation_input_tokens` / `cache_read_input_tokens` once
+    # the executor strips the long form).
+    cache_write_raw = data.get("cache_write")
+    cache_write_delta = cache_write_raw if isinstance(cache_write_raw, int) else 0
+    if cache_write_delta:
+        acc.cache_write_tokens += cache_write_delta
+    cache_read_raw = data.get("cache_read")
+    cache_read_delta = cache_read_raw if isinstance(cache_read_raw, int) else 0
+    if cache_read_delta:
+        acc.cache_read_tokens += cache_read_delta
+
     cost = data.get("cost_usd")
     cost_value = float(cost) if isinstance(cost, int | float) else 0.0
-    if cost_value == 0.0 and (in_delta or out_delta) and runtime.model_name:
-        cache_write = data.get("cache_write")
-        cache_read = data.get("cache_read")
+    if (
+        cost_value == 0.0
+        and (in_delta or out_delta or cache_write_delta or cache_read_delta)
+        and runtime.model_name
+    ):
         from gapt_server.agent.pricing import compute_cost_usd  # noqa: PLC0415
 
         cost_value = compute_cost_usd(
             model=runtime.model_name,
             input_tokens=in_delta,
             output_tokens=out_delta,
-            cache_write=cache_write if isinstance(cache_write, int) else 0,
-            cache_read=cache_read if isinstance(cache_read, int) else 0,
+            cache_write=cache_write_delta,
+            cache_read=cache_read_delta,
         )
         if cost_value == 0.0:
             # Pricing entry truly missing — warn once so an operator
