@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown } from "lucide-react";
+import { Bot, ChevronDown, Download } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -89,6 +89,37 @@ function persistModel(projectId: string, model: string | null): void {
   } catch {
     /* best-effort */
   }
+}
+
+/** Phase I.4 — fetch markdown transcript from the session and drop
+ *  it into a browser download. We trigger the click on a transient
+ *  `<a>` so the file's blob URL is released as soon as the download
+ *  starts; no global state, no UI side-effects beyond the download. */
+async function downloadTranscriptMarkdown(sessionId: string): Promise<void> {
+  const resp = await fetch(
+    `/_gapt/api/sessions/${sessionId}/transcript?format=markdown`,
+    { credentials: "include" },
+  );
+  if (!resp.ok) {
+    // Surface the failure in dev console — operator can re-try from
+    // the UI button. A toast would be nicer but is overkill for the
+    // one error path that exists today (server 5xx or 403).
+    console.error(
+      "transcript download failed",
+      resp.status,
+      await resp.text().catch(() => ""),
+    );
+    return;
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `session-${sessionId}-transcript.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /** Phase G.4 — common model identifiers the pill offers. Bundled
@@ -191,7 +222,26 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   // events in the positive (1, 2, ...). To get chronological order
   // we use the `ts` field as the secondary key.
   const allEvents = useMemo<SessionStreamEvent[]>(() => {
-    return [...userEvents, ...stream.events].sort((a, b) => a.ts.localeCompare(b.ts));
+    // Phase I.2 — the backend now publishes a `user_message` event of
+    // its own at the top of each turn. The optimistic bubble we add
+    // here (kind="text", role="user", negative seq) covers the slow-
+    // network case before the SSE round-trip. To avoid showing the
+    // same prompt twice, drop the optimistic echo when its text
+    // matches a real backend `user_message`.
+    const backendUserTexts = new Set(
+      stream.events
+        .filter((ev) => ev.kind === "user_message")
+        .map((ev) => asString(ev.data["text"])),
+    );
+    const filteredUser =
+      backendUserTexts.size === 0
+        ? userEvents
+        : userEvents.filter(
+            (ev) => !backendUserTexts.has(asString(ev.data["text"])),
+          );
+    return [...filteredUser, ...stream.events].sort((a, b) =>
+      a.ts.localeCompare(b.ts),
+    );
   }, [userEvents, stream.events]);
 
   // Auto-scroll on new events.
@@ -277,7 +327,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         ...prev,
         {
           seq,
-          kind: "text" as SessionEventKind,
+          kind: "text",
           data: { text: display, role: "user" },
           ts: new Date().toISOString(),
         },
@@ -480,6 +530,19 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               <span>·</span>
               <span>↑{cost.input_tokens}</span>
               <span>↓{cost.output_tokens}</span>
+            </button>
+            {/* Phase I.4 — markdown transcript download. Reads
+                session_events DB-side so a server restart never loses
+                history. */}
+            <button
+              type="button"
+              data-testid="chat-transcript-download"
+              onClick={() => void downloadTranscriptMarkdown(session.id)}
+              aria-label={t("chat.transcript.download")}
+              title={t("chat.transcript.download")}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg"
+            >
+              <Download className="h-3 w-3" />
             </button>
           </>
         ) : null}
@@ -973,6 +1036,26 @@ function mergeAssistantText(events: SessionStreamEvent[]): SessionStreamEvent[] 
 function EventRow({ event, workspaceId }: EventRowProps) {
   const { t } = useI18n();
   const kind: SessionEventKind = event.kind;
+  // Phase I.2 — `user_message` carries the prompt for this turn.
+  // Surfaced as a right-aligned user bubble so a fresh tab replaying
+  // history sees the conversation both-sided (the live submit path
+  // injects an optimistic user bubble via `localUserMessages`; the
+  // replay path only has the persisted events).
+  if (kind === "user_message") {
+    const text = asString(event.data["text"]);
+    if (!text) return null;
+    return (
+      <div
+        data-event-kind="user_message"
+        data-role="user"
+        className="ml-auto max-w-[85%] rounded-md border border-accent/30 bg-accent/15 px-3 py-2"
+      >
+        <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
+          {text}
+        </pre>
+      </div>
+    );
+  }
   if (kind === "text") {
     // Backend emits `{text: ...}`; legacy stubs / older providers
     // used `{chunk: ...}`. Accept both.

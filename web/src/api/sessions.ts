@@ -37,7 +37,10 @@ export type SessionEventKind =
   | "cost"
   | "error"
   | "done"
-  | "step";
+  | "step"
+  // Phase I.2 — user's own prompt for the turn. Published first by
+  // `_run_with_lifecycle` so the transcript carries both sides.
+  | "user_message";
 
 export interface MessageReplayEntry {
   seq: number;

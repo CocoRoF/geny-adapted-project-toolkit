@@ -508,6 +508,7 @@ export const en = {
   "chat.tool.collapse": "Hide output",
   "chat.tool.args": "Arguments",
   "chat.shortcut.esc": "Press Esc to interrupt.",
+  "chat.transcript.download": "Download transcript (.md)",
 
   // --- Cost panel ---
   "cost.open": "Cost details",

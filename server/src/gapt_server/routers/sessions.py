@@ -27,7 +27,7 @@ from datetime import datetime  # noqa: TC003 — pydantic introspection
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import sqlalchemy as sa
@@ -179,6 +179,46 @@ def _http_from_session_error(exc: SessionManagerError) -> HTTPException:
     )
 
 
+def _extract_api_model(env_service: Any, env_manifest_id: str) -> str | None:
+    """Resolve the manifest's api stage `model` string.
+
+    The Pipeline object itself doesn't carry the manifest (only the
+    instantiated stage objects), so we re-resolve via `env_service`
+    which knows the on-disk + bundled manifest layout. Returns None
+    when the manifest is missing or has no api-stage model — the
+    fallback-pricing path then degrades to "no fallback" (the
+    accumulator keeps whatever the executor said).
+
+    The model string we hand the pricing layer can be an alias
+    (`sonnet`) or a canonical id (`claude-sonnet-4-6`); the resolver
+    in `agent/pricing.py` handles both.
+    """
+    if env_service is None or not env_manifest_id:
+        return None
+    try:
+        resolution = env_service.resolve(env_manifest_id)
+    except Exception:  # noqa: BLE001 — best-effort, no log noise
+        return None
+    manifest = getattr(resolution, "manifest", None)
+    if manifest is None:
+        return None
+    stages = getattr(manifest, "stages", None)
+    if stages is None and isinstance(manifest, dict):
+        stages = manifest.get("stages")
+    if not stages:
+        return None
+    for stage in stages:
+        name = stage.get("name") if isinstance(stage, dict) else getattr(stage, "name", None)
+        if name != "api":
+            continue
+        cfg = stage.get("config") if isinstance(stage, dict) else getattr(stage, "config", None)
+        if isinstance(cfg, dict):
+            model = cfg.get("model")
+            if isinstance(model, str) and model.strip():
+                return model.strip()
+    return None
+
+
 def _build_runtime_from_handle(
     handle: Any,
     *,
@@ -279,6 +319,17 @@ def _build_runtime_from_handle(
         mode_ref=mode_ref,
     )
     runtime.accumulator = accumulator
+    # Phase I.1 — same callback the POST_TOOL_USE hook gets, so the
+    # `token.tracked` path in `_drive_pipeline` can land the cost in
+    # the DB too. Both paths are delta-detection idempotent (`_last`
+    # cache) so double-firing on tool-using turns is a no-op.
+    runtime.cost_callback = _on_cost_update
+    # Phase I.3 — resolve the manifest's api-stage model so the
+    # fallback-pricing path knows which prices to apply when the
+    # upstream token stage emits cost_usd=0 (model-alias miss).
+    runtime.model_name = _extract_api_model(
+        container.env_service, handle.env_manifest_id
+    )
     handle.pipeline.attach_runtime(hook_runner=hook_runner)
     return runtime
 
@@ -659,6 +710,92 @@ async def replay_messages(
             MessageReplayEntry(**e.to_dict()) for e in in_memory
         ]
     return [MessageReplayEntry(**e.to_dict()) for e in in_memory]
+
+
+@by_id.get("/{session_id}/transcript")
+async def export_transcript(
+    session_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
+) -> Response:
+    """Phase I.4 — export the full conversation as JSON or markdown.
+
+    Reads every `session_events` row for the session (DB-only — we
+    don't need a live runtime since the persister already wrote
+    everything), groups frames into turns via `agent.transcript`, and
+    returns the requested format. Markdown is the "vibe-coding
+    archive" the operator downloads from the chat panel.
+    """
+    # Resolve the session to enforce membership + a clean 404. We
+    # bypass the rehydrate path because the transcript is read-only —
+    # spinning up a runtime just to validate access is wasteful when
+    # a single SELECT covers it.
+    del manager  # signature kept for future hooks; not needed here
+    session_row = (
+        await db.execute(
+            sa.select(models.AgentSession).where(
+                models.AgentSession.id == session_id
+            )
+        )
+    ).scalar_one_or_none()
+    if session_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "session.not_found", "reason": session_id},
+        )
+    try:
+        await fetch_project_for(db, actor=user, project_id=session_row.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    rows = (
+        await db.execute(
+            sa.select(models.SessionEvent)
+            .where(models.SessionEvent.session_id == session_id)
+            .order_by(models.SessionEvent.seq.asc())
+        )
+    ).scalars().all()
+    events: list[dict[str, Any]] = [
+        {
+            "seq": r.seq,
+            "kind": r.kind,
+            "data": r.data or {},
+            "ts": r.ts.isoformat() if r.ts else None,
+        }
+        for r in rows
+    ]
+
+    from gapt_server.agent.transcript import (  # noqa: PLC0415
+        build_transcript,
+        render_markdown,
+        to_dict,
+    )
+
+    transcript = build_transcript(session_id=session_id, events=events)
+    if format == "markdown":
+        body = render_markdown(transcript)
+        # Suggest a filename so browsers save with something sensible
+        # rather than `transcript`. The chat panel passes a project /
+        # workspace hint via the same headers if it wants prettier
+        # naming; this is the safe default.
+        filename = f"session-{session_id}-transcript.md"
+        return Response(
+            content=body,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
+    # Default: JSON. We rely on FastAPI's JSON encoder via Response so
+    # the dataclass dict serialises cleanly with the right content-type.
+    import json as _json  # noqa: PLC0415
+
+    return Response(
+        content=_json.dumps(to_dict(transcript), ensure_ascii=False),
+        media_type="application/json",
+    )
 
 
 @by_id.post("/{session_id}/archive", response_model=SessionResponse)

@@ -53,6 +53,12 @@ class SessionEventKind(StrEnum):
     # "과정" subpanel so the user can see the agent's progress
     # without having to scrape the server log.
     STEP = "step"
+    # Phase I.2 — the user's own prompt for this turn. Published at
+    # the top of `_run_with_lifecycle` so the persister captures it
+    # into `session_events` before any executor work begins. Without
+    # this the transcript archive only has assistant-side events and
+    # can't be replayed as a real conversation.
+    USER_MESSAGE = "user_message"
 
 
 @dataclass(frozen=True)

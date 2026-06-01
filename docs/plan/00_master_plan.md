@@ -39,6 +39,7 @@
 | **M2 Phase F** IDE UX (editor close / diff in editor / chat full-width) | **완료** (2026-05-28) | 미니 doc 없음 | — |
 | **M2 Phase G** Chat fortification (CLI auth / multi-backend / manifest picker) | G.1 → G.2 → G.3 → G.4 → G.5 진행 중 | **상세** | [`m2_phase_g.md`](m2_phase_g.md) |
 | **M2 Phase H** Environment editor 통합/구조화 (per-kind schema + 통합 폼) | **완료** (2026-05-28) | **상세** | [`m2_phase_h.md`](m2_phase_h.md) |
+| **M2 Phase I** 세션 기록 무결성 (cost DB sync / user_message / alias pricing / transcript export) | **완료** (2026-06-01) | **상세** | [`m2_phase_i.md`](m2_phase_i.md) |
 | ~~M3 멀티 사용자~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M4 K8s / 엔터프라이즈~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M5 자동 운영 / SaaS~~ | **out of v1 scope** | — | OSS self-hosted 코어 유지 |

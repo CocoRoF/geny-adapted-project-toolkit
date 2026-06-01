@@ -75,6 +75,18 @@ class SessionRuntime:
     # off the work; the hook reads it on every PRE_TOOL_USE. None
     # for legacy paths that don't have a hook chain wired.
     mode_ref: ChatModeRef | None = None
+    # Phase I.1 — invoked from `_drive_pipeline`'s `token.tracked`
+    # branch so the DB cost columns + COST event publish + metrics
+    # update fire even when the session has no tool calls. The
+    # router sets this to the same `_on_cost_update` closure the
+    # POST_TOOL_USE hook also calls; both paths are idempotent
+    # (delta-detection inside the closure).
+    cost_callback: Callable[[CostAccumulator], Awaitable[None]] | None = None
+    # Phase I.3 — model string from the manifest's api stage config.
+    # Used as the fallback-pricing key when the executor emits a
+    # `token.tracked` payload with `cost_usd=0` (model-alias gap).
+    # `None` keeps the pre-fix behaviour (no fallback).
+    model_name: str | None = None
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -137,6 +149,12 @@ async def _run_with_lifecycle(
 ) -> None:
     """Wraps the runner so we always publish a terminal `done` or
     `error` event regardless of how the task ends."""
+    # Phase I.2 — record the user's prompt as the FIRST event of this
+    # turn so the transcript archive has both sides. `_run_with_lifecycle`
+    # is the right spot (not `invoke()`): we're inside the spawned task,
+    # the bus persister is wired, and no executor frames have landed yet
+    # so seq ordering reads as user → text → tool → done.
+    await runtime.bus.publish(SessionEventKind.USER_MESSAGE, {"text": message})
     try:
         await runner(runtime, message)
     except asyncio.CancelledError:
@@ -219,16 +237,29 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         data: dict[str, object] = dict(getattr(ev, "data", {}) or {})
 
         # Token + cost accounting: token.tracked carries the real numbers.
-        # Feed them into the cost accumulator so the snapshot the lifecycle
-        # wrapper emits in DONE has non-zero totals, and forward a COST
-        # frame so the chat header updates live (not just at done).
-        # Payload shape is FLAT (`cost_usd`, `input_tokens`, ...) to match
-        # the UI's `deriveCostSnapshot` reader.
+        # Feed them into the cost accumulator so the snapshot the
+        # lifecycle wrapper emits in DONE has non-zero totals.
+        #
+        # Phase I.1 — route through `runtime.cost_callback` instead of
+        # publishing COST directly here. The router-supplied callback
+        # owns three responsibilities the bare publish was skipping:
+        #   1. COST SSE frame (for the live chat header)
+        #   2. AgentSession DB row update (cost_usd / tokens columns)
+        #   3. Prometheus counter inc for cost / tokens
+        # Pre-I.1 the DB write only ran via the POST_TOOL_USE hook, so
+        # tool-less chat sessions stayed at $0.0000 forever even though
+        # the in-memory accumulator had the right numbers.
         if event_type == "token.tracked":
             _update_accumulator(runtime, data)
-            await runtime.bus.publish(
-                SessionEventKind.COST, runtime.accumulator.snapshot()
-            )
+            if runtime.cost_callback is not None:
+                await runtime.cost_callback(runtime.accumulator)
+            else:
+                # Fallback for legacy paths (tests without a router-wired
+                # callback) — preserve the old behaviour of at least
+                # emitting the SSE frame so the chat header still ticks.
+                await runtime.bus.publish(
+                    SessionEventKind.COST, runtime.accumulator.snapshot()
+                )
             continue
 
         # Pipeline trace: forward the executor's verbose stage events
@@ -387,17 +418,49 @@ def _update_accumulator(runtime: SessionRuntime, data: dict[str, object]) -> Non
     Executor payload shape: `{"input_tokens", "output_tokens",
     "cache_write", "cache_read", "cost_usd", "total_cost_usd"}`. We
     treat each `token.tracked` as a delta (the executor emits one per
-    API call) so cumulative totals are the sum of deltas."""
+    API call) so cumulative totals are the sum of deltas.
+
+    Phase I.3 — when the payload's own `cost_usd` is 0 but tokens are
+    positive (the model-alias gap: manifest says `"model":"sonnet"`,
+    upstream's pricing dict only has canonical ids), fall back to
+    GAPT's own pricing resolver. The fallback uses upstream's pricing
+    table for the dollar values — only the alias-resolution layer is
+    GAPT-owned (see `agent/pricing.py`)."""
     acc = runtime.accumulator
     in_t = data.get("input_tokens")
-    if isinstance(in_t, int):
-        acc.input_tokens += in_t
+    in_delta = in_t if isinstance(in_t, int) else 0
+    if in_delta:
+        acc.input_tokens += in_delta
     out_t = data.get("output_tokens")
-    if isinstance(out_t, int):
-        acc.output_tokens += out_t
+    out_delta = out_t if isinstance(out_t, int) else 0
+    if out_delta:
+        acc.output_tokens += out_delta
+
     cost = data.get("cost_usd")
-    if isinstance(cost, int | float):
-        acc.cost_usd += float(cost)
+    cost_value = float(cost) if isinstance(cost, int | float) else 0.0
+    if cost_value == 0.0 and (in_delta or out_delta) and runtime.model_name:
+        cache_write = data.get("cache_write")
+        cache_read = data.get("cache_read")
+        from gapt_server.agent.pricing import compute_cost_usd  # noqa: PLC0415
+
+        cost_value = compute_cost_usd(
+            model=runtime.model_name,
+            input_tokens=in_delta,
+            output_tokens=out_delta,
+            cache_write=cache_write if isinstance(cache_write, int) else 0,
+            cache_read=cache_read if isinstance(cache_read, int) else 0,
+        )
+        if cost_value == 0.0:
+            # Pricing entry truly missing — warn once so an operator
+            # noticing the cost dashboard staying at $0.0000 has a
+            # log breadcrumb to start from.
+            logger.warning(
+                "agent.pricing.fallback_missing",
+                session_id=runtime.session_id,
+                model=runtime.model_name,
+            )
+    if cost_value:
+        acc.cost_usd += cost_value
 
 
 def _map_pipeline_event(  # noqa: PLR0911 — 7-way taxonomy reads cleaner as straight returns
