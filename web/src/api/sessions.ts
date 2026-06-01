@@ -127,14 +127,31 @@ export const getSession = (sessionId: string): Promise<SessionResponse> =>
 
 export type ChatMode = "plan" | "act";
 
+export interface InvokeOverrides {
+  /** Phase L follow-up — per-invoke model swap. Mutates
+   *  `state.model` on the runtime so the api stage's
+   *  `resolve_model_config` picks it up for this and future turns. */
+  model?: string | null;
+  thinking_enabled?: boolean | null;
+  thinking_budget_tokens?: number | null;
+}
+
 export const invokeSession = (
   sessionId: string,
   message: string,
   mode: ChatMode = "act",
+  overrides: InvokeOverrides = {},
 ): Promise<{ session_id: string; status: string }> =>
   apiPost<{ session_id: string; status: string }>(`/_gapt/api/sessions/${sessionId}/invoke`, {
     message,
     mode,
+    ...(overrides.model != null ? { model: overrides.model } : {}),
+    ...(overrides.thinking_enabled != null
+      ? { thinking_enabled: overrides.thinking_enabled }
+      : {}),
+    ...(overrides.thinking_budget_tokens != null
+      ? { thinking_budget_tokens: overrides.thinking_budget_tokens }
+      : {}),
   });
 
 export const interruptSession = (

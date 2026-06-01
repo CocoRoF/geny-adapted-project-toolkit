@@ -46,7 +46,7 @@ from gapt_server.agent.session_registry import (
     SessionRuntime,
     stream_to_async_iter,
 )
-from gapt_server.agent.streaming import SessionEventKind
+from gapt_server.agent.streaming import SessionEvent, SessionEventKind
 from gapt_server.container import (
     AppContainer,
     get_audit_sink,
@@ -154,6 +154,17 @@ class InvokeRequest(BaseModel):
     # gapt_pr) to a block. Defaults to "act" so legacy clients keep
     # the prior behaviour.
     mode: Literal["plan", "act"] = "act"
+    # Phase L follow-up — per-invoke model + thinking override.
+    # `state.model` / `state.thinking_*` are read by the api stage's
+    # `resolve_model_config` at call time, so mutating them between
+    # invokes is the executor-sanctioned way to change behavior mid-
+    # conversation without re-instantiating the pipeline. Pre-fix,
+    # the chat panel locked these pills the moment a session existed
+    # and the operator had to start a new session to try opus on a
+    # single follow-up — explicitly listed as a wart by the user.
+    model: str | None = Field(default=None, max_length=120)
+    thinking_enabled: bool | None = None
+    thinking_budget_tokens: int | None = Field(default=None, ge=0, le=200_000)
 
 
 class InvokeResponse(BaseModel):
@@ -733,6 +744,42 @@ async def invoke_session(
         await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
+
+    # Phase L follow-up — per-invoke model + thinking override. The
+    # api stage's `resolve_model_config` reads these straight off
+    # `state` at run time (geny-executor core/stage.py:382-393), so
+    # mutating the runtime's persistent state lets the operator try
+    # opus for one follow-up without starting a fresh session. We
+    # lazy-init the state here for the same reason `_drive_pipeline`
+    # does — keeps test paths that mock the pipeline simple.
+    if (
+        payload.model is not None
+        or payload.thinking_enabled is not None
+        or payload.thinking_budget_tokens is not None
+    ):
+        if runtime.conversation_state is None:
+            from geny_executor.core.state import PipelineState  # noqa: PLC0415
+
+            runtime.conversation_state = PipelineState(
+                session_id=runtime.session_id,
+            )
+        state = runtime.conversation_state
+        if payload.model is not None:
+            state.model = payload.model
+            # Keep the pricing-fallback model in sync with the in-flight
+            # state so `_update_accumulator` resolves the right rate when
+            # the executor reports `cost_usd=0` (Phase I.3 fallback).
+            runtime.model_name = payload.model
+        if payload.thinking_budget_tokens is not None:
+            state.thinking_budget_tokens = payload.thinking_budget_tokens
+        if payload.thinking_enabled is not None:
+            state.thinking_enabled = payload.thinking_enabled
+        elif (payload.thinking_budget_tokens or 0) > 0:
+            # Operator convenience: budget > 0 with no explicit enable
+            # turns thinking on. Same heuristic as `apply_overrides` for
+            # session-create time.
+            state.thinking_enabled = True
+
     try:
         await runtime.invoke(payload.message, mode=payload.mode)
     except SessionAlreadyInvoking as exc:
@@ -765,14 +812,70 @@ async def stream_session(
         await fetch_project_for(db, actor=user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
+
+    # Phase L follow-up — for a rehydrated session the in-memory ring
+    # buffer is empty, so `bus.replay(since)` returns nothing. Match
+    # what /messages does: pull the missing prefix from `session_events`
+    # so a fresh tab on an existing session shows the full transcript
+    # immediately, not a blank pane waiting for new turns.
+    effective_since = since or 0
+    prefix_events = await _full_replay(db, runtime, since=effective_since)
     return StreamingResponse(
-        stream_to_async_iter(runtime, replay_since=since),
+        stream_to_async_iter(
+            runtime, replay_since=None, prefix_events=prefix_events
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _full_replay(
+    db: AsyncSession, runtime: SessionRuntime, *, since: int
+) -> list[SessionEvent]:
+    """Combine the in-memory ring buffer with the durable `session_events`
+    table to produce the full ordered event list with `seq > since`.
+
+    The shape mirrors what `/messages` does — bus first if it covers
+    everything, otherwise DB-prefix + bus-tail (the bus owns any events
+    published after rehydrate). Returns the same `SessionEvent`
+    objects the SSE producer would have yielded from the bus, so the
+    `.to_sse()` rendering downstream is identical.
+    """
+    in_memory = await runtime.bus.replay(since)
+    needs_db_fill = bool(in_memory) and in_memory[0].seq > since + 1
+    # `_persisted_seq` is bumped on rehydrate; if it's ahead of `since`
+    # and the in-memory buffer is empty, we know everything lives in DB.
+    no_memory = not in_memory and (
+        runtime.bus._persisted_seq > since  # noqa: SLF001 — same internal seed used by /messages
+    )
+    if not (no_memory or needs_db_fill):
+        return list(in_memory)
+
+    upper = in_memory[0].seq - 1 if in_memory else None
+    stmt = (
+        sa.select(models.SessionEvent)
+        .where(
+            models.SessionEvent.session_id == runtime.session_id,
+            models.SessionEvent.seq > since,
+        )
+        .order_by(models.SessionEvent.seq.asc())
+    )
+    if upper is not None:
+        stmt = stmt.where(models.SessionEvent.seq <= upper)
+    rows = (await db.execute(stmt)).scalars().all()
+    db_events = [
+        SessionEvent(
+            seq=r.seq,
+            kind=SessionEventKind(r.kind),
+            data=r.data or {},
+            ts=r.ts,
+        )
+        for r in rows
+    ]
+    return db_events + list(in_memory)
 
 
 @by_id.post("/{session_id}/interrupt", response_model=InterruptResponse)

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from gapt_server.agent.streaming import (
+    SessionEvent,
     SessionEventBus,
     SessionEventKind,
 )
@@ -614,7 +615,11 @@ async def stream_to_async_iter(
     runtime: SessionRuntime,
     *,
     replay_since: int | None = None,
-    keepalive_s: float = DEFAULT_KEEPALIVE_S,
+    # Resolved at call time (not def time) so test paths can monkeypatch
+    # `DEFAULT_KEEPALIVE_S` to force a fast flush through the in-memory
+    # ASGI transport. Production paths still hit the 15s default.
+    keepalive_s: float | None = None,
+    prefix_events: list["SessionEvent"] | None = None,
 ) -> AsyncIterator[bytes]:
     """Yield SSE frames suitable for a `StreamingResponse(... media_type=\"text/event-stream\")`.
 
@@ -623,17 +628,39 @@ async def stream_to_async_iter(
     queue, sends a keepalive ``:keepalive`` comment every ``keepalive_s``
     seconds so proxies don't close the socket. Tests override the
     timeout to exercise the keepalive path without waiting 15 s.
+
+    `prefix_events`, when provided, is yielded before the bus replay /
+    subscribe. The route layer uses it to mix in DB-backed events for
+    rehydrated sessions whose in-memory ring buffer was wiped by the
+    last server restart — without this fallback, picking an existing
+    session in the chat panel showed a blank pane until a fresh invoke
+    landed.
     """
-    saw_terminal_in_replay = False
+    if keepalive_s is None:
+        keepalive_s = DEFAULT_KEEPALIVE_S
+    if prefix_events:
+        for ev in prefix_events:
+            yield ev.to_sse()
+    # Phase L.1 fix-up — DO NOT early-return on terminal events.
+    #
+    # Pre-fix: after a `done` frame we returned and closed the SSE
+    # socket. The client's `useSessionStream` `useEffect` depends on
+    # `sessionId` only, so a follow-up invoke on the *same* session
+    # didn't reopen the stream — turn 2's `text` frame existed in the
+    # DB (proving multi-turn memory works) but never reached the
+    # browser. The user saw a frozen "단계 진입 · yield" instead of
+    # the agent's reply.
+    #
+    # The new contract: keep the SSE stream alive for the session's
+    # entire lifetime. Replay covers any pre-connection backlog; the
+    # live loop blocks on the bus queue and forwards every future
+    # frame, including the `done`/`text`/... pairs of subsequent
+    # turns. The stream exits only when the bus is closed (session
+    # archive / runtime aclose). The browser's EventSource never
+    # sees an onerror, so the "Stream interrupted" banner stays away.
     if replay_since is not None:
         for past in await runtime.bus.replay(replay_since):
             yield past.to_sse()
-            if past.kind in {SessionEventKind.DONE, SessionEventKind.ERROR}:
-                saw_terminal_in_replay = True
-    if saw_terminal_in_replay:
-        # Nothing to live-stream — the invocation is already done. The
-        # client can reconnect after the next `invoke` if it wants more.
-        return
 
     queue = await runtime.bus.subscribe()
     try:
@@ -644,17 +671,8 @@ async def stream_to_async_iter(
                 yield b": keepalive\n\n"
                 continue
             if event is None:
+                # Bus was closed — session is going away, exit cleanly.
                 return
             yield event.to_sse()
-            if event.kind in {SessionEventKind.DONE, SessionEventKind.ERROR}:
-                # Tell the browser's EventSource to back off (1 day)
-                # before retrying. Without this hint the auto-reconnect
-                # fires immediately after we close, triggering an
-                # `onerror` flash in the UI even though the close was
-                # expected. The browser still reconnects when the user
-                # invokes again — useSessionStream rebuilds the URL on
-                # the next state change.
-                yield b"retry: 86400000\n\n"
-                return
     finally:
         await runtime.bus.unsubscribe(queue)

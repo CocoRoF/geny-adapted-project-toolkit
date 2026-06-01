@@ -448,7 +448,20 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       // hook short-circuits mutating tools when mode is "plan". The
       // existing PLAN_PREFIX text prompt is *also* kept so the LLM
       // produces planning-style output, not just so the gate triggers.
-      void invokeSession(session.id, outgoing, activeMode)
+      //
+      // Phase L follow-up — also forward per-invoke model + thinking
+      // overrides. The pills are no longer locked when a session is
+      // live; the backend mutates `state.model` / `state.thinking_*`
+      // before calling the pipeline so the next turn picks them up.
+      void invokeSession(session.id, outgoing, activeMode, {
+        ...(modelOverride ? { model: modelOverride } : {}),
+        ...(thinkingBudget != null
+          ? {
+              thinking_enabled: thinkingBudget > 0,
+              thinking_budget_tokens: thinkingBudget,
+            }
+          : {}),
+      })
         .catch((err: unknown) => {
           setError(
             err instanceof ApiError
@@ -460,7 +473,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         })
         .finally(() => setPending(false));
     },
-    [session, mode],
+    [session, mode, modelOverride, thinkingBudget],
   );
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -585,18 +598,20 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           onToggle={() => setManifestMenuOpen((v) => !v)}
           onPick={onPickManifest}
         />
+        {/* Phase L follow-up — model + thinking pills are never
+            locked. The backend mutates `state.model` / `state.thinking_*`
+            on each `/invoke` so changes apply to the NEXT turn of the
+            existing session, no new-session dance required. */}
         <ModelPill
-          locked={session !== null}
+          locked={false}
           selected={modelOverride}
           manifestModel={selectedManifest?.model ?? null}
           open={modelMenuOpen}
           onToggle={() => setModelMenuOpen((v) => !v)}
           onPick={onPickModel}
         />
-        {/* Phase L.4 — extended-thinking budget. Mirrors ModelPill's
-            "locked while a session is live" semantic. */}
         <ThinkingPill
-          locked={session !== null}
+          locked={false}
           selected={thinkingBudget}
           open={thinkingMenuOpen}
           onToggle={() => setThinkingMenuOpen((v) => !v)}

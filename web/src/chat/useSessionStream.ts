@@ -58,8 +58,19 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       return;
     }
 
+    // Phase L follow-up — every time `sessionId` changes (operator
+    // switched sessions via the picker, or this is the first mount)
+    // we wipe local state. Without the reset, lastSeqRef carried the
+    // tail of the *previous* session into the new `/stream?since=…`
+    // request, which the server interpreted as "skip the first N
+    // events of the new session" and the chat opened blank.
+    setEvents([]);
+    lastSeqRef.current = 0;
+    lastTerminalAtRef.current = 0;
+    setErrorReason(null);
+
     setStatus("connecting");
-    const url = streamUrl(sessionId, lastSeqRef.current > 0 ? lastSeqRef.current : undefined);
+    const url = streamUrl(sessionId, undefined);
     const source = new EventSource(url, { withCredentials: true });
     sourceRef.current = source;
 
@@ -98,6 +109,11 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
       "error",
       "done",
       "step",
+      // Phase I.2 — user_message frames carry the user's prompt for
+      // each turn so the chat replay has both sides. Missing from
+      // this list = the right-aligned user bubble never appeared on
+      // a fresh tab / replay path.
+      "user_message",
     ] as const) {
       attach(kind);
     }

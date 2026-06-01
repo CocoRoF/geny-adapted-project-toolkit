@@ -267,6 +267,10 @@ async def test_registry_round_trip() -> None:
 
 @pytest.mark.asyncio
 async def test_stream_replays_then_streams_live() -> None:
+    """Phase L follow-up — the SSE stream stays open for the session's
+    full lifetime (multi-turn). DONE no longer terminates; only an
+    explicit bus close does. The reader exits when we call
+    `bus.close()` after the test's last assertion."""
     rt = _make_runtime()
     # Pre-populate one event so replay path fires.
     await rt.bus.publish(SessionEventKind.TEXT, {"chunk": "past"})
@@ -282,18 +286,24 @@ async def test_stream_replays_then_streams_live() -> None:
     await asyncio.sleep(0)
     await rt.bus.publish(SessionEventKind.TEXT, {"chunk": "live"})
     await rt.bus.publish(SessionEventKind.DONE, {"cost": {}})
+    # Simulate a follow-up turn — pre-Phase-L the stream had already
+    # closed by this point and these frames went into the void. With
+    # the keep-alive contract they land on the same reader.
+    await rt.bus.publish(SessionEventKind.TEXT, {"chunk": "turn2"})
+    # Tear the reader down by closing the bus.
+    await rt.bus.close()
 
     await asyncio.wait_for(reader_task, timeout=1.0)
 
     decoded = [f.decode() for f in frames]
-    # Past + live + done + retry hint.
     assert any("past" in f for f in decoded)
     assert any("live" in f for f in decoded)
     assert any(f.startswith("event: done\n") for f in decoded)
-    # Terminal events emit a 1-day retry hint so the browser's
-    # EventSource does not auto-reconnect (which would surface as a
-    # spurious "Stream interrupted" banner in the chat panel).
-    assert decoded[-1] == "retry: 86400000\n\n"
+    # Phase L proof — turn-2 text arrived on the same stream.
+    assert any("turn2" in f for f in decoded)
+    # No "retry:" hint any more — the stream stays open, so the
+    # browser never needs the back-off instruction.
+    assert not any(f.startswith("retry:") for f in decoded)
 
 
 @pytest.mark.asyncio
