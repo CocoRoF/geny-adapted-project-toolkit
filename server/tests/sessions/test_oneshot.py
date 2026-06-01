@@ -182,7 +182,7 @@ async def test_oneshot_captures_tool_calls(fx: _Fx) -> None:
         body = resp.json()
         assert body["status"] == "ok"
         assert len(body["tool_calls"]) == 1
-        assert body["tool_calls"][0]["name"] == "gapt_edit"
+        assert body["tool_calls"][0]["tool"] == "gapt_edit"
         assert len(body["tool_results"]) == 1
         assert body["text"] == "done editing"
 

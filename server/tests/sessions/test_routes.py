@@ -185,6 +185,80 @@ async def test_list_and_fetch_session(fx: _Fx) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_enriched_and_archive_filter(fx: _Fx) -> None:
+    """Phase J.1 — `list_sessions` must (a) return `turn_count` +
+    `first_user_message` per session by default, and (b) honour
+    `include_archived=true` so the history page can show archived
+    rows."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id},
+        )
+        session_id = created.json()["id"]
+
+        # Seed a couple of user_message events directly so we don't
+        # have to drive a real pipeline turn. The route's enrichment
+        # query reads from session_events.
+        from gapt_server.container import build_container  # noqa: PLC0415
+        from gapt_server.db import models  # noqa: PLC0415
+
+        container = fx.app.state.container
+        assert container.session_factory is not None
+        async with container.session_factory() as bg:
+            bg.add(
+                models.SessionEvent(
+                    session_id=session_id,
+                    seq=1,
+                    kind="user_message",
+                    data={"text": "first prompt — what is 2+2?"},
+                )
+            )
+            bg.add(
+                models.SessionEvent(
+                    session_id=session_id,
+                    seq=2,
+                    kind="user_message",
+                    data={"text": "follow-up question"},
+                )
+            )
+            await bg.commit()
+        del build_container  # noqa: F811 — silence "imported but unused" if linter is picky
+
+        # Default (no include_archived): the single active session,
+        # with turn_count=2 and the first prompt's snippet.
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
+        assert listed.status_code == 200
+        rows = listed.json()
+        assert len(rows) == 1
+        assert rows[0]["id"] == session_id
+        assert rows[0]["turn_count"] == 2
+        assert rows[0]["first_user_message"] == "first prompt — what is 2+2?"
+
+        # Archive the session, then default list should be empty.
+        archived = await client.post(
+            f"/_gapt/api/sessions/{session_id}/archive"
+        )
+        assert archived.status_code == 200
+        default = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
+        assert default.status_code == 200
+        assert default.json() == []
+
+        # include_archived=true brings the row back, still enriched.
+        all_rows = await client.get(
+            f"/_gapt/api/projects/{project_id}/sessions?include_archived=true"
+        )
+        assert all_rows.status_code == 200
+        body = all_rows.json()
+        assert len(body) == 1
+        assert body[0]["status"] == "archived"
+        assert body[0]["turn_count"] == 2
+        assert body[0]["first_user_message"] == "first prompt — what is 2+2?"
+
+
+@pytest.mark.asyncio
 async def test_fetch_session_404(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         await _create_project_with_workspace(client)
@@ -221,8 +295,11 @@ async def test_invoke_and_replay_messages(fx: _Fx) -> None:
         replay = await client.get(f"/_gapt/api/sessions/{session_id}/messages")
         assert replay.status_code == 200
         kinds = [m["kind"] for m in replay.json()]
-        assert kinds == ["text", "done"]
-        assert replay.json()[0]["data"] == {"chunk": "echo:hi"}
+        # Phase I.2 — `_run_with_lifecycle` now publishes the user's
+        # prompt as a `user_message` event before the runner runs.
+        assert kinds == ["user_message", "text", "done"]
+        assert replay.json()[0]["data"] == {"text": "hi"}
+        assert replay.json()[1]["data"] == {"chunk": "echo:hi"}
 
 
 @pytest.mark.asyncio
@@ -252,7 +329,9 @@ async def test_invoke_endpoint_kicks_off_runner(fx: _Fx) -> None:
 
         replay = await client.get(f"/_gapt/api/sessions/{session_id}/messages")
         kinds = [m["kind"] for m in replay.json()]
-        assert kinds == ["done"]
+        # Phase I.2 — user_message lands first; runner's stub then
+        # yields nothing so lifecycle closes with `done`.
+        assert kinds == ["user_message", "done"]
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,8 @@ import { Login } from "@/routes/Login";
 import { Performance } from "@/routes/Performance";
 import { ProjectDetail } from "@/routes/ProjectDetail";
 import { ProjectsIndex } from "@/routes/ProjectsIndex";
+import { SessionDetail } from "@/routes/SessionDetail";
+import { SessionsHistory } from "@/routes/SessionsHistory";
 import { Settings } from "@/routes/Settings";
 import { WorkspaceIde } from "@/routes/WorkspaceIde";
 
@@ -64,6 +66,26 @@ export function AppRouter() {
           <RequireAuth>
             <AppShellLayout>
               <WorkspaceIde />
+            </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/projects/:pid/sessions"
+        element={
+          <RequireAuth>
+            <AppShellLayout>
+              <SessionsHistory />
+            </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/projects/:pid/sessions/:sid"
+        element={
+          <RequireAuth>
+            <AppShellLayout>
+              <SessionDetail />
             </AppShellLayout>
           </RequireAuth>
         }

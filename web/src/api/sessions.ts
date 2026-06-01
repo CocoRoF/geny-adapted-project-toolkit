@@ -14,6 +14,11 @@ export interface SessionResponse {
   output_tokens: number;
   last_active_at: string;
   created_at: string;
+  // Phase J.1 — list-view enrichments. Both default to 0 / null on
+  // older clients hitting an unenriched response so the UI degrades
+  // gracefully ("—" placeholders instead of crashing on undefined).
+  turn_count?: number;
+  first_user_message?: string | null;
 }
 
 export interface CreateSessionInput {
@@ -55,8 +60,46 @@ export const createSession = (
 ): Promise<SessionResponse> =>
   apiPost<SessionResponse>(`/_gapt/api/projects/${projectId}/sessions`, input);
 
-export const listSessions = (projectId: string): Promise<SessionResponse[]> =>
-  apiGet<SessionResponse[]>(`/_gapt/api/projects/${projectId}/sessions`);
+export const listSessions = (
+  projectId: string,
+  opts: { includeArchived?: boolean } = {},
+): Promise<SessionResponse[]> => {
+  const q = opts.includeArchived ? "?include_archived=true" : "";
+  return apiGet<SessionResponse[]>(
+    `/_gapt/api/projects/${projectId}/sessions${q}`,
+  );
+};
+
+// Phase J.2 — typed transcript shape returned by `/transcript?format=json`.
+// Mirrors `gapt_server.agent.transcript.to_dict`. Used by SessionDetail.
+export interface TranscriptToolUse {
+  tool: string;
+  tool_use_id: string | null;
+  input: unknown;
+  output: unknown;
+  is_error: boolean;
+}
+
+export interface TranscriptTurn {
+  user: string;
+  assistant: string;
+  cost_usd: number;
+  started_at: string | null;
+  tool_uses: TranscriptToolUse[];
+}
+
+export interface SessionTranscript {
+  session_id: string;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  turns: TranscriptTurn[];
+}
+
+export const getSessionTranscript = (sessionId: string): Promise<SessionTranscript> =>
+  apiGet<SessionTranscript>(
+    `/_gapt/api/sessions/${sessionId}/transcript?format=json`,
+  );
 
 export const getSession = (sessionId: string): Promise<SessionResponse> =>
   apiGet<SessionResponse>(`/_gapt/api/sessions/${sessionId}`);

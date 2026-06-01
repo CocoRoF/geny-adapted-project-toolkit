@@ -111,6 +111,13 @@ class SessionResponse(BaseModel):
     output_tokens: int = 0
     last_active_at: datetime
     created_at: datetime
+    # Phase J.1 — list-view enrichments. `turn_count` is the count
+    # of `user_message` events for the session; `first_user_message`
+    # is the truncated text of the very first prompt — together they
+    # let SessionsHistory cards show "what was this session about" at
+    # a glance without fetching the full transcript per row.
+    turn_count: int = 0
+    first_user_message: str | None = None
 
     @classmethod
     def from_row(cls, row: models.AgentSession) -> SessionResponse:
@@ -507,30 +514,93 @@ async def create_session(
 @by_project.get("/{project_id}/sessions", response_model=list[SessionResponse])
 async def list_sessions(
     project_id: str,
+    include_archived: bool = False,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> list[SessionResponse]:
+    del manager  # signature kept for future hooks
     try:
         await fetch_project_for(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    rows = (
-        (
-            await db.execute(
-                select(models.AgentSession)
-                .where(
-                    (models.AgentSession.project_id == project_id)
-                    & (models.AgentSession.status != enums.AgentSessionStatus.ARCHIVED)
-                )
-                .order_by(models.AgentSession.created_at.desc())
-            )
+    stmt = select(models.AgentSession).where(
+        models.AgentSession.project_id == project_id
+    )
+    if not include_archived:
+        stmt = stmt.where(
+            models.AgentSession.status != enums.AgentSessionStatus.ARCHIVED
         )
+    rows = (
+        (await db.execute(stmt.order_by(models.AgentSession.created_at.desc())))
         .scalars()
         .all()
     )
-    return [SessionResponse.from_row(r) for r in rows]
+    if not rows:
+        return []
+
+    # Phase J.1 — backfill turn_count + first_user_message in two
+    # follow-up queries (one count + one ROW_NUMBER-style first row)
+    # so the list view doesn't need a separate fetch per card. We
+    # only pay for what the page asked for — both queries are bounded
+    # by the (session_id IN …) filter.
+    session_ids = [r.id for r in rows]
+    turn_counts: dict[str, int] = {}
+    first_msgs: dict[str, str] = {}
+
+    cnt_rows = (
+        await db.execute(
+            select(
+                models.SessionEvent.session_id,
+                sa.func.count().label("c"),
+            )
+            .where(
+                models.SessionEvent.session_id.in_(session_ids),
+                models.SessionEvent.kind == "user_message",
+            )
+            .group_by(models.SessionEvent.session_id)
+        )
+    ).all()
+    for sid, c in cnt_rows:
+        turn_counts[sid] = int(c)
+
+    # First user_message per session — DISTINCT ON (PG-specific but
+    # we're already PG-locked). One row per session_id with the
+    # smallest seq.
+    first_rows = (
+        await db.execute(
+            select(models.SessionEvent.session_id, models.SessionEvent.data)
+            .where(
+                models.SessionEvent.session_id.in_(session_ids),
+                models.SessionEvent.kind == "user_message",
+            )
+            .distinct(models.SessionEvent.session_id)
+            .order_by(
+                models.SessionEvent.session_id,
+                models.SessionEvent.seq.asc(),
+            )
+        )
+    ).all()
+    for sid, data in first_rows:
+        if isinstance(data, dict):
+            text = data.get("text")
+            if isinstance(text, str) and text.strip():
+                # Snippet cap so a 5KB prompt doesn't bloat the JSON
+                # response. 200 chars is enough to recognise a turn
+                # at a glance.
+                snippet = text.strip()
+                if len(snippet) > 200:
+                    snippet = snippet[:200] + "…"
+                first_msgs[sid] = snippet
+
+    out: list[SessionResponse] = []
+    for r in rows:
+        resp = SessionResponse.from_row(r)
+        resp.turn_count = turn_counts.get(r.id, 0)
+        resp.first_user_message = first_msgs.get(r.id)
+        out.append(resp)
+    return out
 
 
 @by_id.get("/{session_id}", response_model=SessionResponse)

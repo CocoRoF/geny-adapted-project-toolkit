@@ -190,12 +190,20 @@ export function ProjectDetail() {
             {project?.display_name ?? t("projects.title")}
           </h1>
           {project ? (
-            <Link
-              to={`/projects/${project.id}/environments`}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
-            >
-              Environments →
-            </Link>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Link
+                to={`/projects/${project.id}/sessions`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+              >
+                세션 히스토리 →
+              </Link>
+              <Link
+                to={`/projects/${project.id}/environments`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
+              >
+                Environments →
+              </Link>
+            </div>
           ) : null}
         </div>
         {project ? (
