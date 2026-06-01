@@ -73,7 +73,7 @@ class _StubPipeline:
         self.attached_kwargs = kwargs
         self.attached_hook_runner = kwargs.get("hook_runner")
 
-    async def run_stream(self, message: str) -> Any:
+    async def run_stream(self, message: str, state=None) -> Any:
         if False:
             yield None  # pragma: no cover  — never invoked in route tests
 
@@ -400,6 +400,79 @@ async def test_archive_session(fx: _Fx) -> None:
         # Not in the active list any more.
         listed = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
         assert listed.json() == []
+
+
+@pytest.mark.asyncio
+async def test_reactivate_session(fx: _Fx) -> None:
+    """Phase L.2 — archived session can be flipped back to active so
+    the chat panel can attach to it again. Idempotent for already-
+    active sessions (no-op, status stays active)."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id},
+        )
+        session_id = created.json()["id"]
+
+        # Archive first.
+        await client.post(f"/_gapt/api/sessions/{session_id}/archive")
+
+        # Reactivate.
+        reactivated = await client.post(
+            f"/_gapt/api/sessions/{session_id}/reactivate"
+        )
+        assert reactivated.status_code == 200, reactivated.text
+        assert reactivated.json()["status"] == enums.AgentSessionStatus.ACTIVE.value
+
+        # Now it shows up in the default (active-only) list again.
+        listed = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
+        assert [s["id"] for s in listed.json()] == [session_id]
+
+        # Idempotent: a second reactivate keeps it active.
+        again = await client.post(
+            f"/_gapt/api/sessions/{session_id}/reactivate"
+        )
+        assert again.status_code == 200
+        assert again.json()["status"] == enums.AgentSessionStatus.ACTIVE.value
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_workspace_filter(fx: _Fx) -> None:
+    """Phase L.3 — `?workspace_id=` filters the list to one workspace
+    so the ChatPanel's SessionPicker doesn't mix sessions across
+    workspaces."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, ws_a = await _create_project_with_workspace(client)
+        # Second workspace in the same project.
+        ws_b_resp = await client.post(
+            f"/_gapt/api/projects/{project_id}/workspaces",
+            json={"branch": "other"},
+        )
+        ws_b = ws_b_resp.json()["id"]
+
+        sa_resp = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": ws_a},
+        )
+        sa_id = sa_resp.json()["id"]
+        sb_resp = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": ws_b},
+        )
+        sb_id = sb_resp.json()["id"]
+
+        only_a = await client.get(
+            f"/_gapt/api/projects/{project_id}/sessions?workspace_id={ws_a}"
+        )
+        assert [s["id"] for s in only_a.json()] == [sa_id]
+        only_b = await client.get(
+            f"/_gapt/api/projects/{project_id}/sessions?workspace_id={ws_b}"
+        )
+        assert [s["id"] for s in only_b.json()] == [sb_id]
+        # Without the filter both come back.
+        all_rows = await client.get(f"/_gapt/api/projects/{project_id}/sessions")
+        assert {s["id"] for s in all_rows.json()} == {sa_id, sb_id}
 
 
 # ────────────────────────────────────────────────── stream SSE ──

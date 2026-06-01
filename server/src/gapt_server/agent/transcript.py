@@ -295,6 +295,41 @@ def _indent_quote(text: str) -> str:
     return "\n".join(f"> {line}" for line in text.splitlines() or [""])
 
 
+def to_anthropic_messages(transcript: Transcript, *, max_turns: int | None = 50) -> list[dict[str, Any]]:
+    """Convert a transcript into the Anthropic `messages` array format
+    so a freshly-rehydrated `PipelineState` can seed prior conversation.
+
+    Format: `[{"role": "user", "content": "..."}, {"role": "assistant",
+    "content": "..."}, ...]` — exactly what `state.messages` carries.
+
+    Phase L.1 — used by the session rehydrate path. Skips turns whose
+    user OR assistant text is empty (legacy pre-Phase-I.2 sessions
+    where the prompt was never persisted; pre-rendering an empty
+    user-side message confuses the API and the assistant downstream).
+
+    `max_turns` caps the prefix to the most recent N turns so a long-
+    running session doesn't blow past the model's context window the
+    moment it gets rehydrated. None = no cap (test-only — production
+    paths should always cap).
+
+    Tool-call content blocks aren't reconstructed for now — only the
+    natural-language text is carried over. Adding tool_use / tool_result
+    blocks is a separate cycle (see Phase L plan §Out of scope).
+    """
+    turns = transcript.turns
+    if max_turns is not None and len(turns) > max_turns:
+        turns = turns[-max_turns:]
+    out: list[dict[str, Any]] = []
+    for turn in turns:
+        user_text = (turn.user or "").strip()
+        assistant_text = (turn.assistant or "").strip()
+        if not user_text or not assistant_text:
+            continue
+        out.append({"role": "user", "content": user_text})
+        out.append({"role": "assistant", "content": assistant_text})
+    return out
+
+
 def to_dict(transcript: Transcript) -> dict[str, Any]:
     """JSON-friendly dump for the `?format=json` response."""
     return {

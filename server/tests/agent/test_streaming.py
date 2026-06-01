@@ -180,7 +180,9 @@ async def test_invoke_runs_runner_to_completion_and_emits_done() -> None:
     await rt.wait_done()
     events = await rt.bus.replay(since=0)
     kinds = [e.kind.value for e in events]
-    assert kinds == ["text", "tool_call", "tool_result", "done"]
+    # Phase I.2 — `_run_with_lifecycle` prefixes every invoke with a
+    # user_message event so the transcript carries both sides.
+    assert kinds == ["user_message", "text", "tool_call", "tool_result", "done"]
 
 
 @pytest.mark.asyncio

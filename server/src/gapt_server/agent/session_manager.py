@@ -328,6 +328,49 @@ class ProjectAwareSessionManager:
             )
         )
 
+    # ─────────────────────────────────────────── reactivate ──
+
+    async def reactivate(
+        self,
+        db: AsyncSession,
+        *,
+        user: AdminPrincipal,
+        session_id: str,
+    ) -> models.AgentSession:
+        """Phase L.2 — flip an archived session back to `active` so
+        the chat panel can attach to it again. Idempotent: an already-
+        active session just bumps `last_active_at` so the picker can
+        re-order it to the top of the list.
+
+        The conversation memory itself (Phase L.1's PipelineState
+        rebuilt from session_events on rehydrate) is what makes
+        reactivation meaningful — without that, this would just
+        unhide a row that the agent had no recollection of.
+        """
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        row = await self._fetch_session(db, session_id)
+        await fetch_project_for(db, actor=user, project_id=row.project_id)
+        was_archived = row.status == enums.AgentSessionStatus.ARCHIVED
+        row.status = enums.AgentSessionStatus.ACTIVE
+        row.last_active_at = datetime.now(UTC)
+        await db.flush()
+        if was_archived:
+            await self.audit_sink.log(
+                AuditEvent(
+                    action="session.reactivate",
+                    actor_type=enums.AuditActorType.USER,
+                    actor_id=user.id,
+                    outcome=enums.AuditOutcome.OK,
+                    scope={
+                        "project_id": row.project_id,
+                        "workspace_id": row.workspace_id,
+                        "session_id": session_id,
+                    },
+                )
+            )
+        return row
+
     # ─────────────────────────────────────────────── helpers ──
 
     @staticmethod
@@ -414,6 +457,17 @@ def _merge_overrides(
             else base.cost_budget_usd
         ),
         timeout_s=patch.timeout_s if patch.timeout_s is not None else base.timeout_s,
+        # Phase L.4 — thinking knobs follow the same patch-wins rule.
+        thinking_enabled=(
+            patch.thinking_enabled
+            if patch.thinking_enabled is not None
+            else base.thinking_enabled
+        ),
+        thinking_budget_tokens=(
+            patch.thinking_budget_tokens
+            if patch.thinking_budget_tokens is not None
+            else base.thinking_budget_tokens
+        ),
     )
 
 

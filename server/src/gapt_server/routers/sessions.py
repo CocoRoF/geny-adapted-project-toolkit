@@ -98,6 +98,11 @@ class CreateSessionRequest(BaseModel):
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     cost_budget_usd: float | None = Field(default=None, ge=0.0, le=1_000.0)
     timeout_s: int | None = Field(default=None, ge=1, le=3_600)
+    # Phase L.4 — Anthropic extended-thinking knobs. Budget in tokens
+    # (the API rejects sub-1024 or absurd >200_000); `thinking_enabled`
+    # null means "use whatever the manifest / prior overrides decided".
+    thinking_enabled: bool | None = None
+    thinking_budget_tokens: int | None = Field(default=None, ge=0, le=200_000)
 
 
 class SessionResponse(BaseModel):
@@ -411,6 +416,52 @@ async def _runtime_or_rehydrate(
     ).scalar()
     if max_seq_row is not None:
         runtime.bus.seed_seq(int(max_seq_row))
+
+    # Phase L.1 — reconstruct prior conversation messages from
+    # session_events so the rehydrated runtime carries the same
+    # `state.messages` the pre-restart pipeline had. Without this
+    # step, a server restart turns the chat into amnesia — the agent
+    # sees only the new turn even though the user can see the full
+    # archive in the UI.
+    event_rows = (
+        await db.execute(
+            sa.select(models.SessionEvent)
+            .where(models.SessionEvent.session_id == session_id)
+            .order_by(models.SessionEvent.seq.asc())
+        )
+    ).scalars().all()
+    if event_rows:
+        from geny_executor.core.state import PipelineState  # noqa: PLC0415
+
+        from gapt_server.agent.transcript import (  # noqa: PLC0415
+            build_transcript,
+            to_anthropic_messages,
+        )
+
+        transcript = build_transcript(
+            session_id=session_id,
+            events=[
+                {
+                    "seq": r.seq,
+                    "kind": r.kind,
+                    "data": r.data or {},
+                    "ts": r.ts.isoformat() if r.ts else None,
+                }
+                for r in event_rows
+            ],
+        )
+        msgs = to_anthropic_messages(transcript)
+        if msgs:
+            runtime.conversation_state = PipelineState(
+                session_id=session_id,
+                messages=msgs,
+            )
+            logger.info(
+                "session.rehydrate.messages_restored",
+                session_id=session_id,
+                message_count=len(msgs),
+                turn_count=len(transcript.turns),
+            )
     await registry.register(runtime)
     logger.info(
         "session.rehydrate.registered",
@@ -465,6 +516,8 @@ async def create_session(
             payload.max_iterations,
             payload.cost_budget_usd,
             payload.timeout_s,
+            payload.thinking_enabled,
+            payload.thinking_budget_tokens,
         )
     ):
         session_overrides = ManifestOverrides(
@@ -473,6 +526,8 @@ async def create_session(
             max_iterations=payload.max_iterations,
             cost_budget_usd=payload.cost_budget_usd,
             timeout_s=payload.timeout_s,
+            thinking_enabled=payload.thinking_enabled,
+            thinking_budget_tokens=payload.thinking_budget_tokens,
         )
 
     try:
@@ -527,6 +582,7 @@ async def create_session(
 async def list_sessions(
     project_id: str,
     include_archived: bool = False,
+    workspace_id: str | None = None,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
@@ -544,8 +600,21 @@ async def list_sessions(
         stmt = stmt.where(
             models.AgentSession.status != enums.AgentSessionStatus.ARCHIVED
         )
+    # Phase L.3 — workspace_id filter so the ChatPanel's SessionPicker
+    # only shows the picker-relevant rows (the operator's workspaces
+    # might each have their own session history; mixing them in one
+    # picker would confuse the switch action).
+    if workspace_id is not None:
+        stmt = stmt.where(models.AgentSession.workspace_id == workspace_id)
+    # Order by last_active_at DESC so the recently-touched session
+    # floats to the top of the picker (Phase L convention: picker is
+    # a recency list, not a calendar).
     rows = (
-        (await db.execute(stmt.order_by(models.AgentSession.created_at.desc())))
+        (
+            await db.execute(
+                stmt.order_by(models.AgentSession.last_active_at.desc())
+            )
+        )
         .scalars()
         .all()
     )
@@ -905,4 +974,30 @@ async def archive_session(
     row = (
         await db.execute(select(models.AgentSession).where(models.AgentSession.id == session_id))
     ).scalar_one()
+    return SessionResponse.from_row(row)
+
+
+@by_id.post("/{session_id}/reactivate", response_model=SessionResponse)
+async def reactivate_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> SessionResponse:
+    """Phase L.2 — flip an archived session back to `active`.
+
+    Idempotent for already-active sessions (just bumps `last_active_at`).
+    The actual conversation memory restoration happens lazily on the
+    next `/invoke` or `/stream` via `_runtime_or_rehydrate` — that's
+    Phase L.1's job, not this endpoint's.
+    """
+    try:
+        row = await manager.reactivate(db, user=user, session_id=session_id)
+        await db.commit()
+    except SessionManagerError as exc:
+        await db.rollback()
+        raise _http_from_session_error(exc) from exc
+    except ProjectError as exc:
+        await db.rollback()
+        raise http_from_project_error(exc) from exc
     return SessionResponse.from_row(row)

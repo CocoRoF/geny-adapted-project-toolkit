@@ -32,6 +32,7 @@ from gapt_server.agent.streaming import (
 
 if TYPE_CHECKING:
     from geny_executor import Pipeline
+    from geny_executor.core.state import PipelineState
 
     from gapt_server.agent.hooks.cost_hook import CostAccumulator
     from gapt_server.agent.hooks.policy_hook import ChatModeRef
@@ -87,6 +88,16 @@ class SessionRuntime:
     # `token.tracked` payload with `cost_usd=0` (model-alias gap).
     # `None` keeps the pre-fix behaviour (no fallback).
     model_name: str | None = None
+    # Phase L.1 — geny-executor's PipelineState carried across every
+    # `run_stream()` call on this session. Holds `session_id` (so the
+    # executor's SESSION_* hooks group correctly) and `messages` —
+    # the canonical Anthropic-format conversation array that stages
+    # 1 (input) / 6 (api) / 10 (tool) append to. Without this, each
+    # invoke spawned a fresh PipelineState and the agent saw only
+    # the current turn (no memory). Lazy-init in `_drive_pipeline`
+    # so test paths that don't go through the real pipeline don't
+    # have to construct one.
+    conversation_state: PipelineState | None = None
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -230,8 +241,27 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
     neither name is in the executor's vocabulary — so every text token
     was silently dropped. Same for cost: the cost_hook only fires on
     POST_TOOL_USE, so chat-without-tools sessions reported $0 forever.
+
+    Phase L.1 — pass `runtime.conversation_state` into `run_stream` so
+    the executor preserves prior turns' messages. Without this the
+    pipeline rebuilt `state.messages = []` every invoke and the agent
+    couldn't see what the user said two turns ago. The state object
+    is mutated in place by stage 1 (input append-user) and stage 6
+    (api append-assistant); we keep the same reference on the runtime
+    so the next invoke sees the accumulated history.
     """
-    async for ev in runtime.pipeline.run_stream(message):
+    if runtime.conversation_state is None:
+        # Lazy-import the executor's state class so test paths that
+        # mock `runtime.pipeline` don't have to pull the executor in.
+        from geny_executor.core.state import PipelineState  # noqa: PLC0415
+
+        runtime.conversation_state = PipelineState(
+            session_id=runtime.session_id,
+        )
+
+    async for ev in runtime.pipeline.run_stream(
+        message, state=runtime.conversation_state
+    ):
         event_type = getattr(ev, "type", "")
         stage_name = getattr(ev, "stage", "") or ""
         data: dict[str, object] = dict(getattr(ev, "data", {}) or {})

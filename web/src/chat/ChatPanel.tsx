@@ -7,6 +7,7 @@ import {
   type SessionResponse,
   archiveSession,
   createSession,
+  reactivateSession,
   interruptSession,
   invokeSession,
   listSessions,
@@ -92,6 +93,40 @@ function persistModel(projectId: string, model: string | null): void {
   }
 }
 
+/** Phase L.4 — per-project sticky thinking budget (Anthropic extended
+ *  thinking). `null` means "manifest decides" — pill shows "off"
+ *  unless the manifest itself enables thinking. Operator picks one of
+ *  the presets or types a custom token count. */
+const THINKING_STORAGE_KEY = "gapt.chat.thinking_budget";
+
+function readPersistedThinking(projectId: string): number | null {
+  try {
+    const raw = window.localStorage.getItem(`${THINKING_STORAGE_KEY}.${projectId}`);
+    if (!raw) return null;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistThinking(projectId: string, budget: number | null): void {
+  try {
+    const key = `${THINKING_STORAGE_KEY}.${projectId}`;
+    if (budget === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, String(budget));
+  } catch {
+    /* best-effort */
+  }
+}
+
+const THINKING_PRESETS: { value: number; label: string }[] = [
+  { value: 0, label: "off" },
+  { value: 1024, label: "1k" },
+  { value: 4096, label: "4k" },
+  { value: 16384, label: "16k" },
+];
+
 /** Phase I.4 — fetch markdown transcript from the session and drop
  *  it into a browser download. We trigger the click on a transient
  *  `<a>` so the file's blob URL is released as soon as the download
@@ -158,6 +193,17 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     readPersistedModel(projectId),
   );
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  // Phase L.4 — per-session extended-thinking budget. `null` = inherit
+  // (manifest decides). Sticky per project.
+  const [thinkingBudget, setThinkingBudget] = useState<number | null>(() =>
+    readPersistedThinking(projectId),
+  );
+  const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
+  // Phase L.3 — session picker. Holds all sessions for this workspace
+  // (active + archived). Refreshes on mount + every time the local
+  // session changes so a newly-created/reactivated row shows up.
+  const [workspaceSessions, setWorkspaceSessions] = useState<SessionResponse[]>([]);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   // Synthetic user-message events kept client-side. Negative seqs so
   // they sort before any server event of the same wall-clock moment.
   const [userEvents, setUserEvents] = useState<SessionStreamEvent[]>([]);
@@ -165,13 +211,26 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const dismissedGuardSeq = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Pull existing sessions on mount so a reload doesn't strand the
-  // user with a fresh "no session" panel.
+  // Phase L.3 — pull every workspace session (active + archived) so
+  // the SessionPicker has the full history. We auto-attach to the
+  // most recently-active session if one exists; the operator can
+  // switch via the picker afterward. URL `?session=<id>` query
+  // overrides the auto-select for deep links from SessionDetail.
   useEffect(() => {
-    void listSessions(projectId)
+    void listSessions(projectId, {
+      workspaceId,
+      includeArchived: true,
+    })
       .then((rows) => {
-        const wsActive = rows.find((s) => s.workspace_id === workspaceId && s.status === "active");
-        if (wsActive) setSession(wsActive);
+        setWorkspaceSessions(rows);
+        const url = new URL(window.location.href);
+        const hinted = url.searchParams.get("session");
+        const fromUrl = hinted ? rows.find((s) => s.id === hinted) : undefined;
+        const wsActive = rows.find(
+          (s) => s.workspace_id === workspaceId && s.status === "active",
+        );
+        if (fromUrl) setSession(fromUrl);
+        else if (wsActive) setSession(wsActive);
       })
       .catch(() => {
         // Silently swallow — the parent shows project-level errors.
@@ -214,6 +273,50 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       setModelMenuOpen(false);
     },
     [projectId],
+  );
+
+  // Phase L.4 — pick a thinking budget. null = inherit (manifest).
+  const onPickThinking = useCallback(
+    (budget: number | null) => {
+      setThinkingBudget(budget);
+      persistThinking(projectId, budget);
+      setThinkingMenuOpen(false);
+    },
+    [projectId],
+  );
+
+  // Phase L.3 — switch the attached session. Clears optimistic user
+  // events from the previous session so the new event stream renders
+  // cleanly. Reactivates archived sessions inline before attaching so
+  // the runtime path can rehydrate prior messages (Phase L.1).
+  const onSwitchSession = useCallback(
+    (target: SessionResponse) => {
+      setSessionMenuOpen(false);
+      setUserEvents([]);
+      setError(null);
+      const attach = (row: SessionResponse) => {
+        setSession(row);
+        setWorkspaceSessions((rows) =>
+          rows.map((r) => (r.id === row.id ? row : r)),
+        );
+      };
+      if (target.status === "archived") {
+        void reactivateSession(target.id)
+          .then(attach)
+          .catch((err: unknown) => {
+            setError(
+              err instanceof ApiError
+                ? `${err.code}: ${err.reason}`
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
+            );
+          });
+      } else {
+        attach(target);
+      }
+    },
+    [],
   );
 
   const stream = useSessionStream(session?.id ?? null);
@@ -278,6 +381,14 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       workspace_id: workspaceId,
       ...(manifestId ? { env_id: manifestId } : {}),
       ...(modelOverride ? { model: modelOverride } : {}),
+      // Phase L.4 — only thread the thinking knob when the operator
+      // explicitly set one. None means "manifest decides".
+      ...(thinkingBudget !== null
+        ? {
+            thinking_enabled: thinkingBudget > 0,
+            thinking_budget_tokens: thinkingBudget,
+          }
+        : {}),
     })
       .then(setSession)
       .catch((err: unknown) => {
@@ -290,7 +401,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         );
       })
       .finally(() => setPending(false));
-  }, [manifestId, modelOverride, projectId, workspaceId]);
+  }, [manifestId, modelOverride, thinkingBudget, projectId, workspaceId]);
 
   const send = useCallback(
     (text: string) => {
@@ -482,6 +593,26 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
           onToggle={() => setModelMenuOpen((v) => !v)}
           onPick={onPickModel}
         />
+        {/* Phase L.4 — extended-thinking budget. Mirrors ModelPill's
+            "locked while a session is live" semantic. */}
+        <ThinkingPill
+          locked={session !== null}
+          selected={thinkingBudget}
+          open={thinkingMenuOpen}
+          onToggle={() => setThinkingMenuOpen((v) => !v)}
+          onPick={onPickThinking}
+        />
+        {/* Phase L.3 — pick / switch / reactivate sessions. Only shown
+            when there's at least one session for this workspace. */}
+        {workspaceSessions.length > 0 ? (
+          <SessionPicker
+            sessions={workspaceSessions}
+            current={session}
+            open={sessionMenuOpen}
+            onToggle={() => setSessionMenuOpen((v) => !v)}
+            onPick={onSwitchSession}
+          />
+        ) : null}
         <span className="sr-only">
           {session ? session.env_manifest_id : ""}
         </span>
@@ -940,6 +1071,198 @@ function ModelPill({
               </button>
             </li>
           ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Phase L.4 — Anthropic extended-thinking budget picker.
+ *
+ *  `selected = null` means "manifest decides" (typical: off). Picking
+ *  a preset persists per-project. Locked while a session is active —
+ *  switching mid-conversation would require a new manifest commit. */
+function ThinkingPill({
+  locked,
+  selected,
+  open,
+  onToggle,
+  onPick,
+}: {
+  locked: boolean;
+  selected: number | null;
+  open: boolean;
+  onToggle: () => void;
+  onPick: (value: number | null) => void;
+}) {
+  const isInherit = selected === null;
+  const label =
+    selected === null
+      ? "auto"
+      : selected === 0
+        ? "off"
+        : selected >= 1024
+          ? `${Math.round(selected / 1024)}k`
+          : String(selected);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={locked}
+        className={
+          locked
+            ? "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg-muted"
+            : "inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg hover:bg-bg"
+        }
+        title={
+          locked
+            ? "Session active — thinking budget locked. End session to switch."
+            : "Set Anthropic extended-thinking budget for the next session"
+        }
+      >
+        <span className="text-fg-subtle">think:</span>
+        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>
+          {label}
+        </span>
+        {!locked ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
+      </button>
+      {open && !locked ? (
+        <ul
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-border bg-bg-elevated py-1 shadow-lg"
+        >
+          <li>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => onPick(null)}
+              className={
+                selected === null
+                  ? "flex w-full items-baseline gap-2 bg-accent/10 px-3 py-1.5 text-left"
+                  : "flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-bg-subtle"
+              }
+            >
+              <span className="font-mono text-[12px] italic text-fg-muted">
+                auto
+              </span>
+              <span className="text-[10.5px] text-fg-subtle">
+                (manifest decides)
+              </span>
+            </button>
+          </li>
+          {THINKING_PRESETS.map((p) => (
+            <li key={p.value}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => onPick(p.value)}
+                className={
+                  selected === p.value
+                    ? "flex w-full items-baseline gap-2 bg-accent/10 px-3 py-1.5 text-left"
+                    : "flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-bg-subtle"
+                }
+              >
+                <span className="font-mono text-[12px] text-fg">{p.label}</span>
+                <span className="text-[10.5px] text-fg-subtle tabular-nums">
+                  {p.value === 0 ? "no thinking" : `${p.value.toLocaleString()} tokens`}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Phase L.3 — pick / switch / reactivate session. Workspace-scoped.
+ *
+ *  Active sessions click straight through; archived sessions hit the
+ *  reactivate endpoint first (which restores L.1's conversation
+ *  memory on the next invoke). The current session is the first row
+ *  so the operator's eye lands there immediately. */
+function SessionPicker({
+  sessions,
+  current,
+  open,
+  onToggle,
+  onPick,
+}: {
+  sessions: SessionResponse[];
+  current: SessionResponse | null;
+  open: boolean;
+  onToggle: () => void;
+  onPick: (target: SessionResponse) => void;
+}) {
+  const label = current
+    ? current.first_user_message?.slice(0, 24) ||
+      `session ${current.id.slice(-6)}`
+    : "no session";
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg hover:bg-bg"
+        title="Switch session in this workspace"
+      >
+        <span className="text-fg-subtle">session:</span>
+        <span className="truncate font-mono max-w-[140px]">{label}</span>
+        <ChevronDown className="h-3 w-3 opacity-60" />
+      </button>
+      {open ? (
+        <ul
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 max-h-80 w-80 overflow-auto rounded-md border border-border bg-bg-elevated py-1 shadow-lg"
+        >
+          {sessions.map((s) => {
+            const isCurrent = current?.id === s.id;
+            const snippet =
+              s.first_user_message?.trim() || "(no recorded prompt)";
+            return (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onPick(s)}
+                  className={
+                    isCurrent
+                      ? "flex w-full flex-col items-start gap-0.5 bg-accent/10 px-3 py-1.5 text-left"
+                      : "flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left hover:bg-bg-subtle"
+                  }
+                >
+                  <span className="flex w-full items-center gap-1.5">
+                    <span
+                      className={
+                        s.status === "active"
+                          ? "rounded bg-success/15 px-1 text-[9.5px] uppercase tracking-wider text-success"
+                          : "rounded bg-bg-subtle px-1 text-[9.5px] uppercase tracking-wider text-fg-subtle"
+                      }
+                    >
+                      {s.status}
+                    </span>
+                    <span className="flex-1 truncate text-[12px] text-fg">
+                      {snippet.length > 50
+                        ? `${snippet.slice(0, 50)}…`
+                        : snippet}
+                    </span>
+                    <span className="font-mono text-[10.5px] tabular-nums text-fg-subtle">
+                      ${s.cost_usd.toFixed(4)}
+                    </span>
+                  </span>
+                  <span className="flex w-full items-center gap-2 text-[10px] text-fg-subtle">
+                    <span className="font-mono">{s.env_manifest_id}</span>
+                    <span>·</span>
+                    <span>{s.turn_count ?? 0} turns</span>
+                    <span className="ml-auto font-mono tabular-nums">
+                      {new Date(s.last_active_at).toLocaleString()}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>

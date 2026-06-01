@@ -72,7 +72,7 @@ class _ScriptedPipeline:
     def attach_runtime(self, **kwargs: Any) -> None:
         self.attached_hook_runner = kwargs.get("hook_runner")
 
-    async def run_stream(self, _message: str) -> Any:
+    async def run_stream(self, _message: str, state=None) -> Any:
         for ev in self._events:
             yield ev
 
@@ -280,7 +280,7 @@ async def test_oneshot_timeout_returns_status_timeout(fx: _Fx) -> None:
         def attach_runtime(self, **kwargs: Any) -> None:
             self.attached_hook_runner = kwargs.get("hook_runner")
 
-        async def run_stream(self, _message: str) -> Any:
+        async def run_stream(self, _message: str, state=None) -> Any:
             await asyncio.sleep(10)
             if False:
                 yield None  # pragma: no cover

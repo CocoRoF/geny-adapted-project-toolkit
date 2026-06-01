@@ -37,6 +37,11 @@ export interface CreateSessionInput {
   max_iterations?: number;
   cost_budget_usd?: number;
   timeout_s?: number;
+  // Phase L.4 — Anthropic extended-thinking budget. Setting
+  // `thinking_budget_tokens > 0` implicitly enables thinking unless
+  // `thinking_enabled` is explicitly `false`.
+  thinking_enabled?: boolean;
+  thinking_budget_tokens?: number;
 }
 
 export type SessionEventKind =
@@ -66,13 +71,21 @@ export const createSession = (
 
 export const listSessions = (
   projectId: string,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean; workspaceId?: string } = {},
 ): Promise<SessionResponse[]> => {
-  const q = opts.includeArchived ? "?include_archived=true" : "";
+  const qs = new URLSearchParams();
+  if (opts.includeArchived) qs.set("include_archived", "true");
+  if (opts.workspaceId) qs.set("workspace_id", opts.workspaceId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiGet<SessionResponse[]>(
-    `/_gapt/api/projects/${projectId}/sessions${q}`,
+    `/_gapt/api/projects/${projectId}/sessions${suffix}`,
   );
 };
+
+// Phase L.2 — flip a session back to active so the ChatPanel can
+// attach to it again. Idempotent for already-active sessions.
+export const reactivateSession = (sessionId: string): Promise<SessionResponse> =>
+  apiPost<SessionResponse>(`/_gapt/api/sessions/${sessionId}/reactivate`);
 
 // Phase J.2 — typed transcript shape returned by `/transcript?format=json`.
 // Mirrors `gapt_server.agent.transcript.to_dict`. Used by SessionDetail.

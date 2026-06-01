@@ -7,6 +7,7 @@ from datetime import datetime
 from gapt_server.agent.transcript import (
     build_transcript,
     render_markdown,
+    to_anthropic_messages,
     to_dict,
 )
 
@@ -207,6 +208,64 @@ def test_cache_tokens_surfaced_in_totals() -> None:
     md = render_markdown(t)
     assert "cache_write tokens: 3,400" in md
     assert "cache_read tokens: 200" in md
+
+
+def test_to_anthropic_messages_flat_user_assistant_pairs() -> None:
+    """Phase L.1 — the rehydrate path turns a transcript into the
+    Anthropic `messages` array so `PipelineState.messages` carries
+    the prior conversation forward."""
+    events = _evs(
+        ("user_message", {"text": "내 이름은 alice"}),
+        ("text", {"text": "안녕 alice!"}),
+        ("done", {"cost": {"cost_usd": 0.001, "input_tokens": 5, "output_tokens": 5}}),
+        ("user_message", {"text": "내 이름이 뭐였지?"}),
+        ("text", {"text": "alice 라고 했어요"}),
+        ("done", {"cost": {"cost_usd": 0.002, "input_tokens": 10, "output_tokens": 8}}),
+    )
+    transcript = build_transcript(session_id="s_mem", events=events)
+    msgs = to_anthropic_messages(transcript)
+    assert msgs == [
+        {"role": "user", "content": "내 이름은 alice"},
+        {"role": "assistant", "content": "안녕 alice!"},
+        {"role": "user", "content": "내 이름이 뭐였지?"},
+        {"role": "assistant", "content": "alice 라고 했어요"},
+    ]
+
+
+def test_to_anthropic_messages_skips_empty_turns() -> None:
+    """Legacy pre-Phase-I.2 sessions have no `user_message` events —
+    the resulting Turn has user="" + assistant="something". Skip these
+    so the API doesn't choke on an empty-content user message."""
+    events = _evs(
+        # No user_message event before this — legacy assistant-only turn.
+        ("text", {"text": "legacy reply"}),
+        ("done", {"cost": {"cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0}}),
+        # A proper turn afterwards must still show up.
+        ("user_message", {"text": "hi"}),
+        ("text", {"text": "hello"}),
+    )
+    transcript = build_transcript(session_id="s_legacy", events=events)
+    msgs = to_anthropic_messages(transcript)
+    assert msgs == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+
+
+def test_to_anthropic_messages_max_turns_cap() -> None:
+    """Long sessions risk blowing the model context window the moment
+    they're rehydrated. The cap keeps only the last N turns."""
+    events_list: list = []
+    for i in range(10):
+        events_list.append(("user_message", {"text": f"q{i}"}))
+        events_list.append(("text", {"text": f"a{i}"}))
+    transcript = build_transcript(session_id="s_long", events=_evs(*events_list))
+    msgs = to_anthropic_messages(transcript, max_turns=3)
+    # 3 turns × 2 messages/turn = 6 messages.
+    assert len(msgs) == 6
+    # The latest three turns are preserved.
+    assert msgs[0]["content"] == "q7"
+    assert msgs[-1]["content"] == "a9"
 
 
 def test_datetime_started_at_parsed_from_iso() -> None:

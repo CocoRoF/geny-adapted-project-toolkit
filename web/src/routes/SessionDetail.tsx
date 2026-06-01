@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronLeft,
   Code2,
@@ -35,6 +35,7 @@ import {
   type TranscriptTurn,
   getSession,
   getSessionTranscript,
+  reactivateSession,
 } from "@/api/sessions";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
@@ -46,10 +47,33 @@ export function SessionDetail() {
   const { pid, sid } = useParams<{ pid: string; sid: string }>();
   const projectId = pid ?? "";
   const sessionId = sid ?? "";
+  const navigate = useNavigate();
   const [meta, setMeta] = useState<SessionResponse | null>(null);
   const [transcript, setTranscript] = useState<SessionTranscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  // Phase L.2 — reactivate the session then navigate to the IDE
+  // with a query hint so ChatPanel auto-selects it.
+  const onResume = useCallback(
+    async (current: SessionResponse) => {
+      try {
+        const next = await reactivateSession(current.id);
+        navigate(
+          `/projects/${projectId}/w/${next.workspace_id}?session=${next.id}`,
+        );
+      } catch (e: unknown) {
+        setErr(
+          e instanceof ApiError
+            ? e.reason
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      }
+    },
+    [navigate, projectId],
+  );
 
   useEffect(() => {
     if (!sessionId) return;
@@ -171,11 +195,25 @@ export function SessionDetail() {
               >
                 <Download className="mr-1 h-3 w-3" /> .md
               </Button>
-              <Link to={`/projects/${projectId}/w/${meta.workspace_id}`}>
-                <Button variant="secondary" size="sm" className="w-full">
-                  <ExternalLink className="mr-1 h-3 w-3" /> 워크스페이스 열기
+              {/* Phase L.2 — "Resume this session" for archived rows.
+                  Reactivates first, then jumps to the IDE with a
+                  query hint so the ChatPanel auto-selects it. */}
+              {meta.status === "archived" ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => void onResume(meta)}
+                >
+                  <ExternalLink className="mr-1 h-3 w-3" /> 이어서 진행
                 </Button>
-              </Link>
+              ) : (
+                <Link to={`/projects/${projectId}/w/${meta.workspace_id}?session=${meta.id}`}>
+                  <Button variant="secondary" size="sm" className="w-full">
+                    <ExternalLink className="mr-1 h-3 w-3" /> 워크스페이스 열기
+                  </Button>
+                </Link>
+              )}
             </div>
           </header>
 

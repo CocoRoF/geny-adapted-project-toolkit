@@ -47,7 +47,7 @@ class _FakePipeline:
 
     events: list[_FakeEvent]
 
-    async def run_stream(self, message: str) -> AsyncIterator[_FakeEvent]:
+    async def run_stream(self, message: str, state=None) -> AsyncIterator[_FakeEvent]:
         del message
         for ev in self.events:
             yield ev

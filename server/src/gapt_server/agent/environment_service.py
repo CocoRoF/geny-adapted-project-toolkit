@@ -55,6 +55,13 @@ class ManifestOverrides:
     max_iterations: int | None = None
     cost_budget_usd: float | None = None
     timeout_s: int | None = None
+    # Phase L.4 — Anthropic extended-thinking budget. `None` falls
+    # through to the manifest's bundled value (typically thinking off
+    # for default manifests). When `thinking_enabled` is None but
+    # `thinking_budget_tokens` is set, treat budget>0 as enable=True
+    # so the operator doesn't need to flip two switches at once.
+    thinking_enabled: bool | None = None
+    thinking_budget_tokens: int | None = None
 
     def has_any(self) -> bool:
         return any(
@@ -65,6 +72,8 @@ class ManifestOverrides:
                 self.max_iterations,
                 self.cost_budget_usd,
                 self.timeout_s,
+                self.thinking_enabled,
+                self.thinking_budget_tokens,
             )
         )
 
@@ -139,6 +148,50 @@ def apply_overrides(
                 if overrides.timeout_s is not None:
                     cfg["timeout_s"] = overrides.timeout_s
                     applied["timeout_s"] = overrides.timeout_s
+                break
+
+    # Phase L.4 — thinking config. ModelConfig reads `thinking_enabled`
+    # / `thinking_budget_tokens` / `thinking_type` from the top-level
+    # `model` dict (same place `model` + `max_tokens` go).
+    if (
+        overrides.thinking_enabled is not None
+        or overrides.thinking_budget_tokens is not None
+    ):
+        model_dict = manifest_dict.get("model")
+        if not isinstance(model_dict, dict):
+            model_dict = {}
+            manifest_dict["model"] = model_dict
+        # Operator convenience: a positive budget implies enabled
+        # unless they explicitly said otherwise.
+        effective_enabled = overrides.thinking_enabled
+        if effective_enabled is None and (
+            overrides.thinking_budget_tokens or 0
+        ) > 0:
+            effective_enabled = True
+        if effective_enabled is not None:
+            model_dict["thinking_enabled"] = effective_enabled
+            applied["thinking_enabled"] = effective_enabled
+        if overrides.thinking_budget_tokens is not None:
+            model_dict["thinking_budget_tokens"] = (
+                overrides.thinking_budget_tokens
+            )
+            applied["thinking_budget_tokens"] = overrides.thinking_budget_tokens
+        # Mirror into the api stage config too — same back-compat
+        # reason as `model` / `max_tokens` above.
+        stages = manifest_dict.get("stages")
+        if isinstance(stages, list):
+            for stage in stages:
+                if not isinstance(stage, dict) or stage.get("name") != "api":
+                    continue
+                cfg = stage.setdefault("config", {})
+                if not isinstance(cfg, dict):
+                    continue
+                if effective_enabled is not None:
+                    cfg["thinking_enabled"] = effective_enabled
+                if overrides.thinking_budget_tokens is not None:
+                    cfg["thinking_budget_tokens"] = (
+                        overrides.thinking_budget_tokens
+                    )
                 break
 
     return manifest_dict, applied
