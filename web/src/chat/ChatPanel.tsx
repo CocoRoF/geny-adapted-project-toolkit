@@ -21,7 +21,7 @@ import { type ManifestSummary, listManifests } from "@/api/manifests";
 import { DiffCard, type GaptEditPayload } from "@/chat/DiffCard";
 import { annotateEditGroups } from "@/chat/diff-group";
 import { GuardRejectedAlert } from "@/chat/GuardRejectedAlert";
-import { ToolCallCard } from "@/chat/ToolCallCard";
+import { ToolCallGroup } from "@/chat/ToolCallGroup";
 import { MarkdownText } from "@/ui/MarkdownText";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { TraceStrip } from "@/chat/TraceStrip";
@@ -770,68 +770,116 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             data-testid="chat-events"
             className="flex-1 space-y-2 overflow-y-auto px-3 py-3"
           >
-            {mergeAssistantText(allEvents.filter((e) => e.kind !== "step")).map((event) => {
-              // The call event renders as a ToolCallCard (with its
-              // matched outcome folded in). Result/error events that
-              // belong to a paired call are suppressed — they live
-              // inside the card. gapt_edit's tool_result still gets
-              // a DiffCard *in addition* because the diff
-              // visualisation is more useful than a JSON dump; the
-              // tool card itself shows the call shell.
-              if (event.kind === "tool_call") {
-                const pair = toolPairs.find((p) => p.call.seq === event.seq);
-                if (pair) return <ToolCallCard key={`pair-${event.seq}`} pair={pair} />;
+            {(() => {
+              // Phase N.1 — pre-group consecutive tool_call events so
+              // a turn that fires 15 Bash/Read calls renders as a
+              // single collapsible "Tools (15)" container instead of
+              // 15 sibling strips that bury the assistant's reply.
+              // The grouping walk also marks every tool_call that was
+              // absorbed so the inner map can skip emitting a
+              // duplicate ToolCallCard at the original event slot.
+              type RenderEntry =
+                | { kind: "event"; event: SessionStreamEvent }
+                | {
+                    kind: "tool_group";
+                    key: string;
+                    pairs: ToolPair[];
+                  };
+              const merged = mergeAssistantText(
+                allEvents.filter((e) => e.kind !== "step"),
+              );
+              const entries: RenderEntry[] = [];
+              let runPairs: ToolPair[] = [];
+              const flushRun = () => {
+                if (runPairs.length === 0) return;
+                entries.push({
+                  kind: "tool_group",
+                  key: `tool-group-${runPairs[0].call.seq}`,
+                  pairs: runPairs,
+                });
+                runPairs = [];
+              };
+              for (const event of merged) {
+                if (event.kind === "tool_call") {
+                  const pair = toolPairs.find((p) => p.call.seq === event.seq);
+                  if (pair) {
+                    runPairs.push(pair);
+                    continue;
+                  }
+                }
+                if (event.kind === "tool_result") {
+                  // tool_results that pair with an in-run tool_call
+                  // shouldn't break the run (they live INSIDE the
+                  // group's cards). gapt_edit results still surface
+                  // as DiffCards below — flush the current run first
+                  // so the diff appears AFTER the group it belongs to.
+                  if (pairedEventSeqs.has(event.seq) && !maybeGaptEditPayload(event.data)) {
+                    continue;
+                  }
+                }
+                flushRun();
+                entries.push({ kind: "event", event });
               }
-              if (event.kind === "tool_result") {
-                const edit = maybeGaptEditPayload(event.data);
-                if (edit) {
-                  // Phase D.2 — wrap a run of consecutive same-file
-                  // edits in a single group header. We render the
-                  // header on the first edit of a run only; the rest
-                  // sit inside the same container so they don't each
-                  // get their own "file:" line.
-                  const marker = editGroupMarkers.get(event.seq);
-                  const isGroupStart = marker !== undefined && marker.groupIndex === 0;
-                  const cardKey = `diff-${event.seq}`;
-                  const card = (
-                    <DiffCard workspaceId={workspaceId} payload={edit} />
-                  );
-                  if (marker && marker.groupSize > 1) {
+              flushRun();
+
+              return entries.map((entry) => {
+                if (entry.kind === "tool_group") {
+                  // Solo pair renders flat (no group wrapper) inside
+                  // `ToolCallGroup` itself.
+                  return <ToolCallGroup key={entry.key} pairs={entry.pairs} />;
+                }
+                const event = entry.event;
+                if (event.kind === "tool_result") {
+                  const edit = maybeGaptEditPayload(event.data);
+                  if (edit) {
+                    // Phase D.2 — wrap a run of consecutive same-file
+                    // edits in a single group header. We render the
+                    // header on the first edit of a run only; the rest
+                    // sit inside the same container so they don't each
+                    // get their own "file:" line.
+                    const marker = editGroupMarkers.get(event.seq);
+                    const isGroupStart = marker !== undefined && marker.groupIndex === 0;
+                    const cardKey = `diff-${event.seq}`;
+                    const card = (
+                      <DiffCard workspaceId={workspaceId} payload={edit} />
+                    );
+                    if (marker && marker.groupSize > 1) {
+                      return (
+                        <div key={cardKey} data-event-kind="tool_result">
+                          {isGroupStart ? (
+                            <div
+                              data-testid="diff-group-header"
+                              className="mb-1 flex items-center gap-2 px-2 text-[11px] text-fg-muted"
+                            >
+                              <span
+                                aria-hidden
+                                className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
+                              />
+                              <span>
+                                {t("diff.group.header")
+                                  .replace("{count}", String(marker.groupSize))
+                                  .replace("{path}", marker.path)}
+                              </span>
+                            </div>
+                          ) : null}
+                          {card}
+                        </div>
+                      );
+                    }
                     return (
                       <div key={cardKey} data-event-kind="tool_result">
-                        {isGroupStart ? (
-                          <div
-                            data-testid="diff-group-header"
-                            className="mb-1 flex items-center gap-2 px-2 text-[11px] text-fg-muted"
-                          >
-                            <span
-                              aria-hidden
-                              className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
-                            />
-                            <span>
-                              {t("diff.group.header")
-                                .replace("{count}", String(marker.groupSize))
-                                .replace("{path}", marker.path)}
-                            </span>
-                          </div>
-                        ) : null}
                         {card}
                       </div>
                     );
                   }
-                  return (
-                    <div key={cardKey} data-event-kind="tool_result">
-                      {card}
-                    </div>
-                  );
+                  if (pairedEventSeqs.has(event.seq)) return null;
                 }
-                if (pairedEventSeqs.has(event.seq)) return null;
-              }
-              if (event.kind === "error" && pairedEventSeqs.has(event.seq)) {
-                return null;
-              }
-              return <EventRow key={event.seq} event={event} workspaceId={workspaceId} />;
-            })}
+                if (event.kind === "error" && pairedEventSeqs.has(event.seq)) {
+                  return null;
+                }
+                return <EventRow key={event.seq} event={event} workspaceId={workspaceId} />;
+              });
+            })()}
             <TraceStrip events={allEvents} active={isThinking} />
             {isThinking ? <TypingIndicator /> : null}
           </div>

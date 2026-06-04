@@ -1070,6 +1070,9 @@ export const ko: Record<keyof typeof en, string> = {
   // ── Phase M.5 — EnvironmentEditor raw config preview ─
   "env_editor.raw_preview.toggle": "원본 JSON 미리보기 (read-only)",
 
+  // ── Phase N.1 — hierarchical tool-call group ─
+  "chat.tool_group.label": "도구 호출 ({count})",
+
   // ── Phase M.6 — Cache token tooltips ─
   "cost.tokens.cache_write.tooltip":
     "Anthropic 프롬프트 캐시 생성 토큰. 초회 시스템 프롬프트/대용량 컨텍스트를 캐시에 적재할 때 카운트. 토큰당 비용은 입력 토큰의 ~1.25배 (cache_write_5m).",

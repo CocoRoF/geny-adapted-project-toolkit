@@ -1073,6 +1073,9 @@ export const en = {
   // ── Phase M.5 — EnvironmentEditor raw config preview ─
   "env_editor.raw_preview.toggle": "Raw JSON preview (read-only)",
 
+  // ── Phase N.1 — hierarchical tool-call group ─
+  "chat.tool_group.label": "Tool calls ({count})",
+
   // ── Phase M.6 — Cache token tooltips ─
   "cost.tokens.cache_write.tooltip":
     "Anthropic prompt-cache write tokens. Counted when a system prompt / large context is loaded into the cache. Pricing is ~1.25x the input-token rate (cache_write_5m).",
