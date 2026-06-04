@@ -256,6 +256,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(secrets.router)
     app.include_router(scaffolds.router)
+    app.include_router(scaffolds.projects_router)
     app.include_router(projects.router)
     app.include_router(workspaces.by_project)
     app.include_router(workspaces.by_id)

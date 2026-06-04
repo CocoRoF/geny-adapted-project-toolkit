@@ -103,6 +103,11 @@ class Project(Base):
     # back after creation — the user copies the response once and
     # pastes into GitHub's webhook config.
     webhook_secret: Mapped[str | None] = mapped_column(String(64))
+    # Phase N.2.5 — records which scaffold preset created this project
+    # row (`fullstack_fastapi_nextjs`, `empty`, etc.). NULL for projects
+    # created via the "import" flow. Audit-only; nothing in the request
+    # path reads it back.
+    scaffold_preset_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -1,6 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Archive, ExternalLink, FolderGit2, GitBranch, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Archive,
+  ChevronDown,
+  Download,
+  ExternalLink,
+  FolderGit2,
+  GitBranch,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { type ProjectResponse, archiveProject, listProjects } from "@/api/projects";
@@ -11,7 +23,8 @@ import {
   listAllActiveWorkspaces,
 } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
-import { NewProjectModal } from "@/routes/NewProjectModal";
+import { ImportProjectModal } from "@/routes/ImportProjectModal";
+import { NewProjectScaffoldModal } from "@/routes/NewProjectScaffoldModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { ConfirmDialog } from "@/ui/ConfirmDialog";
@@ -24,7 +37,23 @@ export function ProjectsIndex() {
   const [state, setState] = useState<LoadState>("idle");
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);  // ← Import (legacy)
+  // Phase N.2.6 — split "+ 새 프로젝트" into a dropdown menu with two
+  // entry points: scaffold (create new repo) vs import (existing repo).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showScaffold, setShowScaffold] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the dropdown on outside click.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handler(e: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpen]);
   const [confirmArchive, setConfirmArchive] = useState<ProjectResponse | null>(null);
   const [archiving, setArchiving] = useState(false);
   // Phase C.2.d — show a warning banner when active workspaces are
@@ -138,10 +167,63 @@ export function ProjectsIndex() {
             />
             <span>{t("projects.refresh")}</span>
           </Button>
-          <Button variant="primary" onClick={() => setShowCreate(true)}>
-            <Plus className="h-3.5 w-3.5" />
-            {t("projects.new")}
-          </Button>
+          <div className="relative" ref={menuRef}>
+            <Button
+              variant="primary"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("projects.new")}
+              <ChevronDown className="h-3 w-3 opacity-80" />
+            </Button>
+            {menuOpen ? (
+              <ul
+                role="menu"
+                className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-border bg-bg-elevated py-1 shadow-lg"
+              >
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowScaffold(true);
+                    }}
+                    className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-bg-subtle"
+                  >
+                    <Sparkles className="mt-0.5 h-3.5 w-3.5 text-accent" />
+                    <div>
+                      <div className="text-[13px] font-medium text-fg">새로 만들기</div>
+                      <div className="text-[11px] text-fg-muted">
+                        새 GitHub 레포 + 프리셋 스캐폴드
+                      </div>
+                    </div>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowCreate(true);
+                    }}
+                    className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-bg-subtle"
+                  >
+                    <Download className="mt-0.5 h-3.5 w-3.5 text-fg-muted" />
+                    <div>
+                      <div className="text-[13px] font-medium text-fg">불러오기</div>
+                      <div className="text-[11px] text-fg-muted">
+                        기존 git 레포 URL 등록
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              </ul>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -280,12 +362,21 @@ export function ProjectsIndex() {
         </ul>
       ) : null}
 
-      <NewProjectModal
+      <ImportProjectModal
         open={showCreate}
         onClose={() => setShowCreate(false)}
         onCreated={(project) => {
           setProjects((prev) => [project, ...prev]);
           setShowCreate(false);
+        }}
+      />
+
+      <NewProjectScaffoldModal
+        open={showScaffold}
+        onClose={() => setShowScaffold(false)}
+        onCreated={(project) => {
+          setProjects((prev) => [project, ...prev]);
+          setShowScaffold(false);
         }}
       />
 

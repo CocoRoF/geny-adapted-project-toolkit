@@ -122,6 +122,7 @@ class ProjectService:
         compose_profile_dev: str | None = None,
         compose_profile_prod: str | None = None,
         git_auth_secret_ref: str | None = None,
+        scaffold_preset_id: str | None = None,
     ) -> ProjectView:
         project = models.Project(
             id=new_ulid(),
@@ -133,6 +134,7 @@ class ProjectService:
             default_compose_paths=default_compose_paths or [],
             compose_profile_dev=compose_profile_dev,
             compose_profile_prod=compose_profile_prod,
+            scaffold_preset_id=scaffold_preset_id,
         )
         db.add(project)
         try:
