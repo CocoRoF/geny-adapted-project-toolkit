@@ -37,6 +37,7 @@ import {
   getSessionTranscript,
   reactivateSession,
 } from "@/api/sessions";
+import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Card, CardContent } from "@/ui/Card";
@@ -44,6 +45,7 @@ import { cn } from "@/ui/cn";
 import { MarkdownText } from "@/ui/MarkdownText";
 
 export function SessionDetail() {
+  const { t } = useI18n();
   const { pid, sid } = useParams<{ pid: string; sid: string }>();
   const projectId = pid ?? "";
   const sessionId = sid ?? "";
@@ -124,7 +126,7 @@ export function SessionDetail() {
         to={`/projects/${projectId}/sessions`}
         className="mb-3 inline-flex items-center gap-1 text-[12px] text-fg-muted hover:text-fg"
       >
-        <ChevronLeft className="h-3.5 w-3.5" /> 세션 목록으로
+        <ChevronLeft className="h-3.5 w-3.5" /> {t("session_detail.back_to_list")}
       </Link>
 
       {err ? (
@@ -136,7 +138,7 @@ export function SessionDetail() {
       {loading ? (
         <Card>
           <CardContent className="flex items-center gap-2 p-4 text-[12px] text-fg-subtle">
-            <Loader2 className="h-3 w-3 animate-spin" /> 불러오는 중…
+            <Loader2 className="h-3 w-3 animate-spin" /> {t("session_detail.loading")}
           </CardContent>
         </Card>
       ) : meta && transcript ? (
@@ -155,8 +157,8 @@ export function SessionDetail() {
                 {meta.id}
               </h1>
               <p className="mt-0.5 text-[11px] text-fg-subtle">
-                생성: {new Date(meta.created_at).toLocaleString()} · 마지막 활동:{" "}
-                {new Date(meta.last_active_at).toLocaleString()}
+                {t("session_detail.meta.created")} {new Date(meta.created_at).toLocaleString()} ·{" "}
+                {t("session_detail.meta.last_active")} {new Date(meta.last_active_at).toLocaleString()}
               </p>
               <p className="mt-1 text-[12px] text-fg-muted">
                 <span className="font-mono text-accent">
@@ -205,12 +207,12 @@ export function SessionDetail() {
                   className="w-full"
                   onClick={() => void onResume(meta)}
                 >
-                  <ExternalLink className="mr-1 h-3 w-3" /> 이어서 진행
+                  <ExternalLink className="mr-1 h-3 w-3" /> {t("session_detail.resume")}
                 </Button>
               ) : (
                 <Link to={`/projects/${projectId}/w/${meta.workspace_id}?session=${meta.id}`}>
                   <Button variant="secondary" size="sm" className="w-full">
-                    <ExternalLink className="mr-1 h-3 w-3" /> 워크스페이스 열기
+                    <ExternalLink className="mr-1 h-3 w-3" /> {t("session_detail.open_workspace")}
                   </Button>
                 </Link>
               )}
@@ -220,7 +222,7 @@ export function SessionDetail() {
           {transcript.turns.length === 0 ? (
             <Card>
               <CardContent className="p-6 text-center text-[12.5px] text-fg-muted">
-                기록된 turn 이 없습니다.
+                {t("session_detail.empty.no_turns")}
               </CardContent>
             </Card>
           ) : (

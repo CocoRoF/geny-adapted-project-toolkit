@@ -37,7 +37,7 @@
     { "order": 17, "name": "emit", "active": true, "artifact": "default", "config": {}, "strategies": {} },
     { "order": 18, "name": "memory", "active": true, "artifact": "default", "config": {}, "strategies": {} },
     { "order": 19, "name": "summarize", "active": true, "artifact": "default", "config": {}, "strategies": {} },
-    { "order": 20, "name": "persist", "active": true, "artifact": "default", "config": {}, "strategies": {} },
+    { "order": 20, "name": "persist", "active": false, "_gapt_note_M8": "Disabled in Phase M.8. The executor's s20_persist stage loads `NoPersister()` by default and would silently no-op; GAPT's authoritative persistence is the `session_events` table fed by the SessionEventBus persister (see `routers/sessions.py::_build_runtime_from_handle`). Keeping s20 active with NoPersister was misleading to operators reading the manifest. Re-enable when adopting executor-side checkpoints.", "artifact": "default", "config": {}, "strategies": {} },
     { "order": 21, "name": "yield", "active": true, "artifact": "default", "config": {}, "strategies": {} }
   ],
   "tools": {

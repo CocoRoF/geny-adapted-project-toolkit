@@ -78,4 +78,22 @@ def build_hook_runner(
     runner.register_in_process(HookEvent.POST_TOOL_USE, post_audit_ok)
     runner.register_in_process(HookEvent.POST_TOOL_USE, cost_handler)
     runner.register_in_process(HookEvent.POST_TOOL_FAILURE, post_audit_fail)
+    # Phase M.8 — deliberately NOT wiring the rest of the executor's
+    # hook taxonomy (SESSION_START / SESSION_END / USER_PROMPT_SUBMIT /
+    # LOOP_ITERATION_END / STAGE_ENTER / STAGE_EXIT / PIPELINE_START /
+    # PIPELINE_END / PERMISSION_REQUEST / PERMISSION_DENIED /
+    # CWD_CHANGED / MCP_SERVER_STATE / NOTIFICATION). Reasoning:
+    #
+    #   * SessionEventBus already publishes USER_MESSAGE / TEXT / TOOL_CALL /
+    #     TOOL_RESULT / COST / DONE / ERROR per session and persists them
+    #     to `session_events`. The executor hooks above would duplicate
+    #     this surface for the same lifecycle moments.
+    #   * Single-admin GAPT has no operator-supplied integrations
+    #     (Slack/webhook/PII redaction) that would consume the
+    #     additional firing channels. Wiring them now would be
+    #     speculative scaffolding — see CLAUDE.md durable instructions
+    #     about not designing for hypothetical future requirements.
+    #   * The hooks remain available — when a concrete integration
+    #     surfaces (e.g. an audit-log redactor for USER_PROMPT_SUBMIT),
+    #     a single `register_in_process` line lights it up here.
     return runner, accumulator

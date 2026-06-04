@@ -23,14 +23,15 @@ the project_id is bogus.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime  # noqa: TC003 — pydantic introspection
 from typing import TYPE_CHECKING, Any, Literal
 
+import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import sqlalchemy as sa
 from sqlalchemy import select
 
 from gapt_server.agent.hooks import ChatModeRef, build_hook_runner
@@ -58,7 +59,7 @@ from gapt_server.container import (
 )
 from gapt_server.db import enums, models
 from gapt_server.domains.audit.sink import AuditSink  # noqa: TC001 — Depends inspects at runtime
-from gapt_server.domains.auth import AdminPrincipal
+from gapt_server.domains.auth import AdminPrincipal  # noqa: TC001 — Depends inspects at runtime
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.domains.secrets.vault import SecretVault  # noqa: TC001
 from gapt_server.observability.instruments import (
@@ -236,7 +237,7 @@ def _extract_api_model(env_service: Any, env_manifest_id: str) -> str | None:
         return None
     try:
         resolution = env_service.resolve(env_manifest_id)
-    except Exception:  # noqa: BLE001 — best-effort, no log noise
+    except Exception:
         return None
     manifest = getattr(resolution, "manifest", None)
     if manifest is None:
@@ -258,7 +259,7 @@ def _extract_api_model(env_service: Any, env_manifest_id: str) -> str | None:
     return None
 
 
-def _build_runtime_from_handle(
+def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (cost callback / persister / hooks); refactor lives outside M.4 scope.
     handle: Any,
     *,
     user: AdminPrincipal,
@@ -293,7 +294,7 @@ def _build_runtime_from_handle(
     bundled_model = None
     try:
         bundled_model = container.env_service.bundled_api_model(handle.env_manifest_id)
-    except Exception:  # noqa: BLE001 — best-effort; helper has its own guard
+    except Exception:
         bundled_model = None
     runtime = SessionRuntime(
         session_id=handle.session_id,
@@ -390,17 +391,55 @@ def _build_runtime_from_handle(
     return runtime
 
 
+@dataclass
+class SessionAccess:
+    """Phase M.4 — bundle the 8 Depends every session route needs into
+    one parameter. Pre-M.4 each handler signature carried a vertical
+    column of `Depends(get_*)` lines; the bundle cuts that to a single
+    `access: SessionAccess = Depends(get_session_access)`.
+
+    Holds the live `db` session + the request principal alongside the
+    container-scoped singletons. Constructed by FastAPI via the
+    `get_session_access` sub-Depends below — each field's source dep
+    remains independently overridable in tests (via `dependency_overrides`).
+    """
+
+    registry: SessionRegistry
+    db: AsyncSession
+    manager: ProjectAwareSessionManager
+    policy_engine: PolicyEngine
+    audit_sink: AuditSink
+    container: AppContainer
+    vault: SecretVault
+    user: AdminPrincipal
+
+
+def get_session_access(
+    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> SessionAccess:
+    return SessionAccess(
+        registry=registry,
+        db=db,
+        manager=manager,
+        policy_engine=policy_engine,
+        audit_sink=audit_sink,
+        container=container,
+        vault=vault,
+        user=user,
+    )
+
+
 async def _runtime_or_rehydrate(
-    *,
-    registry: SessionRegistry,
     session_id: str,
-    db: AsyncSession,
-    manager: ProjectAwareSessionManager,
-    user: AdminPrincipal,
-    container: AppContainer,
-    policy_engine: PolicyEngine,
-    audit_sink: AuditSink,
-    vault: SecretVault,
+    *,
+    access: SessionAccess,
 ) -> SessionRuntime:
     """Fetch the runtime from the registry; if missing, rehydrate
     from the DB row + re-register. The runtime cache is in-process —
@@ -408,6 +447,15 @@ async def _runtime_or_rehydrate(
     holds an `active` session id (so the panel correctly auto-resumes
     instead of forcing the user to start a new session every time the
     backend restarts)."""
+    registry = access.registry
+    db = access.db
+    manager = access.manager
+    user = access.user
+    container = access.container
+    policy_engine = access.policy_engine
+    audit_sink = access.audit_sink
+    vault = access.vault
+
     try:
         return await registry.get(session_id)
     except SessionNotFound:
@@ -763,23 +811,12 @@ async def get_session(
 async def invoke_session(
     session_id: str,
     payload: InvokeRequest,
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
-    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
-    container: AppContainer = Depends(get_container),  # noqa: B008
-    vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
 ) -> InvokeResponse:
-    runtime = await _runtime_or_rehydrate(
-        registry=registry, session_id=session_id, db=db, manager=manager,
-        user=user, container=container, policy_engine=policy_engine,
-        audit_sink=audit_sink, vault=vault,
-    )
+    runtime = await _runtime_or_rehydrate(session_id, access=access)
     # Re-check membership using the runtime's project_id (in-memory).
     try:
-        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+        await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -815,23 +852,12 @@ async def invoke_session(
 @by_id.get("/{session_id}/stream")
 async def stream_session(
     session_id: str,
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
-    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
-    container: AppContainer = Depends(get_container),  # noqa: B008
-    vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
     since: int | None = Query(default=None, ge=0, description="replay events with seq > since"),
 ) -> StreamingResponse:
-    runtime = await _runtime_or_rehydrate(
-        registry=registry, session_id=session_id, db=db, manager=manager,
-        user=user, container=container, policy_engine=policy_engine,
-        audit_sink=audit_sink, vault=vault,
-    )
+    runtime = await _runtime_or_rehydrate(session_id, access=access)
     try:
-        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+        await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -842,10 +868,10 @@ async def stream_session(
     # immediately, not a blank pane waiting for new turns.
     effective_since = since or 0
     prefix_events = await _full_replay(
-        db,
+        access.db,
         runtime,
         since=effective_since,
-        max_events=container.settings.session_max_stream_replay_events,
+        max_events=access.container.settings.session_max_stream_replay_events,
     )
     return StreamingResponse(
         stream_to_async_iter(
@@ -888,7 +914,7 @@ async def _full_replay(
     # `_persisted_seq` is bumped on rehydrate; if it's ahead of `since`
     # and the in-memory buffer is empty, we know everything lives in DB.
     no_memory = not in_memory and (
-        runtime.bus._persisted_seq > since  # noqa: SLF001 — same internal seed used by /messages
+        runtime.bus._persisted_seq > since
     )
     if not (no_memory or needs_db_fill):
         return list(in_memory)
@@ -955,26 +981,15 @@ class OverrideSnapshot(BaseModel):
 async def patch_session_overrides(
     session_id: str,
     payload: OverridePatch,
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
-    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
-    container: AppContainer = Depends(get_container),  # noqa: B008
-    vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
 ) -> OverrideSnapshot:
     """Apply a per-invoke override or revert immediately. Lets the
     chat UI's pill reset button restore the manifest baseline without
     waiting for the next user message — important because pre-M.2 a
     cleared pill silently kept the old override running."""
-    runtime = await _runtime_or_rehydrate(
-        registry=registry, session_id=session_id, db=db, manager=manager,
-        user=user, container=container, policy_engine=policy_engine,
-        audit_sink=audit_sink, vault=vault,
-    )
+    runtime = await _runtime_or_rehydrate(session_id, access=access)
     try:
-        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+        await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -1000,22 +1015,11 @@ async def patch_session_overrides(
 @by_id.post("/{session_id}/interrupt", response_model=InterruptResponse)
 async def interrupt_session(
     session_id: str,
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
-    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
-    container: AppContainer = Depends(get_container),  # noqa: B008
-    vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
 ) -> InterruptResponse:
-    runtime = await _runtime_or_rehydrate(
-        registry=registry, session_id=session_id, db=db, manager=manager,
-        user=user, container=container, policy_engine=policy_engine,
-        audit_sink=audit_sink, vault=vault,
-    )
+    runtime = await _runtime_or_rehydrate(session_id, access=access)
     try:
-        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+        await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     cancelled = await runtime.interrupt()
@@ -1025,23 +1029,13 @@ async def interrupt_session(
 @by_id.get("/{session_id}/messages", response_model=list[MessageReplayEntry])
 async def replay_messages(
     session_id: str,
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
-    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
-    container: AppContainer = Depends(get_container),  # noqa: B008
-    vault: SecretVault = Depends(get_vault),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
     since: int = Query(default=0, ge=0, description="replay events with seq > since"),
 ) -> list[MessageReplayEntry]:
-    runtime = await _runtime_or_rehydrate(
-        registry=registry, session_id=session_id, db=db, manager=manager,
-        user=user, container=container, policy_engine=policy_engine,
-        audit_sink=audit_sink, vault=vault,
-    )
+    runtime = await _runtime_or_rehydrate(session_id, access=access)
+    db = access.db
     try:
-        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+        await fetch_project_for(db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     # Phase D.3 — prefer the in-memory ring buffer when it covers
@@ -1055,7 +1049,7 @@ async def replay_messages(
     # `since + 1`, we pull the missing prefix from DB and concat.
     needs_db_fill = bool(in_memory) and in_memory[0].seq > since + 1
     no_memory = not in_memory and (
-        runtime.bus._persisted_seq > since  # noqa: SLF001 — internal seed
+        runtime.bus._persisted_seq > since
     )
     if no_memory or needs_db_fill:
         upper = in_memory[0].seq - 1 if in_memory else None
@@ -1088,9 +1082,7 @@ async def replay_messages(
 @by_id.get("/{session_id}/transcript")
 async def export_transcript(
     session_id: str,
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
     format: str = Query(default="json", pattern="^(json|markdown)$"),
 ) -> Response:
     """Phase I.4 — export the full conversation as JSON or markdown.
@@ -1105,7 +1097,7 @@ async def export_transcript(
     # bypass the rehydrate path because the transcript is read-only —
     # spinning up a runtime just to validate access is wasteful when
     # a single SELECT covers it.
-    del manager  # signature kept for future hooks; not needed here
+    db = access.db
     session_row = (
         await db.execute(
             sa.select(models.AgentSession).where(
@@ -1119,7 +1111,7 @@ async def export_transcript(
             detail={"code": "session.not_found", "reason": session_id},
         )
     try:
-        await fetch_project_for(db, actor=user, project_id=session_row.project_id)
+        await fetch_project_for(db, actor=access.user, project_id=session_row.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
@@ -1174,13 +1166,11 @@ async def export_transcript(
 @by_id.post("/{session_id}/archive", response_model=SessionResponse)
 async def archive_session(
     session_id: str,
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
 ) -> SessionResponse:
+    db = access.db
     try:
-        await manager.archive(db, user=user, session_id=session_id)
+        await access.manager.archive(db, user=access.user, session_id=session_id)
         await db.commit()
     except SessionManagerError as exc:
         await db.rollback()
@@ -1189,7 +1179,7 @@ async def archive_session(
         await db.rollback()
         raise http_from_project_error(exc) from exc
 
-    runtime = await registry.pop(session_id)
+    runtime = await access.registry.pop(session_id)
     if runtime is not None:
         await runtime.aclose()
 
@@ -1202,9 +1192,7 @@ async def archive_session(
 @by_id.post("/{session_id}/reactivate", response_model=SessionResponse)
 async def reactivate_session(
     session_id: str,
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
-    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+    access: SessionAccess = Depends(get_session_access),  # noqa: B008
 ) -> SessionResponse:
     """Phase L.2 — flip an archived session back to `active`.
 
@@ -1213,8 +1201,9 @@ async def reactivate_session(
     next `/invoke` or `/stream` via `_runtime_or_rehydrate` — that's
     Phase L.1's job, not this endpoint's.
     """
+    db = access.db
     try:
-        row = await manager.reactivate(db, user=user, session_id=session_id)
+        row = await access.manager.reactivate(db, user=access.user, session_id=session_id)
         await db.commit()
     except SessionManagerError as exc:
         await db.rollback()

@@ -1039,4 +1039,40 @@ export const ko: Record<keyof typeof en, string> = {
   "settings.providers.cloudflare.migration.history.revert.confirm_body": "GAPT 가 systemd drop-in 을 제거하고 원본 ingress 를 Cloudflare 로 PUT 합니다. cloudflared 가 local-config 모드로 돌아갑니다. 되돌리기 가능 — 추후 cutover 위저드 재실행 가능.",
   "settings.providers.cloudflare.migration.history.revert.password_label": "sudo 비밀번호 (NOPASSWD 면 비워둠)",
   "settings.providers.cloudflare.migration.history.revert.run": "되돌리기",
+
+  // ── Phase M.5 — sessions history + detail i18n (was hardcoded ko) ─
+  "sessions_history.back_to_project": "프로젝트로 돌아가기",
+  "sessions_history.title": "세션 히스토리",
+  "sessions_history.subtitle":
+    "이 프로젝트의 과거 vibe-coding 세션 — 사용자 prompt / 어시스턴트 응답 / 도구 호출 / 비용이 함께 보존됩니다.",
+  "sessions_history.loading": "불러오는 중…",
+  "sessions_history.empty.archived": "보관된 세션이 없습니다.",
+  "sessions_history.empty.project": "이 프로젝트에 아직 세션이 없습니다.",
+  "sessions_history.no_recorded_prompts": "(기록된 프롬프트 없음)",
+  "sessions_history.filter.all": "전체",
+  "sessions_history.filter.active": "Active",
+  "sessions_history.filter.archived": "Archived",
+  "sessions_history.card.turns_one": "{count} turn",
+  "sessions_history.card.turns_other": "{count} turns",
+  "sessions_history.relative.just_now": "방금 전",
+  "sessions_history.relative.minutes_ago": "{count}분 전",
+  "sessions_history.relative.hours_ago": "{count}시간 전",
+  "sessions_history.relative.days_ago": "{count}일 전",
+
+  "session_detail.back_to_list": "세션 목록으로",
+  "session_detail.loading": "불러오는 중…",
+  "session_detail.meta.created": "생성:",
+  "session_detail.meta.last_active": "마지막 활동:",
+  "session_detail.empty.no_turns": "기록된 turn 이 없습니다.",
+  "session_detail.resume": "이어서 진행",
+  "session_detail.open_workspace": "워크스페이스 열기",
+
+  // ── Phase M.5 — EnvironmentEditor raw config preview ─
+  "env_editor.raw_preview.toggle": "원본 JSON 미리보기 (read-only)",
+
+  // ── Phase M.6 — Cache token tooltips ─
+  "cost.tokens.cache_write.tooltip":
+    "Anthropic 프롬프트 캐시 생성 토큰. 초회 시스템 프롬프트/대용량 컨텍스트를 캐시에 적재할 때 카운트. 토큰당 비용은 입력 토큰의 ~1.25배 (cache_write_5m).",
+  "cost.tokens.cache_read.tooltip":
+    "Anthropic 프롬프트 캐시 히트 토큰. 이전 turn 의 캐시된 컨텍스트를 재사용할 때 카운트. 토큰당 비용은 입력 토큰의 ~0.1배 — 캐시 히트가 비용 절감의 핵심.",
 };

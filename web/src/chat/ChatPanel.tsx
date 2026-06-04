@@ -1250,12 +1250,18 @@ function SessionPicker({
       <button
         type="button"
         onClick={onToggle}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg hover:bg-bg"
+        // Phase M.6 — `min-w-0` on the flex container is the missing
+        // ingredient that lets the truncate inside the label actually
+        // bite. Without it, the flex item's intrinsic min-width is
+        // `auto` and the label expands past `max-w-[140px]`, blowing
+        // the pill row out and pushing the right-side header
+        // controls off-screen on narrow workspaces.
+        className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11.5px] text-fg hover:bg-bg max-w-[220px]"
         title="Switch session in this workspace"
       >
-        <span className="text-fg-subtle">session:</span>
-        <span className="truncate font-mono max-w-[140px]">{label}</span>
-        <ChevronDown className="h-3 w-3 opacity-60" />
+        <span className="shrink-0 text-fg-subtle">session:</span>
+        <span className="min-w-0 truncate font-mono">{label}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
       </button>
       {open ? (
         <ul
@@ -1278,30 +1284,30 @@ function SessionPicker({
                       : "flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left hover:bg-bg-subtle"
                   }
                 >
-                  <span className="flex w-full items-center gap-1.5">
+                  <span className="flex w-full min-w-0 items-center gap-1.5">
                     <span
                       className={
                         s.status === "active"
-                          ? "rounded bg-success/15 px-1 text-[9.5px] uppercase tracking-wider text-success"
-                          : "rounded bg-bg-subtle px-1 text-[9.5px] uppercase tracking-wider text-fg-subtle"
+                          ? "shrink-0 rounded bg-success/15 px-1 text-[9.5px] uppercase tracking-wider text-success"
+                          : "shrink-0 rounded bg-bg-subtle px-1 text-[9.5px] uppercase tracking-wider text-fg-subtle"
                       }
                     >
                       {s.status}
                     </span>
-                    <span className="flex-1 truncate text-[12px] text-fg">
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
                       {snippet.length > 50
                         ? `${snippet.slice(0, 50)}…`
                         : snippet}
                     </span>
-                    <span className="font-mono text-[10.5px] tabular-nums text-fg-subtle">
+                    <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-fg-subtle">
                       ${s.cost_usd.toFixed(4)}
                     </span>
                   </span>
-                  <span className="flex w-full items-center gap-2 text-[10px] text-fg-subtle">
-                    <span className="font-mono">{s.env_manifest_id}</span>
-                    <span>·</span>
-                    <span>{s.turn_count ?? 0} turns</span>
-                    <span className="ml-auto font-mono tabular-nums">
+                  <span className="flex w-full min-w-0 items-center gap-2 text-[10px] text-fg-subtle">
+                    <span className="min-w-0 truncate font-mono">{s.env_manifest_id}</span>
+                    <span className="shrink-0">·</span>
+                    <span className="shrink-0">{s.turn_count ?? 0} turns</span>
+                    <span className="ml-auto shrink-0 font-mono tabular-nums">
                       {new Date(s.last_active_at).toLocaleString()}
                     </span>
                   </span>

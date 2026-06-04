@@ -407,6 +407,15 @@ export function EnvironmentEditor({
       ) : null}
       {form.kind === "k8s" ? <K8sNotSupportedBanner /> : null}
 
+      {/* Phase M.5 — power-user escape hatch. The structured fields
+          above cover every well-known key, but operators with a custom
+          deploy script (or with the saved row from a different GAPT
+          version) sometimes need to verify what's actually going to
+          POST. The preview is read-only — to mutate, use the structured
+          fields above. Writing raw JSON would risk silent schema drift
+          + bypass the field-level error inspector. */}
+      <RawConfigPreview form={form} />
+
       {extraBelowKindSection}
 
       {/* ── Common policy fields ── */}
@@ -931,6 +940,46 @@ function K8sNotSupportedBanner() {
       <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">
         {t("env_editor.k8s_unsupported.body")}
       </p>
+    </div>
+  );
+}
+
+/** Phase M.5 — collapsible read-only JSON preview of what the form is
+ * about to POST as `deploy_target_config`. Helps operators verify
+ * before saving — especially valuable for `extras` (carried untouched)
+ * and for cross-checking a structured edit against a known-good
+ * config from a different project. Read-only by design; the
+ * structured fields above remain the only mutation surface. */
+function RawConfigPreview({ form }: { form: FormState }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  // Re-derive on each render — cheap (one JSON.stringify of the
+  // <50-key dict). Avoids any "preview is stale relative to the form"
+  // confusion.
+  const config = useMemo(() => {
+    try {
+      return writeForm(form).deploy_target_config;
+    } catch {
+      return {};
+    }
+  }, [form]);
+  return (
+    <div className="rounded-md border border-border bg-bg-subtle">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-[11.5px] text-fg-muted hover:bg-bg"
+      >
+        <span>{t("env_editor.raw_preview.toggle")}</span>
+        <span className="font-mono text-[10.5px] text-fg-subtle">
+          {open ? "▼" : "▶"}
+        </span>
+      </button>
+      {open ? (
+        <pre className="max-h-64 overflow-auto border-t border-border bg-bg p-3 text-[11px] leading-snug text-fg-muted">
+          {JSON.stringify(config, null, 2)}
+        </pre>
+      ) : null}
     </div>
   );
 }

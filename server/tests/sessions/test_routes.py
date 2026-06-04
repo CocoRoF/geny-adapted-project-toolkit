@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 from collections.abc import AsyncIterator
@@ -478,63 +479,134 @@ async def test_list_sessions_workspace_filter(fx: _Fx) -> None:
 # ────────────────────────────────────────────────── stream SSE ──
 
 
-@pytest.mark.skip(
-    reason=(
-        "Phase L follow-up: SSE stream now stays open across turns for "
-        "multi-turn UX. The in-memory `ASGITransport` used by httpx in "
-        "these tests buffers chunks until the generator returns, so this "
-        "end-to-end route test can no longer observe the replayed text "
-        "frames before its own timeout fires. The keep-alive + multi-turn "
-        "contract is fully covered by the unit-level "
-        "`test_stream_replays_then_streams_live` in `tests/agent/test_streaming.py`, "
-        "which calls `stream_to_async_iter` directly without an HTTP layer. "
-        "Replacing this route test with one that talks to a real socket "
-        "(spinning up uvicorn) is the right long-term move but lives "
-        "outside this fix-up's scope."
-    )
-)
 @pytest.mark.asyncio
-async def test_stream_emits_text_and_done(
+async def test_stream_emits_text_and_done_via_uvicorn(
     fx: _Fx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Phase M.3 — end-to-end SSE coverage on the route layer.
+
+    Pre-M.3 this test was skipped because httpx's `ASGITransport`
+    buffers chunks until the generator returns, hiding the SSE
+    intermediate frames. We now spin up a real uvicorn server on an
+    ephemeral port (see `tests/_helpers/uvicorn_server.py`) and read
+    the streaming body off a real TCP socket. The same lifespan that
+    runs in prod fires here, so the test also exercises the
+    `start_sweep()` + audit-sink-start path the in-memory ASGI
+    transport never reached.
+    """
     from gapt_server.agent import session_registry  # noqa: PLC0415
 
     monkeypatch.setattr(session_registry, "DEFAULT_KEEPALIVE_S", 0.05)
 
-    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
-        project_id, workspace_id = await _create_project_with_workspace(client)
-        created = await client.post(
-            f"/_gapt/api/projects/{project_id}/sessions",
-            json={"workspace_id": workspace_id},
-        )
-        session_id = created.json()["id"]
+    from tests._helpers.uvicorn_server import run_uvicorn  # noqa: PLC0415
 
-        registry = client._transport.app.state.container.session_registry  # type: ignore[attr-defined]
-        runtime = await registry.get(session_id)
-        # Push events synchronously before the client connects so they
-        # land in the replay buffer; with since=0 the streamer flushes
-        # them before subscribing.
-        await runtime.invoke("hi", runner=_scripted_runner)
-        await runtime.wait_done()
+    async with run_uvicorn(fx.app) as server:
+        async with AsyncClient(base_url=server.base_url, timeout=10.0) as client:
+            project_id, workspace_id = await _create_project_with_workspace(client)
+            created = await client.post(
+                f"/_gapt/api/projects/{project_id}/sessions",
+                json={"workspace_id": workspace_id},
+            )
+            session_id = created.json()["id"]
 
-        body = b""
-        try:
-            async with asyncio.timeout(20):
-                async with client.stream("GET", f"/_gapt/api/sessions/{session_id}/stream?since=0") as resp:
+            registry = fx.app.state.container.session_registry  # type: ignore[attr-defined]
+            runtime = await registry.get(session_id)
+            # Push the entire turn through the bus BEFORE the client
+            # opens the SSE socket so the replay window covers it.
+            # `runtime.invoke` returns once the task is scheduled; we
+            # await done so the publish ordering is deterministic.
+            await runtime.invoke("hi", runner=_scripted_runner)
+            await runtime.wait_done()
+
+            body = b""
+            async with asyncio.timeout(15):
+                async with client.stream(
+                    "GET",
+                    f"/_gapt/api/sessions/{session_id}/stream?since=0",
+                ) as resp:
                     assert resp.status_code == 200
                     assert resp.headers["content-type"].startswith("text/event-stream")
+                    # Real-socket streaming — chunks arrive as the
+                    # server flushes them, not after the generator
+                    # finishes. Break the read loop once we've seen the
+                    # terminal `done` frame so the test doesn't wait
+                    # for the keepalive timeout to lapse.
                     async for chunk in resp.aiter_bytes():
                         body += chunk
                         if b"event: done" in body:
                             break
-        except TimeoutError:
-            # Surface whatever we got so the assertions below produce
-            # a useful failure message instead of a bare timeout.
-            pass
 
-        assert b"event: text" in body
-        assert b'"chunk":"echo:hi"' in body
-        assert b"event: done" in body
+            assert b"event: text" in body
+            assert b'"chunk":"echo:hi"' in body
+            assert b"event: done" in body
+
+
+@pytest.mark.asyncio
+async def test_stream_continues_across_turn_via_uvicorn(
+    fx: _Fx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase M.3 — the post-Phase-L contract is that the SSE socket
+    stays open across multiple turns (so the chat UI's `useEffect`
+    doesn't have to re-subscribe per invoke). Pre-fix the route closed
+    the stream after the first `done`; the next turn's text never
+    reached the browser. This test verifies the route layer keeps the
+    socket alive and forwards turn-2 frames.
+    """
+    from gapt_server.agent import session_registry  # noqa: PLC0415
+
+    monkeypatch.setattr(session_registry, "DEFAULT_KEEPALIVE_S", 0.05)
+
+    from tests._helpers.uvicorn_server import run_uvicorn  # noqa: PLC0415
+
+    async with run_uvicorn(fx.app) as server:
+        async with AsyncClient(base_url=server.base_url, timeout=10.0) as client:
+            project_id, workspace_id = await _create_project_with_workspace(client)
+            created = await client.post(
+                f"/_gapt/api/projects/{project_id}/sessions",
+                json={"workspace_id": workspace_id},
+            )
+            session_id = created.json()["id"]
+
+            registry = fx.app.state.container.session_registry  # type: ignore[attr-defined]
+            runtime = await registry.get(session_id)
+
+            # Turn 1 lands before the socket opens (replay), turn 2
+            # lands AFTER the reader is subscribed (live path).
+            await runtime.invoke("hi", runner=_scripted_runner)
+            await runtime.wait_done()
+
+            seen_turn2 = asyncio.Event()
+            body = b""
+
+            async def reader() -> None:
+                nonlocal body
+                async with client.stream(
+                    "GET",
+                    f"/_gapt/api/sessions/{session_id}/stream?since=0",
+                ) as resp:
+                    assert resp.status_code == 200
+                    async for chunk in resp.aiter_bytes():
+                        body += chunk
+                        if b'"chunk":"echo:second"' in body:
+                            seen_turn2.set()
+                            break
+
+            reader_task = asyncio.create_task(reader())
+            # Give the reader a tick to subscribe + flush the replay.
+            await asyncio.sleep(0.1)
+            # Turn 2 — runs on the same runtime, publishes onto the
+            # bus, MUST land on the still-open reader.
+            await runtime.invoke("second", runner=_scripted_runner)
+            await runtime.wait_done()
+
+            async with asyncio.timeout(5):
+                await seen_turn2.wait()
+            reader_task.cancel()
+            with contextlib.suppress(BaseException):
+                await reader_task
+
+            assert b'"chunk":"echo:hi"' in body
+            assert b'"chunk":"echo:second"' in body
 
 
 # ──────────────────────────────────── Phase M.2 — _full_replay combine + rehydrate round-trip ──
@@ -580,20 +652,22 @@ async def test_full_replay_combines_db_prefix_with_memory_tail(fx: _Fx) -> None:
             AdminPrincipal,
         )
 
+        from gapt_server.routers.sessions import SessionAccess  # noqa: PLC0415
+
         manager: ProjectAwareSessionManager = container.session_manager
         async with container.session_factory() as db:
             user = AdminPrincipal(id="admin", display_name="admin")
-            rehydrated = await _runtime_or_rehydrate(
+            access = SessionAccess(
                 registry=registry,
-                session_id=session_id,
                 db=db,
                 manager=manager,
-                user=user,
-                container=container,
                 policy_engine=container.policy_engine,
                 audit_sink=container.audit_sink,
-                vault=container.workspace_sandbox.vault if hasattr(container.workspace_sandbox, "vault") else None,  # placeholder; real path injects via Depends
+                container=container,
+                vault=None,  # type: ignore[arg-type]
+                user=user,
             )
+            rehydrated = await _runtime_or_rehydrate(session_id, access=access)
 
             # Publish one live event AFTER rehydrate.
             await rehydrated.bus.publish(_Kind.TEXT, {"text": "live-after-rehydrate"})
@@ -652,20 +726,22 @@ async def test_rehydrate_round_trip_restores_state_messages(fx: _Fx) -> None:
         # Drop runtime, then rehydrate.
         await registry.pop(session_id)
 
+        from gapt_server.routers.sessions import SessionAccess  # noqa: PLC0415
+
         manager: ProjectAwareSessionManager = container.session_manager
         async with container.session_factory() as db:
             user = AdminPrincipal(id="admin", display_name="admin")
-            rehydrated = await _runtime_or_rehydrate(
+            access = SessionAccess(
                 registry=registry,
-                session_id=session_id,
                 db=db,
                 manager=manager,
-                user=user,
-                container=container,
                 policy_engine=container.policy_engine,
                 audit_sink=container.audit_sink,
-                vault=None,
+                container=container,
+                vault=None,  # type: ignore[arg-type]
+                user=user,
             )
+            rehydrated = await _runtime_or_rehydrate(session_id, access=access)
 
         # `state.messages` should now carry the prior user/assistant pair so
         # the next `Pipeline.run_stream` has memory of the first turn.

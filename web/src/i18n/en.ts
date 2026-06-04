@@ -1042,4 +1042,40 @@ export const en = {
   "settings.providers.cloudflare.migration.history.revert.confirm_body": "GAPT will remove the systemd drop-in and PUT the original ingress back to Cloudflare. cloudflared returns to local-config mode. This is reversible — you can re-run the cutover wizard later.",
   "settings.providers.cloudflare.migration.history.revert.password_label": "sudo password (leave blank if NOPASSWD)",
   "settings.providers.cloudflare.migration.history.revert.run": "Revert",
+
+  // ── Phase M.5 — sessions history + detail i18n (was hardcoded ko) ─
+  "sessions_history.back_to_project": "Back to project",
+  "sessions_history.title": "Sessions history",
+  "sessions_history.subtitle":
+    "Past vibe-coding sessions for this project — user prompts, assistant replies, tool calls, and cost are preserved together.",
+  "sessions_history.loading": "Loading…",
+  "sessions_history.empty.archived": "No archived sessions.",
+  "sessions_history.empty.project": "No sessions in this project yet.",
+  "sessions_history.no_recorded_prompts": "(no recorded prompts)",
+  "sessions_history.filter.all": "All",
+  "sessions_history.filter.active": "Active",
+  "sessions_history.filter.archived": "Archived",
+  "sessions_history.card.turns_one": "{count} turn",
+  "sessions_history.card.turns_other": "{count} turns",
+  "sessions_history.relative.just_now": "just now",
+  "sessions_history.relative.minutes_ago": "{count}m ago",
+  "sessions_history.relative.hours_ago": "{count}h ago",
+  "sessions_history.relative.days_ago": "{count}d ago",
+
+  "session_detail.back_to_list": "Back to sessions",
+  "session_detail.loading": "Loading…",
+  "session_detail.meta.created": "Created:",
+  "session_detail.meta.last_active": "Last active:",
+  "session_detail.empty.no_turns": "No recorded turns.",
+  "session_detail.resume": "Resume",
+  "session_detail.open_workspace": "Open workspace",
+
+  // ── Phase M.5 — EnvironmentEditor raw config preview ─
+  "env_editor.raw_preview.toggle": "Raw JSON preview (read-only)",
+
+  // ── Phase M.6 — Cache token tooltips ─
+  "cost.tokens.cache_write.tooltip":
+    "Anthropic prompt-cache write tokens. Counted when a system prompt / large context is loaded into the cache. Pricing is ~1.25x the input-token rate (cache_write_5m).",
+  "cost.tokens.cache_read.tooltip":
+    "Anthropic prompt-cache hit tokens. Counted when a prior turn's cached context is reused. Pricing is ~0.1x the input-token rate — cache hits are the main source of savings.",
 } as const;

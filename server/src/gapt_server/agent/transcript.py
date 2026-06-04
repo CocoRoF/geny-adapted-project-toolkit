@@ -295,7 +295,12 @@ def _indent_quote(text: str) -> str:
     return "\n".join(f"> {line}" for line in text.splitlines() or [""])
 
 
-def to_anthropic_messages(transcript: Transcript, *, max_turns: int | None = 50) -> list[dict[str, Any]]:
+def to_anthropic_messages(
+    transcript: Transcript,
+    *,
+    max_turns: int | None = 50,
+    include_tool_blocks: bool = True,
+) -> list[dict[str, Any]]:
     """Convert a transcript into the Anthropic `messages` array format
     so a freshly-rehydrated `PipelineState` can seed prior conversation.
 
@@ -312,9 +317,26 @@ def to_anthropic_messages(transcript: Transcript, *, max_turns: int | None = 50)
     moment it gets rehydrated. None = no cap (test-only — production
     paths should always cap).
 
-    Tool-call content blocks aren't reconstructed for now — only the
-    natural-language text is carried over. Adding tool_use / tool_result
-    blocks is a separate cycle (see Phase L plan §Out of scope).
+    Phase M.7 — when `include_tool_blocks` is true (default), turns
+    that ran tools are rebuilt with proper Anthropic content blocks:
+    ``assistant: [tool_use, ...]`` followed by ``user: [tool_result,
+    ...]`` then a final ``assistant: text`` with the post-tools
+    response. This preserves the agent's memory of which tools it
+    called and what they returned across rehydrate boundaries, so
+    "delete file X" → "did you delete it?" works after a server
+    restart instead of the agent re-running the tool blindly. Setting
+    `include_tool_blocks=False` falls back to the L.1 text-only shape
+    for tests that don't want to mock the tool layer.
+
+    Format per turn with tools:
+    - ``{role:user, content:user_text}``
+    - ``{role:assistant, content:[{type:tool_use, id, name, input}, ...]}``
+    - ``{role:user, content:[{type:tool_result, tool_use_id, content, is_error}, ...]}``
+    - ``{role:assistant, content:assistant_text}`` (post-tools natural reply)
+
+    For turns without tools, falls through to the L.1 plain shape:
+    - ``{role:user, content:user_text}``
+    - ``{role:assistant, content:assistant_text}``
     """
     turns = transcript.turns
     if max_turns is not None and len(turns) > max_turns:
@@ -326,8 +348,60 @@ def to_anthropic_messages(transcript: Transcript, *, max_turns: int | None = 50)
         if not user_text or not assistant_text:
             continue
         out.append({"role": "user", "content": user_text})
+
+        # Phase M.7 — when the turn ran tools and tool blocks are
+        # enabled, surface them as proper content blocks. Skip tools
+        # whose `tool_use_id` is missing (legacy pre-Phase-D events) —
+        # Anthropic rejects tool_result/tool_use blocks without an id.
+        usable_tools = (
+            [tu for tu in turn.tool_uses if tu.tool_use_id]
+            if include_tool_blocks
+            else []
+        )
+        if usable_tools:
+            tool_use_blocks = [
+                {
+                    "type": "tool_use",
+                    "id": tu.tool_use_id,
+                    "name": tu.tool or "tool",
+                    "input": tu.input if isinstance(tu.input, dict) else {},
+                }
+                for tu in usable_tools
+            ]
+            tool_result_blocks = [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tu.tool_use_id,
+                    # `content` accepts string OR a content-block list
+                    # per Anthropic API. We stringify object outputs
+                    # to keep the surface predictable — the agent
+                    # mostly cares about whether the call succeeded
+                    # and what shape it returned, not exact JSON.
+                    "content": _stringify_tool_output(tu.output),
+                    "is_error": tu.is_error,
+                }
+                for tu in usable_tools
+            ]
+            out.append({"role": "assistant", "content": tool_use_blocks})
+            out.append({"role": "user", "content": tool_result_blocks})
+
         out.append({"role": "assistant", "content": assistant_text})
     return out
+
+
+def _stringify_tool_output(output: Any) -> str:
+    """Coerce a tool's `output` field into a string for the
+    `tool_result.content` slot. Strings pass through; dict/list go
+    through `json.dumps`. None → empty. Cap at 8 KB so a misbehaving
+    tool that returned a huge log doesn't push the model's context."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output[:8192]
+    try:
+        return json.dumps(output, ensure_ascii=False, default=str)[:8192]
+    except (TypeError, ValueError):
+        return str(output)[:8192]
 
 
 def to_dict(transcript: Transcript) -> dict[str, Any]:

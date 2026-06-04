@@ -43,7 +43,12 @@ export function CostModal({ snapshot, onClose }: Props) {
             modal stays compact for short turns. */}
         {snapshot.cache_write_tokens > 0 ? (
           <>
-            <dt className="text-fg-muted">{t("cost.tokens.cache_write")}</dt>
+            <dt
+              className="cursor-help text-fg-muted underline decoration-dotted underline-offset-2"
+              title={t("cost.tokens.cache_write.tooltip")}
+            >
+              {t("cost.tokens.cache_write")}
+            </dt>
             <dd className="font-mono tabular-nums">
               {snapshot.cache_write_tokens.toLocaleString()}
             </dd>
@@ -51,7 +56,12 @@ export function CostModal({ snapshot, onClose }: Props) {
         ) : null}
         {snapshot.cache_read_tokens > 0 ? (
           <>
-            <dt className="text-fg-muted">{t("cost.tokens.cache_read")}</dt>
+            <dt
+              className="cursor-help text-fg-muted underline decoration-dotted underline-offset-2"
+              title={t("cost.tokens.cache_read.tooltip")}
+            >
+              {t("cost.tokens.cache_read")}
+            </dt>
             <dd className="font-mono tabular-nums">
               {snapshot.cache_read_tokens.toLocaleString()}
             </dd>

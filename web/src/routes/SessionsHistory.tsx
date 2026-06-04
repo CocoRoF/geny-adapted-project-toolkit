@@ -26,6 +26,7 @@ import {
   type SessionResponse,
   listSessions,
 } from "@/api/sessions";
+import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Card, CardContent } from "@/ui/Card";
 import { cn } from "@/ui/cn";
@@ -33,6 +34,7 @@ import { cn } from "@/ui/cn";
 type Filter = "active" | "archived" | "all";
 
 export function SessionsHistory() {
+  const { t } = useI18n();
   const { pid } = useParams<{ pid: string }>();
   const projectId = pid ?? "";
   const [filter, setFilter] = useState<Filter>("all");
@@ -76,7 +78,7 @@ export function SessionsHistory() {
         to={`/projects/${projectId}`}
         className="mb-3 inline-flex items-center gap-1 text-[12px] text-fg-muted hover:text-fg"
       >
-        <ChevronLeft className="h-3.5 w-3.5" /> Back to project
+        <ChevronLeft className="h-3.5 w-3.5" /> {t("sessions_history.back_to_project")}
       </Link>
       <header className="mb-5 flex items-center gap-3">
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-bg-subtle">
@@ -84,11 +86,10 @@ export function SessionsHistory() {
         </div>
         <div>
           <h1 className="text-[20px] font-semibold tracking-tight text-fg">
-            세션 히스토리
+            {t("sessions_history.title")}
           </h1>
           <p className="text-[12px] text-fg-muted">
-            이 프로젝트의 과거 vibe-coding 세션 — 사용자 prompt / 어시스턴트
-            응답 / 도구 호출 / 비용이 함께 보존됩니다.
+            {t("sessions_history.subtitle")}
           </p>
         </div>
       </header>
@@ -104,15 +105,15 @@ export function SessionsHistory() {
       {loading ? (
         <Card>
           <CardContent className="flex items-center gap-2 p-4 text-[12px] text-fg-subtle">
-            <Loader2 className="h-3 w-3 animate-spin" /> 불러오는 중…
+            <Loader2 className="h-3 w-3 animate-spin" /> {t("sessions_history.loading")}
           </CardContent>
         </Card>
       ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="p-6 text-center text-[13px] text-fg-muted">
             {filter === "archived"
-              ? "보관된 세션이 없습니다."
-              : "이 프로젝트에 아직 세션이 없습니다."}
+              ? t("sessions_history.empty.archived")
+              : t("sessions_history.empty.project")}
           </CardContent>
         </Card>
       ) : (
@@ -133,10 +134,11 @@ function FilterChips({
   filter: Filter;
   onChange: (next: Filter) => void;
 }) {
+  const { t } = useI18n();
   const opts: { value: Filter; label: string }[] = [
-    { value: "all", label: "전체" },
-    { value: "active", label: "Active" },
-    { value: "archived", label: "Archived" },
+    { value: "all", label: t("sessions_history.filter.all") },
+    { value: "active", label: t("sessions_history.filter.active") },
+    { value: "archived", label: t("sessions_history.filter.archived") },
   ];
   return (
     <div className="mb-4 inline-flex items-center gap-0.5 rounded-md border border-border bg-bg-subtle p-0.5">
@@ -167,8 +169,13 @@ function SessionCard({
   projectId: string;
   session: SessionResponse;
 }) {
+  const { t } = useI18n();
   const snippet = session.first_user_message ?? null;
   const turns = session.turn_count ?? 0;
+  const turnLabel = (turns === 1
+    ? t("sessions_history.card.turns_one")
+    : t("sessions_history.card.turns_other")
+  ).replace("{count}", String(turns));
   return (
     <Link
       to={`/projects/${projectId}/sessions/${session.id}`}
@@ -190,7 +197,7 @@ function SessionCard({
             </span>
             <span className="text-[10.5px] text-fg-subtle">·</span>
             <span className="text-[10.5px] text-fg-subtle">
-              {formatRelative(session.created_at)}
+              {formatRelative(session.created_at, t)}
             </span>
           </div>
           <p
@@ -199,7 +206,7 @@ function SessionCard({
               snippet ? "text-fg" : "italic text-fg-subtle",
             )}
           >
-            {snippet ?? "(no recorded prompts)"}
+            {snippet ?? t("sessions_history.no_recorded_prompts")}
           </p>
         </div>
         <div className="shrink-0 text-right">
@@ -207,7 +214,7 @@ function SessionCard({
             ${session.cost_usd.toFixed(4)}
           </p>
           <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">
-            {turns} turn{turns === 1 ? "" : "s"}
+            {turnLabel}
           </p>
           <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">
             ↑{session.input_tokens} ↓{session.output_tokens}
@@ -247,20 +254,21 @@ function StatusBadge({ status }: { status: AgentSessionStatus }) {
   );
 }
 
-/** Tiny relative timestamp without pulling in dayjs/luxon — single
- * page, fixed format, "3시간 전" style. */
-function formatRelative(iso: string): string {
+/** Tiny relative timestamp without pulling in dayjs/luxon. Takes `t`
+ *  as a parameter (not a hook call) so it can be invoked from inside
+ *  render flows without a wrapper component. */
+function formatRelative(iso: string, t: (key: string) => string): string {
   const ts = new Date(iso).getTime();
   if (Number.isNaN(ts)) return iso;
   const delta = Date.now() - ts;
   const s = Math.floor(delta / 1000);
-  if (s < 60) return "방금 전";
+  if (s < 60) return t("sessions_history.relative.just_now");
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}분 전`;
+  if (m < 60) return t("sessions_history.relative.minutes_ago").replace("{count}", String(m));
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}시간 전`;
+  if (h < 24) return t("sessions_history.relative.hours_ago").replace("{count}", String(h));
   const d = Math.floor(h / 24);
-  if (d < 7) return `${d}일 전`;
+  if (d < 7) return t("sessions_history.relative.days_ago").replace("{count}", String(d));
   // Beyond a week, show the absolute date — relative loses meaning.
   return new Date(iso).toLocaleDateString();
 }

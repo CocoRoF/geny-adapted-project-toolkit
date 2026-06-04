@@ -25,10 +25,39 @@
  */
 
 import DOMPurify from "dompurify";
+import hljs from "highlight.js/lib/common";
+// Phase M.9 — load the `github-dark` highlight.js theme; the rules
+// scope to `.hljs` + `.hljs-*` spans that `markedHighlight` emits, so
+// this import only adds colors for code blocks (no global leakage).
+import "highlight.js/styles/github-dark.css";
 import { marked } from "marked";
+import { markedHighlight } from "marked-highlight";
 import { useMemo } from "react";
 
 import { cn } from "@/ui/cn";
+
+// Phase M.9 — syntax highlighting for fenced code blocks. The
+// `highlight.js/lib/common` import pulls the ~40 most-used languages
+// (TS / JS / Python / Bash / Go / Rust / SQL / JSON / YAML / etc.)
+// without ballooning the bundle with the full ~190-language set.
+// `markedHighlight` wraps `marked`'s code-block renderer so the
+// downstream `<pre><code class="hljs language-…">` carries the
+// tokenized spans for the CSS theme to colour.
+marked.use(
+  markedHighlight({
+    langPrefix: "hljs language-",
+    highlight(code, lang) {
+      const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+      try {
+        return hljs.highlight(code, { language }).value;
+      } catch {
+        // Highlighter blew up on malformed input — fall back to plain
+        // text so the message still renders.
+        return code;
+      }
+    },
+  }),
+);
 
 interface Props {
   children: string;
@@ -48,14 +77,47 @@ marked.setOptions({
   silent: true,
 });
 
+// Phase M.6 — DOMPurify hook to harden `<a>` tags:
+//   * `target="_blank"` so links open in a new tab. Previously the
+//     comment below claimed this but no code ever set it — clicking
+//     an assistant-emitted URL navigated the GAPT IDE iframe away
+//     from the chat. The user lost their place.
+//   * `rel="noopener noreferrer"` because new-tab + `window.opener`
+//     access is a classic phishing escalation vector.
+//   * Same-origin links (relative paths, `/_gapt/...`) are left
+//     alone so internal jumps still target the current tab.
+let _hookInstalled = false;
+function _installLinkHook(): void {
+  if (_hookInstalled) return;
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName !== "A") return;
+    const href = node.getAttribute("href");
+    if (!href) return;
+    // Only mark external schemes — relative + same-origin stay
+    // current-tab so the operator clicking `/_gapt/api/...` doesn't
+    // get a stray new tab. A leading slash + protocol-relative `//`
+    // both count as "internal-or-protocol-relative" — leave them.
+    const isExternal = /^[a-z][a-z\d+\-.]*:/i.test(href) && !href.startsWith(`${window.location.origin}/`);
+    if (!isExternal) return;
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  });
+  _hookInstalled = true;
+}
+
 export function MarkdownText({ children, className }: Props) {
   const html = useMemo(() => {
+    _installLinkHook();
     const raw = marked.parse(children) as string;
     return DOMPurify.sanitize(raw, {
       // Don't allow inline styles either — sanitizer's default for
       // `style=` is "allow"; tightening here removes one more XSS
       // vector (CSS-injected exfiltration).
       FORBID_ATTR: ["style"],
+      // Allow target + rel on `<a>` (DOMPurify's default schema
+      // already permits them, but be explicit since our hook depends
+      // on them surviving sanitization).
+      ADD_ATTR: ["target", "rel"],
     });
   }, [children]);
 

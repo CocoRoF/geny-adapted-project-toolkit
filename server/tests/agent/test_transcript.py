@@ -275,3 +275,135 @@ def test_datetime_started_at_parsed_from_iso() -> None:
     events = _evs(("user_message", {"text": "hi"}))
     t = build_transcript(session_id="s9", events=events)
     assert isinstance(t.turns[0].started_at, datetime)
+
+
+# ────────────────────────────────── Phase M.7 — tool-call rehydration ──
+
+
+def test_to_anthropic_messages_includes_tool_use_and_tool_result_blocks() -> None:
+    """Phase M.7 — when a turn ran tools, the rebuilt messages must
+    carry both the assistant's tool_use block AND the matching
+    user-side tool_result block so the agent's memory of the call +
+    its output survives across rehydrate. Pre-M.7 the rebuilt array
+    only had natural-language text; the agent saw "delete file X" →
+    "did you delete it?" with no record of having ran rm, and
+    re-issued the deletion blindly."""
+    events = _evs(
+        ("user_message", {"text": "remove README.md"}),
+        ("tool_call", {
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_01",
+            "input": {"command": "rm README.md"},
+        }),
+        ("tool_result", {
+            "tool_use_id": "toolu_01",
+            "is_error": False,
+            "content": "removed",
+        }),
+        ("text", {"text": "Removed README.md."}),
+        ("done", {"cost": {"cost_usd": 0.001, "input_tokens": 5, "output_tokens": 5}}),
+    )
+    transcript = build_transcript(session_id="s_tool", events=events)
+    msgs = to_anthropic_messages(transcript)
+
+    # Expected shape: user → assistant(tool_use) → user(tool_result) → assistant(text)
+    assert len(msgs) == 4
+    assert msgs[0] == {"role": "user", "content": "remove README.md"}
+
+    assistant_tools = msgs[1]
+    assert assistant_tools["role"] == "assistant"
+    assert isinstance(assistant_tools["content"], list)
+    assert assistant_tools["content"] == [
+        {
+            "type": "tool_use",
+            "id": "toolu_01",
+            "name": "Bash",
+            "input": {"command": "rm README.md"},
+        }
+    ]
+
+    user_results = msgs[2]
+    assert user_results["role"] == "user"
+    assert isinstance(user_results["content"], list)
+    assert user_results["content"] == [
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01",
+            "content": "removed",
+            "is_error": False,
+        }
+    ]
+
+    assert msgs[3] == {"role": "assistant", "content": "Removed README.md."}
+
+
+def test_to_anthropic_messages_tool_blocks_can_be_disabled() -> None:
+    """`include_tool_blocks=False` falls back to the L.1 text-only
+    shape — useful for tests that mock pipelines without a tool layer."""
+    events = _evs(
+        ("user_message", {"text": "run X"}),
+        ("tool_call", {
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_02",
+            "input": {"command": "X"},
+        }),
+        ("tool_result", {"tool_use_id": "toolu_02", "is_error": False, "content": "ok"}),
+        ("text", {"text": "Done."}),
+    )
+    transcript = build_transcript(session_id="s_disable", events=events)
+    msgs = to_anthropic_messages(transcript, include_tool_blocks=False)
+    assert msgs == [
+        {"role": "user", "content": "run X"},
+        {"role": "assistant", "content": "Done."},
+    ]
+
+
+def test_to_anthropic_messages_skips_tools_missing_use_id() -> None:
+    """Legacy tool events without `tool_use_id` would break the
+    Anthropic API (tool_use blocks require an id). Drop them rather
+    than poison the rebuilt messages — the assistant text still rides."""
+    events = _evs(
+        ("user_message", {"text": "do thing"}),
+        ("tool_call", {"tool_name": "Bash", "input": {"command": "x"}}),  # no id
+        ("text", {"text": "ok"}),
+    )
+    transcript = build_transcript(session_id="s_legacy_tool", events=events)
+    msgs = to_anthropic_messages(transcript)
+    # Fell through to the L.1 plain shape since the only tool lacked an id.
+    assert msgs == [
+        {"role": "user", "content": "do thing"},
+        {"role": "assistant", "content": "ok"},
+    ]
+
+
+def test_to_anthropic_messages_multi_tool_round_trip() -> None:
+    """Multiple tools in one turn surface as a single grouped
+    assistant→user pair (matching the Anthropic API expectation of
+    all tool_uses in one msg + all tool_results in the following one)."""
+    events = _evs(
+        ("user_message", {"text": "list and read"}),
+        ("tool_call", {
+            "tool_name": "Bash",
+            "tool_use_id": "t1",
+            "input": {"command": "ls"},
+        }),
+        ("tool_result", {"tool_use_id": "t1", "is_error": False, "content": "file.txt"}),
+        ("tool_call", {
+            "tool_name": "Read",
+            "tool_use_id": "t2",
+            "input": {"path": "file.txt"},
+        }),
+        ("tool_result", {"tool_use_id": "t2", "is_error": False, "content": "hello"}),
+        ("text", {"text": "Found file.txt with 'hello'."}),
+    )
+    transcript = build_transcript(session_id="s_multi", events=events)
+    msgs = to_anthropic_messages(transcript)
+    assert len(msgs) == 4
+
+    assistant_tools = msgs[1]["content"]
+    assert [b["id"] for b in assistant_tools] == ["t1", "t2"]
+    assert [b["name"] for b in assistant_tools] == ["Bash", "Read"]
+
+    user_results = msgs[2]["content"]
+    assert [b["tool_use_id"] for b in user_results] == ["t1", "t2"]
+    assert [b["content"] for b in user_results] == ["file.txt", "hello"]
