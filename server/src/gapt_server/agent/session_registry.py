@@ -138,13 +138,25 @@ class SessionRuntime:
         Lazy + idempotent — invoked the first time an override request
         lands. Silently no-ops when the pipeline lacks the expected
         executor shape (test stubs); the override path then degrades
-        to "no baseline available" and `clear` is a no-op."""
+        to "no baseline available" and `clear` is a no-op.
+
+        Phase M.2 — when the runtime was constructed with an explicit
+        ``_baseline_model`` (the manifest's bundled api stage model),
+        we keep that value and only capture thinking_* from the live
+        pipeline. The bundled value matches what the chat panel's
+        "inherit (uses X)" label promises, regardless of admin prefs.
+        """
         if self._baseline_captured:
             return
         cfg = getattr(self.pipeline, "_config", None)
         model_cfg = getattr(cfg, "model", None) if cfg is not None else None
         if model_cfg is not None:
-            self._baseline_model = getattr(model_cfg, "model", None)
+            # Preserve a pre-set bundled-model baseline; only fall back
+            # to the live `_config.model.model` when we have nothing
+            # better. (Pre-set happens at runtime construction in
+            # `_build_runtime_from_handle` via the env_service.)
+            if self._baseline_model is None:
+                self._baseline_model = getattr(model_cfg, "model", None)
             self._baseline_thinking_enabled = getattr(
                 model_cfg, "thinking_enabled", None
             )
@@ -185,11 +197,21 @@ class SessionRuntime:
         cfg = getattr(self.pipeline, "_config", None)
         model_cfg = getattr(cfg, "model", None) if cfg is not None else None
         if model_cfg is None:
+            logger.warning(
+                "session.override.no_config",
+                session_id=self.session_id,
+                requested_model=model,
+                requested_clear=clear,
+                pipeline_type=type(self.pipeline).__name__,
+            )
             # Test stub or unexpected pipeline shape — fall through to
             # the legacy `state.model` mutation path so existing tests
             # that assert on state continue to pass. Real pipelines
             # always carry `_config.model`.
             return
+        before_model = getattr(model_cfg, "model", None)
+        before_thinking = getattr(model_cfg, "thinking_enabled", None)
+        before_budget = getattr(model_cfg, "thinking_budget_tokens", None)
         clear_set = {c.strip().lower() for c in (clear or []) if isinstance(c, str)}
         # "thinking" is a UX shortcut — most chat surfaces present
         # thinking as a single toggle + slider pair, not two independent
@@ -225,6 +247,22 @@ class SessionRuntime:
                 and thinking_budget_tokens > 0
             ):
                 model_cfg.thinking_enabled = True
+
+        logger.info(
+            "session.override.applied",
+            session_id=self.session_id,
+            request_model=model,
+            request_thinking_enabled=thinking_enabled,
+            request_thinking_budget_tokens=thinking_budget_tokens,
+            request_clear=list(clear_set) if clear_set else None,
+            before_model=before_model,
+            after_model=getattr(model_cfg, "model", None),
+            before_thinking_enabled=before_thinking,
+            after_thinking_enabled=getattr(model_cfg, "thinking_enabled", None),
+            before_thinking_budget=before_budget,
+            after_thinking_budget=getattr(model_cfg, "thinking_budget_tokens", None),
+            baseline_model=self._baseline_model,
+        )
 
     @property
     def is_running(self) -> bool:

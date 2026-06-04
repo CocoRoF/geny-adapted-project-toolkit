@@ -338,6 +338,49 @@ class GaptEnvironmentService:
         """Names of every manifest shipped with the server."""
         return sorted(p.stem for p in self._server_dir.glob("*.json"))
 
+    def bundled_api_model(self, env_id: str) -> str | None:
+        """Return the bundled (un-overridden) api stage model for ``env_id``.
+
+        Phase M.2 — the chat panel's model pill labels the "inherit"
+        option as "(uses sonnet)" sourced from the manifest's stored
+        api-stage model. The `_baseline_model` the runtime uses to
+        revert per-invoke overrides used to be whatever
+        `pipeline._config.model.model` resolved to AFTER admin prefs +
+        per-session overrides applied — so "inherit" reverted to
+        whatever the admin pref locked in (e.g. opus), NOT the
+        manifest's "sonnet" the pill promised. This helper returns
+        the raw bundled value so the runtime can baseline-revert to
+        the manifest's own default, matching the pill UX.
+
+        Returns ``None`` when the manifest doesn't pin a model — the
+        runtime then falls back to capturing whatever the live
+        pipeline carries.
+        """
+        try:
+            resolution = self.resolve(env_id)
+        except ManifestNotFoundError:
+            return None
+        manifest = resolution.manifest
+        # Prefer the api stage's config.model — that's what the chat
+        # panel displays. Fall back to top-level model.model if the
+        # stage didn't pin one (uncommon but legal).
+        for entry in manifest.stages:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("name") != "api":
+                continue
+            cfg = entry.get("config")
+            if isinstance(cfg, dict):
+                model = cfg.get("model")
+                if isinstance(model, str) and model.strip():
+                    return model.strip()
+        top = manifest.model
+        if isinstance(top, dict):
+            model = top.get("model")
+            if isinstance(model, str) and model.strip():
+                return model.strip()
+        return None
+
     @staticmethod
     def _load(path: Path) -> EnvironmentManifest:
         # geny-executor 2.1.0 exposes `EnvironmentManifest.from_dict` —

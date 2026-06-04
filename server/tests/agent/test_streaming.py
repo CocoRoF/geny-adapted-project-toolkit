@@ -590,3 +590,37 @@ def test_apply_per_invoke_overrides_noop_without_baseline_capture() -> None:
         model=None, thinking_enabled=None, thinking_budget_tokens=None, clear=None
     )
     assert rt._baseline_captured is False
+
+
+def test_clear_reverts_to_preset_bundled_baseline_not_live_config() -> None:
+    """Phase M.2 — when the runtime was constructed with an explicit
+    `_baseline_model` (the manifest's bundled api model), `clear`
+    reverts to THAT, not the post-admin-pref `_config.model.model`.
+
+    Scenario: admin pref set the live pipeline to opus, but the
+    manifest's bundled api stage said sonnet. The chat panel's
+    "inherit (uses sonnet)" pill promises sonnet on revert. Pre-fix
+    the runtime captured opus as the baseline (from live config) and
+    `clear=["model"]` left the call on opus.
+    """
+    pipeline = _FakePipeline(model="claude-opus-4-7")  # live = opus (admin pref)
+    rt = SessionRuntime(
+        session_id="bundled",
+        project_id="p",
+        workspace_id="w",
+        user_id="u",
+        pipeline=pipeline,  # type: ignore[arg-type]
+        accumulator=CostAccumulator(session_id="bundled"),
+        _baseline_model="claude-sonnet-4-6",  # bundled manifest default
+    )
+
+    rt.apply_per_invoke_overrides(
+        model=None, thinking_enabled=None, thinking_budget_tokens=None,
+        clear=["model"],
+    )
+
+    assert pipeline._config.model.model == "claude-sonnet-4-6"
+    assert rt.model_name == "claude-sonnet-4-6"
+    # Even though the live config was opus, the pre-set bundled
+    # baseline wins — the lazy capture preserves it.
+    assert rt._baseline_model == "claude-sonnet-4-6"

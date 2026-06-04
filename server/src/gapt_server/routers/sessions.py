@@ -285,6 +285,16 @@ def _build_runtime_from_handle(
     # policy hook AND the runtime so `invoke(mode=...)` can mutate it
     # in place. Default is "act" — Plan mode is opt-in per invoke.
     mode_ref = ChatModeRef(mode="act")
+    # Phase M.2 — pin the manifest's bundled api stage model as the
+    # baseline for revert. Without this, "clear" reverts to whatever
+    # admin prefs locked into `_config.model.model` at pipeline build
+    # time (e.g. opus) rather than the bundled "sonnet" the chat
+    # panel's "inherit (uses sonnet)" label promises.
+    bundled_model = None
+    try:
+        bundled_model = container.env_service.bundled_api_model(handle.env_manifest_id)
+    except Exception:  # noqa: BLE001 — best-effort; helper has its own guard
+        bundled_model = None
     runtime = SessionRuntime(
         session_id=handle.session_id,
         project_id=handle.project_id,
@@ -295,6 +305,7 @@ def _build_runtime_from_handle(
         sandbox=sandbox,
         mode_ref=mode_ref,
         max_state_messages=container.settings.session_max_messages_in_state,
+        _baseline_model=bundled_model,
     )
 
     # Phase D.3 — persist every published event to `session_events`

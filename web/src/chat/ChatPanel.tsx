@@ -3,6 +3,7 @@ import { Bot, ChevronDown, Download } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
+  type InvokeOverrides,
   type SessionEventKind,
   type SessionResponse,
   archiveSession,
@@ -463,23 +464,35 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
         },
       ]);
       // Phase D.1 — pass the active mode along so the backend policy
-      // hook short-circuits mutating tools when mode is "plan". The
-      // existing PLAN_PREFIX text prompt is *also* kept so the LLM
-      // produces planning-style output, not just so the gate triggers.
+      // hook short-circuits mutating tools when mode is "plan".
       //
-      // Phase L follow-up — also forward per-invoke model + thinking
-      // overrides. The pills are no longer locked when a session is
-      // live; the backend mutates `state.model` / `state.thinking_*`
-      // before calling the pipeline so the next turn picks them up.
-      void invokeSession(session.id, outgoing, activeMode, {
-        ...(modelOverride ? { model: modelOverride } : {}),
-        ...(thinkingBudget != null
-          ? {
-              thinking_enabled: thinkingBudget > 0,
-              thinking_budget_tokens: thinkingBudget,
-            }
-          : {}),
-      })
+      // Phase M.2 — every invoke sends the FULL declared intent of
+      // the override pills, not just the deltas. If `modelOverride`
+      // is null we send `clear: ["model"]` so the runtime is forced
+      // back to the manifest baseline; otherwise we send the explicit
+      // model. Same for thinking. This makes the override path
+      // idempotent + stateless — there's no way for a previous
+      // override to silently stick around when the pill shows
+      // "inherit". The server-side `apply_per_invoke_overrides` is a
+      // no-op when the request matches the current runtime state, so
+      // sending clear every turn is cheap.
+      const clearTargets: Array<"model" | "thinking"> = [];
+      const overrideBody: InvokeOverrides = {};
+      if (modelOverride) {
+        overrideBody.model = modelOverride;
+      } else {
+        clearTargets.push("model");
+      }
+      if (thinkingBudget !== null) {
+        overrideBody.thinking_enabled = thinkingBudget > 0;
+        overrideBody.thinking_budget_tokens = thinkingBudget;
+      } else {
+        clearTargets.push("thinking");
+      }
+      if (clearTargets.length > 0) {
+        overrideBody.clear = clearTargets;
+      }
+      void invokeSession(session.id, outgoing, activeMode, overrideBody)
         .catch((err: unknown) => {
           setError(
             err instanceof ApiError
