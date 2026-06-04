@@ -43,7 +43,8 @@
 | **M2 Phase J** Session archive browser (브라우저에서 과거 세션 목록 + transcript inline) | **완료** (2026-06-01) | **상세** | [`m2_phase_j.md`](m2_phase_j.md) |
 | **M2 Phase K** Archive polish (markdown 렌더링 + cache 토큰 가시화) | **완료** (2026-06-01) | **상세** | [`m2_phase_k.md`](m2_phase_k.md) |
 | **M2 Phase L** Chat fortification round 2 (multi-turn 메모리 + session picker + reactivate + ThinkingPill) | **완료** (2026-06-01) | **상세** | [`m2_phase_l.md`](m2_phase_l.md) |
-| **M2 Phase M** Post-L deep-review remediation (P0 memory bounds via Settings + P1~P3 tech debt 9 sub-cycles) | in_progress (2026-06-01) | **상세** | [`m2_phase_m.md`](m2_phase_m.md) |
+| **M2 Phase M** Post-L deep-review remediation (P0 memory bounds via Settings + P1~P3 tech debt 9 sub-cycles) | **완료** (2026-06-04) | **상세** | [`m2_phase_m.md`](m2_phase_m.md) |
+| **M2 Phase N** Scaffold-based new project creation (`+ 새 프로젝트` 드롭다운 → 새로 만들기/불러오기, 5종 프리셋: empty + fullstack + backend + frontend + static) | in_progress (2026-06-04) | **상세** | [`m2_phase_n.md`](m2_phase_n.md) |
 | ~~M3 멀티 사용자~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M4 K8s / 엔터프라이즈~~ | **out of v1 scope** | — | single-admin 결정 |
 | ~~M5 자동 운영 / SaaS~~ | **out of v1 scope** | — | OSS self-hosted 코어 유지 |
