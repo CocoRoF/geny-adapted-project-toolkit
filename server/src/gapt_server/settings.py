@@ -109,6 +109,55 @@ class Settings(BaseSettings):
     # a host where `/var/lib` isn't writable by the GAPT user.
     workspace_bare_root: str = "/var/lib/gapt-bare"
 
+    # ── Phase M.1 — agent session memory bounds ──────────────────
+    #
+    # All five knobs are exposed as `GAPT_SESSION_*` env vars so an
+    # operator running on a small VPS can drop the caps without
+    # patching code. Defaults match the deep-review's "recommended
+    # safe baseline" — adequate for a single-admin solo install with
+    # ~100 active sessions across all workspaces.
+    #
+    # Bumping any of these unconditionally raises the worst-case
+    # memory ceiling — start small and only raise after observing
+    # actual pressure in `performance` metrics.
+
+    # Max `SessionRuntime` instances the in-process `SessionRegistry`
+    # holds at once. Touching a session (invoke / stream / messages)
+    # bumps it to the front of an LRU queue; when this cap is hit a
+    # `register()` evicts the least-recently-touched runtime via
+    # `aclose()` — its `conversation_state` + bus subscribers are
+    # released. Subsequent activity on that session triggers a normal
+    # rehydrate from DB (Phase L.1 contract).
+    session_runtime_cache_size: int = 50
+
+    # Wall-clock idle window (seconds) after which a runtime is
+    # evicted by the background sweep even if the LRU cap hasn't been
+    # reached. Idle = no SSE/invoke/touch in this many seconds. The
+    # default is conservative (30 min) so a user coming back from
+    # lunch still hits the warm cache; an active chat session bumps
+    # `last_active_at` on every event so it never starves.
+    session_runtime_idle_eviction_s: int = 1800
+
+    # Upper bound on the `session_events` rows the rehydrate path
+    # loads to reconstruct `state.messages`. Older events are
+    # dropped — the agent loses memory of the very-oldest turns but
+    # the latest N stay intact. Picked to cap a worst-case session
+    # at ~100 KB of message JSON.
+    session_max_rehydrate_events: int = 1000
+
+    # Hard cap on `state.messages` entries (one entry = one role
+    # turn — so 50 entries ≈ 25 user/assistant pairs). When the
+    # invoke driver sees a longer array it trims the head so the
+    # next `Pipeline.run_stream` doesn't push the context window.
+    # Operator can grow this for opus / haiku 200k contexts.
+    session_max_messages_in_state: int = 50
+
+    # SSE replay (`_full_replay`) cap. Larger than the rehydrate
+    # cap because replay also covers UI step / cost / tool events,
+    # which are noisier than the canonical user/assistant pairs the
+    # agent needs for memory.
+    session_max_stream_replay_events: int = 2000
+
     # --- arq / background jobs ---
     arq_queue_name: str = "gapt:default"
 

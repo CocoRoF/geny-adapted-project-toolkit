@@ -535,3 +535,142 @@ async def test_stream_emits_text_and_done(
         assert b"event: text" in body
         assert b'"chunk":"echo:hi"' in body
         assert b"event: done" in body
+
+
+# ──────────────────────────────────── Phase M.2 — _full_replay combine + rehydrate round-trip ──
+
+
+@pytest.mark.asyncio
+async def test_full_replay_combines_db_prefix_with_memory_tail(fx: _Fx) -> None:
+    """`/stream` 의 `_full_replay` 가 DB prefix + in-memory tail 을 합쳐서
+    돌려주는지 직접 검증. 시나리오:
+      1. 세션 만들고 invoke → DB 에 user_message + text + done 기록.
+      2. 런타임을 registry 에서 pop 해서 in-memory 버스를 비움.
+      3. 다시 rehydrate 후 라이브 이벤트 하나 publish.
+      4. `_full_replay(since=0)` 는 DB-prefix 3건 + live 1건 = 4건, seq 단조."""
+    from gapt_server.agent.session_registry import SessionEventKind as _Kind  # noqa: PLC0415
+    from gapt_server.routers.sessions import (  # noqa: PLC0415
+        _full_replay,
+        _runtime_or_rehydrate,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id},
+        )
+        session_id = created.json()["id"]
+
+        container = client._transport.app.state.container  # type: ignore[attr-defined]
+        registry = container.session_registry
+
+        runtime = await registry.get(session_id)
+        await runtime.invoke("first", runner=_scripted_runner)
+        await runtime.wait_done()
+
+        # Drop the runtime so the bus's ring buffer goes away.
+        await registry.pop(session_id)
+
+        # Build a manager + vault the rehydrate path needs.
+        from gapt_server.agent.session_manager import (  # noqa: PLC0415
+            ProjectAwareSessionManager,
+        )
+        from gapt_server.domains.auth.principal import (  # noqa: PLC0415
+            AdminPrincipal,
+        )
+
+        manager: ProjectAwareSessionManager = container.session_manager
+        async with container.session_factory() as db:
+            user = AdminPrincipal(id="admin", display_name="admin")
+            rehydrated = await _runtime_or_rehydrate(
+                registry=registry,
+                session_id=session_id,
+                db=db,
+                manager=manager,
+                user=user,
+                container=container,
+                policy_engine=container.policy_engine,
+                audit_sink=container.audit_sink,
+                vault=container.workspace_sandbox.vault if hasattr(container.workspace_sandbox, "vault") else None,  # placeholder; real path injects via Depends
+            )
+
+            # Publish one live event AFTER rehydrate.
+            await rehydrated.bus.publish(_Kind.TEXT, {"text": "live-after-rehydrate"})
+
+            combined = await _full_replay(db, rehydrated, since=0)
+
+        seqs = [e.seq for e in combined]
+        assert seqs == sorted(seqs)  # monotonic
+        # DB prefix gave us {user_message, text, done}; live tail adds the new text.
+        kinds = [e.kind.value for e in combined]
+        assert "user_message" in kinds
+        assert "done" in kinds
+        # The live publication after rehydrate landed on the tail.
+        assert any(
+            e.kind is _Kind.TEXT and e.data.get("text") == "live-after-rehydrate"
+            for e in combined
+        )
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_round_trip_restores_state_messages(fx: _Fx) -> None:
+    """Pop + rehydrate 사이클이 `conversation_state.messages` 를 복원하는지.
+    이걸 보장 못하면 서버 재시작 후 첫 invoke 가 컨텍스트 없이 돌아간다."""
+    from gapt_server.agent.session_manager import (  # noqa: PLC0415
+        ProjectAwareSessionManager,
+    )
+    from gapt_server.agent.session_registry import SessionEventKind as _Kind  # noqa: PLC0415
+    from gapt_server.routers.sessions import (  # noqa: PLC0415
+        _runtime_or_rehydrate,
+    )
+    from gapt_server.domains.auth.principal import (  # noqa: PLC0415
+        AdminPrincipal,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id},
+        )
+        session_id = created.json()["id"]
+
+        container = client._transport.app.state.container  # type: ignore[attr-defined]
+        registry = container.session_registry
+        runtime = await registry.get(session_id)
+
+        # Emit a complete turn (user → assistant text) through the bus so the
+        # DB persister writes `session_events` rows the rehydrate path will
+        # rebuild messages from.
+        async def _two_turn_runner(rt: Any, _msg: str) -> None:
+            await rt.bus.publish(_Kind.TEXT, {"text": "hello back"})
+
+        await runtime.invoke("hi", runner=_two_turn_runner)
+        await runtime.wait_done()
+
+        # Drop runtime, then rehydrate.
+        await registry.pop(session_id)
+
+        manager: ProjectAwareSessionManager = container.session_manager
+        async with container.session_factory() as db:
+            user = AdminPrincipal(id="admin", display_name="admin")
+            rehydrated = await _runtime_or_rehydrate(
+                registry=registry,
+                session_id=session_id,
+                db=db,
+                manager=manager,
+                user=user,
+                container=container,
+                policy_engine=container.policy_engine,
+                audit_sink=container.audit_sink,
+                vault=None,
+            )
+
+        # `state.messages` should now carry the prior user/assistant pair so
+        # the next `Pipeline.run_stream` has memory of the first turn.
+        state = rehydrated.conversation_state
+        assert state is not None
+        contents = [m.get("content") for m in state.messages]
+        assert "hi" in contents
+        assert "hello back" in contents

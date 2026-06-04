@@ -322,3 +322,271 @@ async def test_stream_keepalive_on_idle() -> None:
 
     await asyncio.wait_for(reader(), timeout=1.0)
     assert any(f.startswith(b": keepalive") for f in frames)
+
+
+# ────────────────────────────────────── SessionRegistry LRU + idle ──
+# Phase M.1 — operator-tunable memory bounds. The registry now evicts
+# in two scenarios: a `register()` that would push the size past
+# `max_size`, and the background `_idle_sweep` loop. These tests pin
+# both behaviours so a future refactor can't silently raise the
+# worst-case memory ceiling.
+
+
+@pytest.mark.asyncio
+async def test_registry_lru_evicts_oldest_on_overflow() -> None:
+    reg = SessionRegistry()
+    reg.configure(max_size=2, idle_eviction_s=3600.0)
+
+    rt_a = _make_runtime("a")
+    rt_b = _make_runtime("b")
+    rt_c = _make_runtime("c")
+    await reg.register(rt_a)
+    await reg.register(rt_b)
+    # Touch `a` so `b` becomes the LRU; registering `c` should drop `b`.
+    await reg.get("a")
+    await reg.register(rt_c)
+
+    assert await reg.get("a") is rt_a
+    assert await reg.get("c") is rt_c
+    with pytest.raises(SessionNotFound):
+        await reg.get("b")
+
+
+@pytest.mark.asyncio
+async def test_registry_idle_sweep_evicts_past_window() -> None:
+    reg = SessionRegistry()
+    # Fast sweep + tiny idle window so the test completes in <0.2 s.
+    reg.configure(max_size=10, idle_eviction_s=0.05)
+    reg.sweep_interval_s = 0.02
+
+    rt = _make_runtime("stale")
+    await reg.register(rt)
+    reg.start_sweep()
+    try:
+        # Wait long enough that `now - last_active_at > idle_eviction_s`
+        # and the sweep had at least one tick to evict.
+        await asyncio.sleep(0.2)
+        with pytest.raises(SessionNotFound):
+            await reg.get("stale")
+    finally:
+        await reg.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registry_touch_keeps_active_session_warm() -> None:
+    """Active session bumps `last_active_at` on every `get` — the idle
+    sweep must not evict it even though wall-clock would say it's old."""
+    reg = SessionRegistry()
+    reg.configure(max_size=10, idle_eviction_s=0.1)
+    reg.sweep_interval_s = 0.02
+
+    rt = _make_runtime("warm")
+    await reg.register(rt)
+    reg.start_sweep()
+    try:
+        # Keep touching while the sweep would otherwise evict.
+        for _ in range(5):
+            await asyncio.sleep(0.03)
+            await reg.get("warm")
+        assert await reg.get("warm") is rt
+    finally:
+        await reg.aclose()
+
+
+# ────────────────────────────────────── invoke driver state cap ──
+
+
+@pytest.mark.asyncio
+async def test_drive_pipeline_trims_state_messages_to_cap() -> None:
+    """`_drive_pipeline` must trim `state.messages` from the head so the
+    next `Pipeline.run_stream` doesn't push the model's context window.
+    Mocks the pipeline so the trim is exercised without geny-executor."""
+    from geny_executor.core.state import PipelineState
+
+    from gapt_server.agent.session_registry import _drive_pipeline
+
+    class _CapturePipeline:
+        def __init__(self) -> None:
+            self.seen_message_count: int | None = None
+
+        async def run_stream(self, message: str, *, state):  # type: ignore[no-untyped-def]
+            self.seen_message_count = len(state.messages)
+            if False:  # pragma: no cover — keep the async generator shape
+                yield
+
+    pipe = _CapturePipeline()
+    rt = SessionRuntime(
+        session_id="cap",
+        project_id="p",
+        workspace_id="w",
+        user_id="u",
+        pipeline=pipe,  # type: ignore[arg-type]
+        accumulator=CostAccumulator(session_id="cap"),
+        max_state_messages=4,
+    )
+    # Seed a state with more entries than the cap — `_drive_pipeline`
+    # should drop the head before calling `run_stream`.
+    rt.conversation_state = PipelineState(
+        session_id="cap",
+        messages=[
+            {"role": "user", "content": "old-1"},
+            {"role": "assistant", "content": "old-2"},
+            {"role": "user", "content": "old-3"},
+            {"role": "assistant", "content": "old-4"},
+            {"role": "user", "content": "recent-5"},
+            {"role": "assistant", "content": "recent-6"},
+        ],
+    )
+
+    await _drive_pipeline(rt, "next prompt")
+
+    assert pipe.seen_message_count == 4
+    # The two oldest entries are gone; the most-recent four remain.
+    kept = [m["content"] for m in rt.conversation_state.messages]
+    assert kept == ["old-3", "old-4", "recent-5", "recent-6"]
+
+
+# ──────────────────────────────────── per-invoke overrides + revert ──
+# Phase M.2 — the prior implementation mutated `state.model` which the
+# executor's `_init_state` resets on every `run_stream`, so "switch to
+# opus for one follow-up" never took effect. The new path mutates
+# `pipeline._config.model.*` and snapshots a baseline so `clear=[...]`
+# restores it.
+
+
+class _FakeModelCfg:
+    """Stand-in for `geny_executor.core.config.ModelConfig` — only the
+    attributes the override helper touches."""
+
+    def __init__(self, *, model: str, thinking_enabled: bool, thinking_budget_tokens: int) -> None:
+        self.model = model
+        self.thinking_enabled = thinking_enabled
+        self.thinking_budget_tokens = thinking_budget_tokens
+
+
+class _FakePipelineConfig:
+    def __init__(self, model_cfg: _FakeModelCfg) -> None:
+        self.model = model_cfg
+
+
+class _FakePipeline:
+    """Carries `_config` with the same shape `Pipeline` exposes so the
+    runtime helper can poke at it without instantiating the executor."""
+
+    def __init__(self, *, model: str = "claude-sonnet-4-6", thinking_enabled: bool = False, thinking_budget_tokens: int = 10000) -> None:
+        self._config = _FakePipelineConfig(
+            _FakeModelCfg(
+                model=model,
+                thinking_enabled=thinking_enabled,
+                thinking_budget_tokens=thinking_budget_tokens,
+            )
+        )
+
+
+def _override_runtime(pipeline: _FakePipeline) -> SessionRuntime:
+    return SessionRuntime(
+        session_id="ov",
+        project_id="p",
+        workspace_id="w",
+        user_id="u",
+        pipeline=pipeline,  # type: ignore[arg-type]
+        accumulator=CostAccumulator(session_id="ov"),
+    )
+
+
+def test_apply_per_invoke_overrides_mutates_pipeline_config_not_state() -> None:
+    """`state.model` would be wiped by `_init_state` — the override has
+    to land on `pipeline._config.model.*` to survive. Asserts the new
+    write path."""
+    pipeline = _FakePipeline(model="claude-sonnet-4-6")
+    rt = _override_runtime(pipeline)
+
+    rt.apply_per_invoke_overrides(
+        model="claude-opus-4-7",
+        thinking_enabled=None,
+        thinking_budget_tokens=None,
+        clear=None,
+    )
+
+    assert pipeline._config.model.model == "claude-opus-4-7"
+    assert rt.model_name == "claude-opus-4-7"
+    # Baseline was snapshotted so a later `clear` can restore it.
+    assert rt._baseline_model == "claude-sonnet-4-6"
+
+
+def test_apply_per_invoke_overrides_clear_restores_baseline() -> None:
+    pipeline = _FakePipeline(
+        model="claude-sonnet-4-6", thinking_enabled=False, thinking_budget_tokens=10000
+    )
+    rt = _override_runtime(pipeline)
+
+    # First invoke: override everything.
+    rt.apply_per_invoke_overrides(
+        model="claude-opus-4-7",
+        thinking_enabled=True,
+        thinking_budget_tokens=20000,
+        clear=None,
+    )
+    assert pipeline._config.model.model == "claude-opus-4-7"
+    assert pipeline._config.model.thinking_enabled is True
+    assert pipeline._config.model.thinking_budget_tokens == 20000
+
+    # Second invoke: clear the model + the thinking pair via the alias.
+    rt.apply_per_invoke_overrides(
+        model=None,
+        thinking_enabled=None,
+        thinking_budget_tokens=None,
+        clear=["model", "thinking"],
+    )
+    assert pipeline._config.model.model == "claude-sonnet-4-6"
+    assert pipeline._config.model.thinking_enabled is False
+    assert pipeline._config.model.thinking_budget_tokens == 10000
+    # And `model_name` followed the model field so the pricing fallback
+    # resolves against the manifest value again.
+    assert rt.model_name == "claude-sonnet-4-6"
+
+
+def test_apply_per_invoke_overrides_clear_wins_over_set_in_same_request() -> None:
+    """When both `model` and `clear=["model"]` are passed in one
+    request, clear wins. The UI's reset button shouldn't have to also
+    blank the input field."""
+    pipeline = _FakePipeline(model="claude-sonnet-4-6")
+    rt = _override_runtime(pipeline)
+    # Set first so baseline is captured.
+    rt.apply_per_invoke_overrides(
+        model="claude-opus-4-7", thinking_enabled=None, thinking_budget_tokens=None, clear=None
+    )
+    # Now: try to set haiku AND clear model — clear should win.
+    rt.apply_per_invoke_overrides(
+        model="claude-haiku-4-5",
+        thinking_enabled=None,
+        thinking_budget_tokens=None,
+        clear=["model"],
+    )
+    assert pipeline._config.model.model == "claude-sonnet-4-6"
+
+
+def test_apply_per_invoke_overrides_budget_implies_thinking_enabled() -> None:
+    """Budget > 0 without an explicit `thinking_enabled` flips thinking
+    on — mirrors the manifest-time `apply_overrides` heuristic."""
+    pipeline = _FakePipeline(thinking_enabled=False, thinking_budget_tokens=10000)
+    rt = _override_runtime(pipeline)
+    rt.apply_per_invoke_overrides(
+        model=None,
+        thinking_enabled=None,
+        thinking_budget_tokens=15000,
+        clear=None,
+    )
+    assert pipeline._config.model.thinking_enabled is True
+    assert pipeline._config.model.thinking_budget_tokens == 15000
+
+
+def test_apply_per_invoke_overrides_noop_without_baseline_capture() -> None:
+    """No override + no clear → baseline stays uncaptured so we don't
+    waste a snapshot on every invoke that doesn't change anything."""
+    pipeline = _FakePipeline()
+    rt = _override_runtime(pipeline)
+    rt.apply_per_invoke_overrides(
+        model=None, thinking_enabled=None, thinking_budget_tokens=None, clear=None
+    )
+    assert rt._baseline_captured is False

@@ -60,6 +60,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs (otherwise queued events sit until shutdown).
     if isinstance(container.audit_sink, PostgresAuditSink):
         container.audit_sink.start()
+    # Phase M.1 — start the SessionRegistry idle-sweep loop. Must run
+    # *inside* lifespan (we need a running event loop); the registry
+    # was constructed via `_make_session_registry(settings)` which
+    # already applied the LRU + idle caps from Settings.
+    container.session_registry.start_sweep()
     # Workspaces stuck in `creating` from a previous server life are
     # orphans now — the background clone task that owned them died
     # with that process. Flip them to `failed` so the UI shows the

@@ -165,6 +165,15 @@ class InvokeRequest(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     thinking_enabled: bool | None = None
     thinking_budget_tokens: int | None = Field(default=None, ge=0, le=200_000)
+    # Phase M.2 — revert sentinels. Listing a name in `clear` resets
+    # that field back to the session's manifest baseline (captured at
+    # first override). Recognised names: `"model"`,
+    # `"thinking_enabled"`, `"thinking_budget_tokens"`, and the
+    # convenience alias `"thinking"` (which clears both thinking_*
+    # fields). The chat UI's pill reset button posts the appropriate
+    # name(s) — operators can finally back out of an "I tried opus on
+    # one turn" without starting a fresh session.
+    clear: list[str] | None = Field(default=None, max_length=8)
 
 
 class InvokeResponse(BaseModel):
@@ -285,6 +294,7 @@ def _build_runtime_from_handle(
         accumulator=placeholder_accumulator,
         sandbox=sandbox,
         mode_ref=mode_ref,
+        max_state_messages=container.settings.session_max_messages_in_state,
     )
 
     # Phase D.3 — persist every published event to `session_events`
@@ -434,13 +444,25 @@ async def _runtime_or_rehydrate(
     # step, a server restart turns the chat into amnesia — the agent
     # sees only the new turn even though the user can see the full
     # archive in the UI.
-    event_rows = (
+    #
+    # Phase M.1 — cap the rehydrate row count via Settings. A long-
+    # lived session would otherwise pull thousands of events into
+    # memory on every rehydrate. We fetch the latest N by `seq DESC`
+    # then reverse to ascending order so `build_transcript`'s turn
+    # pairing sees the rows in their natural sequence. The oldest
+    # turns are intentionally dropped — the agent loses very-old
+    # memory but the recent context the user is actually working with
+    # stays intact.
+    rehydrate_limit = container.settings.session_max_rehydrate_events
+    event_rows_desc = (
         await db.execute(
             sa.select(models.SessionEvent)
             .where(models.SessionEvent.session_id == session_id)
-            .order_by(models.SessionEvent.seq.asc())
+            .order_by(models.SessionEvent.seq.desc())
+            .limit(rehydrate_limit)
         )
     ).scalars().all()
+    event_rows = list(reversed(event_rows_desc))
     if event_rows:
         from geny_executor.core.state import PipelineState  # noqa: PLC0415
 
@@ -461,7 +483,12 @@ async def _runtime_or_rehydrate(
                 for r in event_rows
             ],
         )
-        msgs = to_anthropic_messages(transcript)
+        # `session_max_messages_in_state` is an entry count (one user
+        # turn + one assistant turn = 2 entries). `to_anthropic_messages`
+        # caps in turn-pairs, so we halve. Floor at 1 so a single-turn
+        # cap doesn't collapse to zero memory.
+        max_turns = max(1, container.settings.session_max_messages_in_state // 2)
+        msgs = to_anthropic_messages(transcript, max_turns=max_turns)
         if msgs:
             runtime.conversation_state = PipelineState(
                 session_id=session_id,
@@ -745,40 +772,24 @@ async def invoke_session(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
 
-    # Phase L follow-up — per-invoke model + thinking override. The
-    # api stage's `resolve_model_config` reads these straight off
-    # `state` at run time (geny-executor core/stage.py:382-393), so
-    # mutating the runtime's persistent state lets the operator try
-    # opus for one follow-up without starting a fresh session. We
-    # lazy-init the state here for the same reason `_drive_pipeline`
-    # does — keeps test paths that mock the pipeline simple.
-    if (
-        payload.model is not None
-        or payload.thinking_enabled is not None
-        or payload.thinking_budget_tokens is not None
-    ):
-        if runtime.conversation_state is None:
-            from geny_executor.core.state import PipelineState  # noqa: PLC0415
-
-            runtime.conversation_state = PipelineState(
-                session_id=runtime.session_id,
-            )
-        state = runtime.conversation_state
-        if payload.model is not None:
-            state.model = payload.model
-            # Keep the pricing-fallback model in sync with the in-flight
-            # state so `_update_accumulator` resolves the right rate when
-            # the executor reports `cost_usd=0` (Phase I.3 fallback).
-            runtime.model_name = payload.model
-        if payload.thinking_budget_tokens is not None:
-            state.thinking_budget_tokens = payload.thinking_budget_tokens
-        if payload.thinking_enabled is not None:
-            state.thinking_enabled = payload.thinking_enabled
-        elif (payload.thinking_budget_tokens or 0) > 0:
-            # Operator convenience: budget > 0 with no explicit enable
-            # turns thinking on. Same heuristic as `apply_overrides` for
-            # session-create time.
-            state.thinking_enabled = True
+    # Phase M.2 — per-invoke model + thinking override (and revert).
+    # We mutate `pipeline._config.model.*` (NOT `state.*`) because the
+    # executor's `_init_state` calls `_config.apply_to_state(state)`
+    # on every `run_stream`, which overwrites any state-level edit
+    # before the api stage reads it. Pre-M.2 the GAPT code edited
+    # `state.model` and looked like it worked, but the executor was
+    # silently resetting it on the next turn — operators thought "I
+    # switched to opus" while the manifest model kept running.
+    #
+    # The runtime helper also handles `clear=[...]` revert sentinels,
+    # capturing a manifest baseline on the first override request so
+    # a subsequent clear can restore it without a fresh session.
+    runtime.apply_per_invoke_overrides(
+        model=payload.model,
+        thinking_enabled=payload.thinking_enabled,
+        thinking_budget_tokens=payload.thinking_budget_tokens,
+        clear=payload.clear,
+    )
 
     try:
         await runtime.invoke(payload.message, mode=payload.mode)
@@ -819,7 +830,12 @@ async def stream_session(
     # so a fresh tab on an existing session shows the full transcript
     # immediately, not a blank pane waiting for new turns.
     effective_since = since or 0
-    prefix_events = await _full_replay(db, runtime, since=effective_since)
+    prefix_events = await _full_replay(
+        db,
+        runtime,
+        since=effective_since,
+        max_events=container.settings.session_max_stream_replay_events,
+    )
     return StreamingResponse(
         stream_to_async_iter(
             runtime, replay_since=None, prefix_events=prefix_events
@@ -833,7 +849,11 @@ async def stream_session(
 
 
 async def _full_replay(
-    db: AsyncSession, runtime: SessionRuntime, *, since: int
+    db: AsyncSession,
+    runtime: SessionRuntime,
+    *,
+    since: int,
+    max_events: int | None = None,
 ) -> list[SessionEvent]:
     """Combine the in-memory ring buffer with the durable `session_events`
     table to produce the full ordered event list with `seq > since`.
@@ -843,6 +863,14 @@ async def _full_replay(
     published after rehydrate). Returns the same `SessionEvent`
     objects the SSE producer would have yielded from the bus, so the
     `.to_sse()` rendering downstream is identical.
+
+    Phase M.1 — when `max_events` is set, the DB prefix is capped to
+    the most-recent N rows (DESC + LIMIT, then reversed). The in-memory
+    tail is always preserved verbatim — chat clients depend on seeing
+    the freshly-published events of the current turn. The cap drops
+    the oldest persisted events for a session whose history is older
+    than the configured ceiling; the UI's transcript / archive paths
+    remain authoritative for the full history.
     """
     in_memory = await runtime.bus.replay(since)
     needs_db_fill = bool(in_memory) and in_memory[0].seq > since + 1
@@ -861,11 +889,20 @@ async def _full_replay(
             models.SessionEvent.session_id == runtime.session_id,
             models.SessionEvent.seq > since,
         )
-        .order_by(models.SessionEvent.seq.asc())
     )
     if upper is not None:
         stmt = stmt.where(models.SessionEvent.seq <= upper)
-    rows = (await db.execute(stmt)).scalars().all()
+    if max_events is not None:
+        # Newest-first + LIMIT keeps the freshest persisted prefix; we
+        # reverse below before merging with the (already ascending)
+        # in-memory tail so downstream consumers see a single monotonic
+        # seq ordering.
+        stmt = stmt.order_by(models.SessionEvent.seq.desc()).limit(max_events)
+        rows = list((await db.execute(stmt)).scalars().all())
+        rows.reverse()
+    else:
+        stmt = stmt.order_by(models.SessionEvent.seq.asc())
+        rows = list((await db.execute(stmt)).scalars().all())
     db_events = [
         SessionEvent(
             seq=r.seq,
@@ -876,6 +913,77 @@ async def _full_replay(
         for r in rows
     ]
     return db_events + list(in_memory)
+
+
+class OverridePatch(BaseModel):
+    """Phase M.2 — partial override update applied immediately (no
+    LLM call). `clear` lists field names to revert to the manifest
+    baseline; set fields override on next invoke. When neither is
+    set the request is a no-op (returns the runtime's current snapshot)."""
+
+    model: str | None = Field(default=None, max_length=120)
+    thinking_enabled: bool | None = None
+    thinking_budget_tokens: int | None = Field(default=None, ge=0, le=200_000)
+    clear: list[str] | None = Field(default=None, max_length=8)
+
+
+class OverrideSnapshot(BaseModel):
+    """Current resolved values of the per-session overrides. The chat
+    UI reads this after a clear so the pills can sync without
+    inferring."""
+
+    model: str | None
+    thinking_enabled: bool | None
+    thinking_budget_tokens: int | None
+
+
+@by_id.patch(
+    "/{session_id}/overrides",
+    response_model=OverrideSnapshot,
+)
+async def patch_session_overrides(
+    session_id: str,
+    payload: OverridePatch,
+    registry: SessionRegistry = Depends(get_session_registry),  # noqa: B008
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    manager: ProjectAwareSessionManager = Depends(get_session_manager),  # noqa: B008
+    policy_engine: PolicyEngine = Depends(get_policy_engine),  # noqa: B008
+    audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> OverrideSnapshot:
+    """Apply a per-invoke override or revert immediately. Lets the
+    chat UI's pill reset button restore the manifest baseline without
+    waiting for the next user message — important because pre-M.2 a
+    cleared pill silently kept the old override running."""
+    runtime = await _runtime_or_rehydrate(
+        registry=registry, session_id=session_id, db=db, manager=manager,
+        user=user, container=container, policy_engine=policy_engine,
+        audit_sink=audit_sink, vault=vault,
+    )
+    try:
+        await fetch_project_for(db, actor=user, project_id=runtime.project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+
+    runtime.apply_per_invoke_overrides(
+        model=payload.model,
+        thinking_enabled=payload.thinking_enabled,
+        thinking_budget_tokens=payload.thinking_budget_tokens,
+        clear=payload.clear,
+    )
+    cfg = getattr(runtime.pipeline, "_config", None)
+    model_cfg = getattr(cfg, "model", None) if cfg is not None else None
+    if model_cfg is None:
+        return OverrideSnapshot(
+            model=None, thinking_enabled=None, thinking_budget_tokens=None
+        )
+    return OverrideSnapshot(
+        model=getattr(model_cfg, "model", None),
+        thinking_enabled=getattr(model_cfg, "thinking_enabled", None),
+        thinking_budget_tokens=getattr(model_cfg, "thinking_budget_tokens", None),
+    )
 
 
 @by_id.post("/{session_id}/interrupt", response_model=InterruptResponse)

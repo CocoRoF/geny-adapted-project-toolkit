@@ -149,7 +149,7 @@ def build_container(
             session_manager=ProjectAwareSessionManager(
                 env_service=env_service, audit_sink=sink_noop
             ),
-            session_registry=SessionRegistry(),
+            session_registry=_make_session_registry(settings),
             registry=MetricsRegistry(),
             notifications=notifications,
             services=ServiceRegistry(sandbox_manager=ws_sandbox_noop),
@@ -232,6 +232,19 @@ def _discover_host_github_token() -> str | None:
         return None
     token = (result.stdout or "").strip()
     return token or None
+
+
+def _make_session_registry(settings: Settings) -> SessionRegistry:
+    """Construct the in-process `SessionRegistry` with operator-tunable
+    LRU + idle-eviction caps from `Settings`. The background sweep is
+    NOT started here — the lifespan handler calls `start_sweep()` once
+    an event loop is running."""
+    registry = SessionRegistry()
+    registry.configure(
+        max_size=settings.session_runtime_cache_size,
+        idle_eviction_s=float(settings.session_runtime_idle_eviction_s),
+    )
+    return registry
 
 
 def _build_notifications(settings: Settings) -> NotificationService:

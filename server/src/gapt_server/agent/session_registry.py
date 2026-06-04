@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -99,8 +101,130 @@ class SessionRuntime:
     # so test paths that don't go through the real pipeline don't
     # have to construct one.
     conversation_state: PipelineState | None = None
+    # Phase M.1 — wall-clock-monotonic timestamp of last touch (invoke /
+    # stream subscribe / cache hit). The `SessionRegistry` idle sweep
+    # reads this to decide whether the runtime can be evicted. Set
+    # initially to "now" so a freshly-built runtime isn't eligible
+    # for eviction the moment the sweep next runs.
+    last_active_at: float = field(default_factory=time.monotonic)
+    # Phase M.1 — hard cap on `conversation_state.messages` entries.
+    # `_drive_pipeline` trims the head after each `run_stream()` so the
+    # next invoke doesn't push the model's context window. Operator-
+    # tunable via `GAPT_SESSION_MAX_MESSAGES_IN_STATE`. Default mirrors
+    # the Settings default — runtimes built without a container (test
+    # paths) keep the same ceiling so unit tests exercise the trim.
+    max_state_messages: int = 50
+    # Phase M.2 — baseline snapshot of the pipeline's per-session
+    # manifest-derived model + thinking config, captured the first
+    # time a per-invoke override fires. The invoke handler mutates
+    # `pipeline._config.model.*` (NOT `state.*` — that gets wiped by
+    # `_init_state` on every `run_stream`), so reverting an override
+    # means restoring from this baseline. `None` while uncaptured.
+    _baseline_model: str | None = None
+    _baseline_thinking_enabled: bool | None = None
+    _baseline_thinking_budget_tokens: int | None = None
+    _baseline_captured: bool = False
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def touch(self) -> None:
+        """Reset the idle clock — called on every meaningful access
+        (`SessionRegistry.get` / `register`)."""
+        self.last_active_at = time.monotonic()
+
+    def _capture_baseline(self) -> None:
+        """Snapshot the pipeline's manifest-derived model + thinking
+        defaults so a future ``clear`` request can restore them.
+        Lazy + idempotent — invoked the first time an override request
+        lands. Silently no-ops when the pipeline lacks the expected
+        executor shape (test stubs); the override path then degrades
+        to "no baseline available" and `clear` is a no-op."""
+        if self._baseline_captured:
+            return
+        cfg = getattr(self.pipeline, "_config", None)
+        model_cfg = getattr(cfg, "model", None) if cfg is not None else None
+        if model_cfg is not None:
+            self._baseline_model = getattr(model_cfg, "model", None)
+            self._baseline_thinking_enabled = getattr(
+                model_cfg, "thinking_enabled", None
+            )
+            self._baseline_thinking_budget_tokens = getattr(
+                model_cfg, "thinking_budget_tokens", None
+            )
+        self._baseline_captured = True
+
+    def apply_per_invoke_overrides(
+        self,
+        *,
+        model: str | None,
+        thinking_enabled: bool | None,
+        thinking_budget_tokens: int | None,
+        clear: list[str] | None,
+    ) -> None:
+        """Mutate the pipeline's `_config.model.*` so the next
+        `run_stream` picks up the override (state-level mutation is
+        wiped by `_init_state`'s `apply_to_state` call). Values land
+        on the per-session pipeline and persist across invokes until
+        another override or a `clear` request resets them.
+
+        `clear` lists override names ("model", "thinking_enabled",
+        "thinking_budget_tokens", or "thinking" as a shortcut for the
+        two thinking_* fields) to revert to the manifest baseline.
+        Reset overrides win over set values in the same request — the
+        UI's "clear" button shouldn't have to also blank the input.
+        """
+        any_override = (
+            model is not None
+            or thinking_enabled is not None
+            or thinking_budget_tokens is not None
+            or bool(clear)
+        )
+        if not any_override:
+            return
+        self._capture_baseline()
+        cfg = getattr(self.pipeline, "_config", None)
+        model_cfg = getattr(cfg, "model", None) if cfg is not None else None
+        if model_cfg is None:
+            # Test stub or unexpected pipeline shape — fall through to
+            # the legacy `state.model` mutation path so existing tests
+            # that assert on state continue to pass. Real pipelines
+            # always carry `_config.model`.
+            return
+        clear_set = {c.strip().lower() for c in (clear or []) if isinstance(c, str)}
+        # "thinking" is a UX shortcut — most chat surfaces present
+        # thinking as a single toggle + slider pair, not two independent
+        # fields, so a single "clear thinking" request resets both.
+        if "thinking" in clear_set:
+            clear_set.update({"thinking_enabled", "thinking_budget_tokens"})
+
+        if "model" in clear_set:
+            if self._baseline_model is not None:
+                model_cfg.model = self._baseline_model
+                self.model_name = self._baseline_model
+        elif model is not None:
+            model_cfg.model = model
+            self.model_name = model
+
+        if "thinking_enabled" in clear_set:
+            if self._baseline_thinking_enabled is not None:
+                model_cfg.thinking_enabled = self._baseline_thinking_enabled
+        elif thinking_enabled is not None:
+            model_cfg.thinking_enabled = thinking_enabled
+
+        if "thinking_budget_tokens" in clear_set:
+            if self._baseline_thinking_budget_tokens is not None:
+                model_cfg.thinking_budget_tokens = self._baseline_thinking_budget_tokens
+        elif thinking_budget_tokens is not None:
+            model_cfg.thinking_budget_tokens = thinking_budget_tokens
+            # Operator convenience: budget > 0 + no explicit enable
+            # flips thinking on. Same heuristic the manifest-time
+            # `apply_overrides` uses.
+            if (
+                thinking_enabled is None
+                and "thinking_enabled" not in clear_set
+                and thinking_budget_tokens > 0
+            ):
+                model_cfg.thinking_enabled = True
 
     @property
     def is_running(self) -> bool:
@@ -125,6 +249,10 @@ class SessionRuntime:
         sees the new mode on the first tool call. Unknown values are
         ignored (default mode stays).
         """
+        # Phase M.1 — every invoke counts as activity. The registry's
+        # idle sweep reads `last_active_at` so a chatting user doesn't
+        # have their runtime evicted out from under the next turn.
+        self.touch()
         if mode is not None and self.mode_ref is not None and mode in ("plan", "act"):
             self.mode_ref.mode = mode
         async with self._lock:
@@ -258,6 +386,24 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
 
         runtime.conversation_state = PipelineState(
             session_id=runtime.session_id,
+        )
+
+    # Phase M.1 — trim `state.messages` BEFORE the run so the executor
+    # builds its context window against a bounded array. We trim from
+    # the head (oldest first) so the most-recent turns the user is
+    # actively referring to are preserved. Stage 1 (input) will append
+    # this turn's user message after the trim, so the cap applies to
+    # the prior history we carry forward.
+    state = runtime.conversation_state
+    cap = max(1, runtime.max_state_messages)
+    if state is not None and len(state.messages) > cap:
+        overflow = len(state.messages) - cap
+        state.messages = state.messages[overflow:]
+        logger.info(
+            "session.state.trimmed",
+            session_id=runtime.session_id,
+            dropped=overflow,
+            kept=len(state.messages),
         )
 
     async for ev in runtime.pipeline.run_stream(
@@ -551,22 +697,96 @@ def _map_pipeline_event(  # noqa: PLR0911 — 7-way taxonomy reads cleaner as st
 
 @dataclass
 class SessionRegistry:
-    """Stateless-ish lookup by session_id. Lock guards the dict; each
-    runtime owns its own per-session lock."""
+    """Stateless-ish lookup by session_id with LRU + idle eviction.
 
-    _entries: dict[str, SessionRuntime] = field(default_factory=dict)
+    Phase M.1 — the previous version held every rehydrated runtime
+    forever; a 24h-uptime server accumulated entries indefinitely.
+    The new contract:
+
+    1. The entries table is an `OrderedDict` and `get()` moves the
+       hit to the most-recently-used end. `register()` does the same
+       for fresh inserts.
+    2. When `register()` would push the entry count above
+       `max_size`, the oldest is popped + `aclose()`-ed BEFORE the
+       new entry lands. The pop happens under the lock; the close
+       is awaited *outside* the lock so a slow aclose doesn't block
+       other sessions.
+    3. The `_idle_sweep` loop runs every `sweep_interval_s` seconds
+       and evicts any runtime whose `last_active_at` is older than
+       `idle_eviction_s`. Active sessions bump `touch()` on every
+       invoke / SSE subscribe so they never starve.
+
+    Subsequent activity on an evicted session triggers the normal
+    rehydrate-from-DB path (Phase L.1 contract) — no memory loss,
+    just a small extra latency on the first event.
+    """
+
+    _entries: OrderedDict[str, SessionRuntime] = field(
+        default_factory=OrderedDict
+    )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Defaults match `Settings.session_runtime_cache_size` /
+    # `session_runtime_idle_eviction_s`; the container override
+    # plumbs the operator-tuned values through at startup.
+    max_size: int = 50
+    idle_eviction_s: float = 1800.0
+    # How often the background sweep checks for idle eviction. Kept
+    # tight (60s) so idle eviction fires close to its nominal time;
+    # the work itself is cheap (one timestamp compare per entry).
+    sweep_interval_s: float = 60.0
+    _sweep_task: asyncio.Task[None] | None = field(default=None)
+
+    def configure(
+        self,
+        *,
+        max_size: int,
+        idle_eviction_s: float,
+    ) -> None:
+        """Called by the container builder once `Settings` is loaded
+        so the registry honours operator-tuned caps rather than the
+        dataclass defaults."""
+        self.max_size = max(1, max_size)
+        self.idle_eviction_s = float(idle_eviction_s)
+
+    def start_sweep(self) -> None:
+        """Spawn the idle-sweep background task. Called from
+        `app.lifespan` after the container is wired so the loop runs
+        for the server's lifetime. Safe to call twice — a second
+        call no-ops if a task is already alive."""
+        if self._sweep_task is not None and not self._sweep_task.done():
+            return
+        self._sweep_task = asyncio.create_task(
+            self._idle_sweep(), name="session-registry-sweep"
+        )
 
     async def register(self, runtime: SessionRuntime) -> None:
+        evicted: SessionRuntime | None = None
         async with self._lock:
+            # Move-to-end on re-register so the entry counts as fresh.
+            if runtime.session_id in self._entries:
+                self._entries.move_to_end(runtime.session_id)
             self._entries[runtime.session_id] = runtime
+            runtime.touch()
+            if len(self._entries) > self.max_size:
+                # popitem(last=False) returns + removes the LRU entry.
+                _evicted_id, evicted = self._entries.popitem(last=False)
+        if evicted is not None:
+            logger.info(
+                "session.registry.lru_evict",
+                session_id=evicted.session_id,
+                reason="cache_full",
+            )
+            await evicted.aclose()
 
     async def get(self, session_id: str) -> SessionRuntime:
         async with self._lock:
             try:
-                return self._entries[session_id]
+                rt = self._entries[session_id]
             except KeyError as exc:
                 raise SessionNotFound(session_id) from exc
+            self._entries.move_to_end(session_id)
+            rt.touch()
+            return rt
 
     async def pop(self, session_id: str) -> SessionRuntime | None:
         async with self._lock:
@@ -590,7 +810,41 @@ class SessionRegistry:
             await rt.aclose()
         return len(to_drop)
 
+    async def _idle_sweep(self) -> None:
+        """Background loop — drops runtimes idle past the eviction
+        window. Iterates a snapshot list so we can `aclose` outside
+        the registry lock (same pattern as `invalidate_user`)."""
+        while True:
+            try:
+                await asyncio.sleep(self.sweep_interval_s)
+            except asyncio.CancelledError:
+                return
+            try:
+                now = time.monotonic()
+                async with self._lock:
+                    stale = [
+                        rt
+                        for rt in self._entries.values()
+                        if now - rt.last_active_at > self.idle_eviction_s
+                    ]
+                    for rt in stale:
+                        self._entries.pop(rt.session_id, None)
+                for rt in stale:
+                    logger.info(
+                        "session.registry.idle_evict",
+                        session_id=rt.session_id,
+                        idle_s=int(now - rt.last_active_at),
+                    )
+                    await rt.aclose()
+            except Exception:  # noqa: BLE001 — sweep is best-effort
+                logger.exception("session.registry.sweep_crashed")
+
     async def aclose(self) -> None:
+        if self._sweep_task is not None:
+            self._sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sweep_task
+            self._sweep_task = None
         async with self._lock:
             runtimes = list(self._entries.values())
             self._entries.clear()
@@ -662,6 +916,9 @@ async def stream_to_async_iter(
         for past in await runtime.bus.replay(replay_since):
             yield past.to_sse()
 
+    # Phase M.1 — SSE subscribe counts as activity. An open chat
+    # panel keeps the runtime warm even if no new invokes are firing.
+    runtime.touch()
     queue = await runtime.bus.subscribe()
     try:
         while True:

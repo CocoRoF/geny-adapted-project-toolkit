@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "@/api/client";
+import { apiFetch, apiGet, apiPost } from "@/api/client";
 
 export type AgentSessionStatus = "active" | "stale_idle" | "stale_compact" | "archived";
 
@@ -128,12 +128,22 @@ export const getSession = (sessionId: string): Promise<SessionResponse> =>
 export type ChatMode = "plan" | "act";
 
 export interface InvokeOverrides {
-  /** Phase L follow-up — per-invoke model swap. Mutates
-   *  `state.model` on the runtime so the api stage's
-   *  `resolve_model_config` picks it up for this and future turns. */
+  /** Phase M.2 — per-invoke model swap. The server mutates the
+   *  pipeline's `_config.model.*` (NOT `state.*` — that gets wiped by
+   *  the executor's `_init_state` on every run). Pre-M.2 the server
+   *  edited `state.model` and the override appeared to work but the
+   *  manifest model silently kept running; the contract is now
+   *  durable until the next invoke or a `clear`. */
   model?: string | null;
   thinking_enabled?: boolean | null;
   thinking_budget_tokens?: number | null;
+  /** Names of overrides to revert to the manifest baseline (captured
+   *  at first override). Recognised: `"model"`, `"thinking_enabled"`,
+   *  `"thinking_budget_tokens"`, plus the alias `"thinking"` which
+   *  clears both thinking_* fields at once. Reset wins over a set
+   *  value in the same request — the UI's reset button doesn't have
+   *  to also blank the input. */
+  clear?: Array<"model" | "thinking" | "thinking_enabled" | "thinking_budget_tokens"> | null;
 }
 
 export const invokeSession = (
@@ -152,12 +162,44 @@ export const invokeSession = (
     ...(overrides.thinking_budget_tokens != null
       ? { thinking_budget_tokens: overrides.thinking_budget_tokens }
       : {}),
+    ...(overrides.clear && overrides.clear.length > 0
+      ? { clear: overrides.clear }
+      : {}),
   });
 
 export const interruptSession = (
   sessionId: string,
 ): Promise<{ session_id: string; cancelled: boolean }> =>
   apiPost<{ session_id: string; cancelled: boolean }>(`/_gapt/api/sessions/${sessionId}/interrupt`);
+
+/** Phase M.2 — current resolved values of the per-session overrides.
+ *  Returned by `patchSessionOverrides` so the chat UI can sync its
+ *  pills after a clear without inferring. */
+export interface OverrideSnapshot {
+  model: string | null;
+  thinking_enabled: boolean | null;
+  thinking_budget_tokens: number | null;
+}
+
+/** Phase M.2 — apply a per-session override or revert *immediately*
+ *  (no LLM call). The chat panel's pill reset button posts
+ *  `clear: ["model"]` etc. so the manifest baseline takes effect on
+ *  the *next* turn without waiting for a user message. */
+export const patchSessionOverrides = (
+  sessionId: string,
+  patch: InvokeOverrides,
+): Promise<OverrideSnapshot> => {
+  const body: Record<string, unknown> = {};
+  if (patch.model != null) body.model = patch.model;
+  if (patch.thinking_enabled != null) body.thinking_enabled = patch.thinking_enabled;
+  if (patch.thinking_budget_tokens != null)
+    body.thinking_budget_tokens = patch.thinking_budget_tokens;
+  if (patch.clear && patch.clear.length > 0) body.clear = patch.clear;
+  return apiFetch<OverrideSnapshot>(`/_gapt/api/sessions/${sessionId}/overrides`, {
+    method: "PATCH",
+    json: body,
+  });
+};
 
 export const replaySessionMessages = (
   sessionId: string,

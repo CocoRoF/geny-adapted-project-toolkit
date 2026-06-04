@@ -149,6 +149,7 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
         pipeline=handle.pipeline,
         accumulator=placeholder,
         sandbox=sandbox,
+        max_state_messages=container.settings.session_max_messages_in_state,
     )
 
     _last = {"input": 0, "output": 0, "cost": 0.0}

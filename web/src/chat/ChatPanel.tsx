@@ -11,6 +11,7 @@ import {
   interruptSession,
   invokeSession,
   listSessions,
+  patchSessionOverrides,
 } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
 import { CostModal } from "@/chat/CostModal";
@@ -271,8 +272,20 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       setModelOverride(value);
       persistModel(projectId, value);
       setModelMenuOpen(false);
+      // Phase M.2 — clear → fire an immediate revert so the pill's
+      // visual state matches the runtime. Without this, picking
+      // "manifest default" mid-session silently left the previous
+      // override in place until the next user message — and even then
+      // the override only stuck because we *re-sent* it; clearing
+      // never reverted.
+      if (value === null && session) {
+        void patchSessionOverrides(session.id, { clear: ["model"] }).catch(() => {
+          // best-effort — the next invoke also carries the clear and
+          // the server is idempotent on already-baseline values.
+        });
+      }
     },
-    [projectId],
+    [projectId, session],
   );
 
   // Phase L.4 — pick a thinking budget. null = inherit (manifest).
@@ -281,8 +294,13 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       setThinkingBudget(budget);
       persistThinking(projectId, budget);
       setThinkingMenuOpen(false);
+      if (budget === null && session) {
+        void patchSessionOverrides(session.id, { clear: ["thinking"] }).catch(() => {
+          // best-effort, same rationale as the model branch above.
+        });
+      }
     },
-    [projectId],
+    [projectId, session],
   );
 
   // Phase L.3 — switch the attached session. Clears optimistic user
