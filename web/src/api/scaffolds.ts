@@ -72,3 +72,18 @@ export const createProjectFromScaffold = (
     method: "POST",
     json: payload,
   });
+
+/** Phase N.2.7 — surface where the active GitHub token comes from
+ *  (vault vs `gh auth token` host fallback vs none) so the operator
+ *  doesn't get a silent "Not set but scaffold works" surprise. */
+export interface TokenStatus {
+  source: "vault" | "host" | "missing";
+  scope_ok: boolean;
+  scopes: string[];
+  github_user: string | null;
+  is_classic_pat: boolean;
+  reason: string | null;
+}
+
+export const getScaffoldTokenStatus = (): Promise<TokenStatus> =>
+  apiGet<TokenStatus>("/_gapt/api/scaffolds/token-status");

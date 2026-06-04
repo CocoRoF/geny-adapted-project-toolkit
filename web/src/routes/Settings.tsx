@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client";
 import { diagnoseSubdomainMode } from "@/api/environments";
 import { type ManifestSummary, listManifests } from "@/api/manifests";
 import { type GpusResponse, getGpuInfo } from "@/api/performance";
+import { type TokenStatus, getScaffoldTokenStatus } from "@/api/scaffolds";
 import {
   type CloudflareConfig,
   type CloudflareConfigResponse,
@@ -226,6 +227,11 @@ export function Settings() {
               spec={spec}
               existing={byKey.get(spec.key) ?? null}
               onChanged={refresh}
+              footer={
+                spec.key === "github_token" ? (
+                  <GithubTokenStatusPanel refreshTrigger={byKey.size} />
+                ) : null
+              }
             />
           ))
         )}
@@ -238,10 +244,16 @@ function SecretRow({
   spec,
   existing,
   onChanged,
+  footer,
 }: {
   spec: SecretSpec;
   existing: SecretView | null;
   onChanged: () => Promise<void>;
+  /** Phase N.2.7 — optional extra panel rendered at the bottom of the
+   *  card content, INSIDE the same chrome as the secret input. Used
+   *  for the github_token resolved-source status block; nothing else
+   *  needs it today. */
+  footer?: React.ReactNode;
 }) {
   const [value, setValue] = useState("");
   const [reveal, setReveal] = useState(false);
@@ -336,6 +348,7 @@ function SecretRow({
               autoComplete="off"
               spellCheck={false}
               disabled={busy}
+              className="flex-1"
             />
             <Button
               variant="ghost"
@@ -351,19 +364,20 @@ function SecretRow({
                 <X className="h-4 w-4" />
               </Button>
             ) : null}
+            <Button onClick={save} disabled={busy || value.trim() === ""}>
+              {busy ? "Saving…" : configured ? "Rotate" : "Save"}
+            </Button>
           </div>
         </Field>
         {err ? <p className="text-[12px] text-danger">{err}</p> : null}
-        <div className="flex items-center justify-between">
+        {configured && existing ? (
           <p className="text-[11px] text-fg-subtle">
-            {configured && existing
-              ? `Last updated ${formatRelative(existing.rotated_at ?? existing.created_at)}`
-              : " "}
+            Last updated {formatRelative(existing.rotated_at ?? existing.created_at)}
           </p>
-          <Button onClick={save} disabled={busy || value.trim() === ""}>
-            {busy ? "Saving…" : configured ? "Rotate" : "Save"}
-          </Button>
-        </div>
+        ) : null}
+        {/* Phase N.2.7 — Save moved up into the input row; the
+            "Last updated" line above stays as a subtle stamp. */}
+        {footer}
       </CardContent>
       <ConfirmDialog
         open={confirmDelete}
@@ -2277,5 +2291,134 @@ function WorkspaceGpuCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Phase N.2.7 — clarifies which GitHub token the scaffold flow will
+ *  use right now. Pre-N.2.7 the "Not set" badge above could be true
+ *  while the scaffold flow still worked silently via `gh auth token`
+ *  host fallback — operators had no way to tell. This panel calls
+ *  `GET /scaffolds/token-status` and renders the resolved source +
+ *  GitHub login + scope check below the input field.
+ *
+ *  Re-fetched whenever `refreshTrigger` changes (Settings page passes
+ *  the secrets-list size, which bumps after a Save). */
+function GithubTokenStatusPanel({ refreshTrigger }: { refreshTrigger: number }) {
+  const [status, setStatus] = useState<TokenStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const s = await getScaffoldTokenStatus();
+      setStatus(s);
+    } catch (e: unknown) {
+      setErr(
+        e instanceof ApiError
+          ? `${e.code}: ${e.reason}`
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload, refreshTrigger]);
+
+  if (loading && !status) {
+    return (
+      <div className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-[11.5px] text-fg-subtle">
+        Resolving active token…
+      </div>
+    );
+  }
+  if (err) {
+    return (
+      <div className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-[11.5px] text-fg-muted">
+        Status check failed: {err}
+      </div>
+    );
+  }
+  if (!status) return null;
+
+  const sourceLabel: Record<TokenStatus["source"], string> = {
+    vault: "Vault (saved above)",
+    host: "Host fallback (gh auth token / GH_TOKEN env)",
+    missing: "Not configured",
+  };
+
+  // Status pill — single small badge instead of a giant tinted panel.
+  // The chrome around the dl is neutral; only the badge carries colour.
+  const badge =
+    status.source === "missing" ? (
+      <Badge tone="danger" className="gap-1">
+        <X className="h-3 w-3" />
+        Missing
+      </Badge>
+    ) : status.scope_ok ? (
+      <Badge tone="success" className="gap-1">
+        <CheckCircle2 className="h-3 w-3" />
+        Ready
+      </Badge>
+    ) : (
+      <Badge tone="warn" className="gap-1">
+        <AlertTriangle className="h-3 w-3" />
+        Needs attention
+      </Badge>
+    );
+
+  return (
+    <div className="rounded-md border border-border bg-bg-subtle">
+      {/* Header row — neutral, like the rest of Settings. */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <span className="text-[11.5px] font-medium text-fg">Active token</span>
+        {badge}
+        <button
+          type="button"
+          onClick={() => void reload()}
+          disabled={loading}
+          title="Refresh"
+          className="ml-auto grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-bg hover:text-fg disabled:opacity-50"
+        >
+          <RefreshCw
+            className={loading ? "h-3 w-3 animate-spin" : "h-3 w-3"}
+          />
+        </button>
+      </div>
+      {/* Body — definition list, same monospace + muted style as
+          `key_name:` above. Single column for narrow cards. */}
+      <dl className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11.5px]">
+        <dt className="text-fg-subtle">Source</dt>
+        <dd className="text-fg">{sourceLabel[status.source]}</dd>
+        {status.github_user ? (
+          <>
+            <dt className="text-fg-subtle">Account</dt>
+            <dd className="font-mono text-fg">@{status.github_user}</dd>
+          </>
+        ) : null}
+        {status.scopes.length > 0 ? (
+          <>
+            <dt className="text-fg-subtle">Scopes</dt>
+            <dd className="font-mono text-fg-muted">
+              {status.scopes.join(", ")}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+      {(status.source === "host" || status.reason) ? (
+        <p className="border-t border-border px-3 py-2 text-[10.5px] text-fg-subtle">
+          {status.source === "host" && !status.reason
+            ? "Saving a PAT above will take precedence over this host fallback."
+            : status.reason}
+        </p>
+      ) : null}
+    </div>
   );
 }

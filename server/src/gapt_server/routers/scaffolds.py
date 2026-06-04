@@ -63,6 +63,140 @@ async def list_scaffolds(
     return {"presets": [p.to_summary_dict() for p in all_presets()]}
 
 
+# ──────────────────────────────────────────────── token status ──
+
+
+class TokenStatusResponse(BaseModel):
+    """Tells the Credentials UI which token (if any) the scaffold flow
+    will use right now.
+
+    Three sources are possible:
+      * ``vault``  — the operator saved a PAT in Settings → Credentials.
+      * ``host``   — the server discovered a token at boot from
+                     ``GAPT_HOST_GITHUB_TOKEN`` / ``GH_TOKEN`` /
+                     ``GITHUB_TOKEN`` / ``gh auth token`` (in that order).
+      * ``missing``— neither path produced a token; scaffold create will
+                     return 412 until the operator saves one.
+
+    The UI surfaces this so "I set up nothing but it works" — the host
+    fallback — isn't a silent surprise.
+    """
+
+    source: Literal["vault", "host", "missing"]
+    scope_ok: bool
+    scopes: list[str]
+    github_user: str | None
+    is_classic_pat: bool
+    reason: str | None = None
+
+
+@router.get("/token-status", response_model=TokenStatusResponse)
+async def get_token_status(
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    vault: SecretVault = Depends(get_vault),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> TokenStatusResponse:
+    """Report which token (vault / host / none) is active for the
+    scaffold flow, plus GitHub login + scopes if reachable.
+
+    Read-only — no audit row + no token written anywhere; the vault
+    read itself does emit a ``secret.read`` audit (acceptable since
+    the operator opened the Credentials page on purpose).
+    """
+    # Figure out the SOURCE first by checking the vault directly. If a
+    # vault entry exists, that's what `resolve_github_token` will pick.
+    vault_secret_present = False
+    try:
+        metadata = await vault.list(db, scope=enums.SecretOwnerScope.SYSTEM)
+        vault_secret_present = any(
+            md.key_name == "github_token" for md in metadata
+        )
+    except Exception:  # noqa: BLE001
+        vault_secret_present = False
+
+    host_token_present = bool(
+        container.host_github_token and container.host_github_token.strip()
+    )
+
+    if vault_secret_present:
+        source: Literal["vault", "host", "missing"] = "vault"
+    elif host_token_present:
+        source = "host"
+    else:
+        return TokenStatusResponse(
+            source="missing",
+            scope_ok=False,
+            scopes=[],
+            github_user=None,
+            is_classic_pat=False,
+            reason=(
+                "No GitHub token configured. Save a Personal Access Token "
+                "above, or set GAPT_HOST_GITHUB_TOKEN / log in with `gh auth login`."
+            ),
+        )
+
+    # Actually resolve the token (same path the create endpoint takes)
+    # so we exercise the real chain.
+    try:
+        token = await resolve_github_token(
+            db=db,
+            vault=vault,
+            actor_id=user.id,
+            fallback=container.host_github_token,
+            purpose="scaffold.token_status",
+        )
+    except ScaffoldError as exc:
+        return TokenStatusResponse(
+            source=source,
+            scope_ok=False,
+            scopes=[],
+            github_user=None,
+            is_classic_pat=False,
+            reason=exc.reason,
+        )
+
+    # Probe GitHub for scopes + login.
+    try:
+        async with GithubClient(token) as gh:
+            scopes_set = await gh.get_scopes()
+            user_info = await gh.get_user()
+    except ScaffoldError as exc:
+        return TokenStatusResponse(
+            source=source,
+            scope_ok=False,
+            scopes=[],
+            github_user=None,
+            is_classic_pat=False,
+            reason=exc.reason,
+        )
+
+    is_classic = bool(scopes_set)  # fine-grained PATs have no X-OAuth-Scopes header
+    scope_ok = is_classic and _scope_ok(scopes_set)
+    login = str(user_info.get("login") or "") or None
+
+    reason: str | None = None
+    if not is_classic:
+        reason = (
+            "Fine-grained PAT detected — v1 needs a classic PAT with the `repo` scope. "
+            "Re-issue at https://github.com/settings/tokens (Classic)."
+        )
+    elif not scope_ok:
+        reason = (
+            f"Token is missing the required scope. Needs `repo` or `public_repo`; "
+            f"has {sorted(scopes_set)}."
+        )
+
+    return TokenStatusResponse(
+        source=source,
+        scope_ok=scope_ok,
+        scopes=sorted(scopes_set),
+        github_user=login,
+        is_classic_pat=is_classic,
+        reason=reason,
+    )
+
+
 # ────────────────────────────────────────────────── create ──
 
 
