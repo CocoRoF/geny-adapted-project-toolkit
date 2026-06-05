@@ -4,7 +4,12 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/ui/cn";
 
 const badge = cva(
-  "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+  // `whitespace-nowrap` keeps the badge contents on a single line so a
+  // narrow parent (e.g. ToolCallCard header in a slim chat panel)
+  // doesn't break "성공" into two stacked chars. Combine with
+  // `shrink-0` at the call site to also prevent the badge itself from
+  // being compressed.
+  "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium",
   {
     variants: {
       tone: {

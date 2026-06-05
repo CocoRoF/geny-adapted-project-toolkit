@@ -307,13 +307,27 @@ class SessionRuntime:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
-    async def interrupt(self) -> bool:
+    async def interrupt(self, *, wait: bool = False) -> bool:
         """Cancel the running invoke task if any. Returns True when an
-        active task was cancelled."""
+        active task was cancelled.
+
+        Phase N.2.7 — when ``wait=True``, blocks until the cancelled
+        task's lifecycle handler has emitted its terminal ERROR/DONE
+        frame and the bus is settled. Used by the route layer so a
+        subsequent ``/invoke`` retry never races the cleanup and gets
+        a stale 409 ``session.already_invoking``. Default stays
+        ``False`` for legacy callers that fire-and-forget."""
         async with self._lock:
             if not self.is_running or self._task is None:
                 return False
             self._task.cancel()
+            task_ref = self._task
+        if wait:
+            # `wait_done` already swallows CancelledError; calling it
+            # after dropping the lock so a slow finally-block on the
+            # cancelled task doesn't hold up another runtime caller.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task_ref
         return True
 
     async def aclose(self) -> None:

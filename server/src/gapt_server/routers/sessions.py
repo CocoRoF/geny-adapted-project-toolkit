@@ -1022,7 +1022,10 @@ async def interrupt_session(
         await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    cancelled = await runtime.interrupt()
+    # Phase N.2.7 — wait for the task's terminal frame so a subsequent
+    # /invoke from the same operator (e.g. "take over from another PC")
+    # doesn't race the cleanup and get a stale `session.already_invoking`.
+    cancelled = await runtime.interrupt(wait=True)
     return InterruptResponse(session_id=session_id, cancelled=cancelled)
 
 

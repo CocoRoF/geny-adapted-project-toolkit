@@ -85,14 +85,25 @@ async def _read_github_token(
       1. Project's vault-bound secret (`git_auth_secret_ref`). Per-
          project token, set by the operator in Settings + bound at
          project create / edit time.
-      2. Host's GitHub credentials, discovered at server startup
-         via `gh auth token` / `GH_TOKEN` / etc. Lets a host where
-         `gh` is already logged-in clone + fetch + push private
-         repos without the user having to copy a token into vault.
+      2. SYSTEM-scope vault entry with ``key_name="github_token"``
+         (Settings → Credentials → GitHub Personal Access Token).
+         This is the same chain the scaffold flow uses, so a token
+         saved once in Settings works for both "create new repo"
+         AND "push branches to existing repos" — no per-project
+         binding needed.
+      3. Host's GitHub credentials, discovered at server startup
+         via ``gh auth token`` / ``GH_TOKEN`` / etc.
 
-    Returns None when neither is available — push/PR endpoints
-    translate that into a clear 412 with operator guidance.
+    Returns None when none of the above produce a token — push/PR
+    endpoints translate that into a clear 412 with operator guidance.
+
+    Phase N.2.7 fix — step 2 used to be missing entirely; scaffold
+    saved tokens to system-vault but git ops only checked
+    project-specific binding + host fallback, so a freshly
+    scaffolded project couldn't push even though Settings had the
+    token. The chain is now consistent with the scaffold side.
     """
+    # 1. Per-project binding wins when explicitly set.
     project = (
         await db.execute(select(models.Project).where(models.Project.id == project_id))
     ).scalar_one_or_none()
@@ -107,10 +118,29 @@ async def _read_github_token(
             if token:
                 return token
         except (SecretVaultError, Exception):
-            # Fall through to host fallback — the operator might
-            # have a stale ref to a deleted secret, that shouldn't
-            # block git ops if the host token is fine.
+            # Stale ref to a deleted secret shouldn't block git ops if
+            # the SYSTEM-scope entry or host fallback would work.
             pass
+
+    # 2. SYSTEM-scope `github_token` (Settings → Credentials). Same
+    #    lookup the scaffold pipeline uses, so the two paths agree.
+    try:
+        metadata = await vault.list(db, scope=enums.SecretOwnerScope.SYSTEM)
+        for md in metadata:
+            if md.key_name != "github_token":
+                continue
+            try:
+                token = await vault.read(
+                    db, secret_id=md.id, purpose="workspace.git", actor_id=actor_id
+                )
+                if token and token.strip():
+                    return token.strip()
+            except (SecretVaultError, Exception):
+                continue
+    except (SecretVaultError, Exception):
+        pass
+
+    # 3. Host fallback (gh auth token / env).
     if container is not None and container.host_github_token:
         return container.host_github_token
     return None

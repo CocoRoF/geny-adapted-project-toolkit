@@ -93,8 +93,14 @@ export function TerminalPanel({ workspaceId }: Props) {
 
       // Build the URL. EventSource doesn't work for WS so we go through
       // the same proxied origin. `ws(s):` scheme matches the page.
+      //
+      // FIX: every other GAPT route is at `/_gapt/api/...`; the
+      // terminal endpoint also mounts at `prefix="/_gapt/api/workspaces"`.
+      // Pre-fix the URL was missing the `_gapt` prefix, so every
+      // WebSocket upgrade got a 404 and the panel sat in "Connection
+      // closed. Reconnecting…" forever.
       const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-      const url = `${scheme}//${location.host}/api/workspaces/${workspaceId}/terminal?rows=${term.rows}&cols=${term.cols}`;
+      const url = `${scheme}//${location.host}/_gapt/api/workspaces/${workspaceId}/terminal?rows=${term.rows}&cols=${term.cols}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
       setState("connecting");

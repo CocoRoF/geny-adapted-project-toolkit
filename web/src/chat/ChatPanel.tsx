@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown, Download } from "lucide-react";
+import { AlertTriangle, Bot, ChevronDown, Download, Loader2 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -176,6 +176,19 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Phase N.2.7 — cross-device handoff state. When the user sends a
+  // message on a session that's already mid-invoke on another tab/PC,
+  // the server returns `session.already_invoking` (409). Pre-fix that
+  // landed as a raw red error banner with no recovery path. Now we
+  // stash the failed payload + the echo seq so we can either retry
+  // after an explicit interrupt ("강제로 이어받기") or roll back the
+  // optimistic user bubble.
+  const [staleInvoke, setStaleInvoke] = useState<{
+    message: string;
+    mode: ChatMode;
+    overrideBody: InvokeOverrides;
+    echoSeq: number;
+  } | null>(null);
   const [mode, setMode] = useState<ChatMode>("act");
   const [showCostModal, setShowCostModal] = useState(false);
   const [guardSeq, setGuardSeq] = useState<number | null>(null);
@@ -494,6 +507,22 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
       }
       void invokeSession(session.id, outgoing, activeMode, overrideBody)
         .catch((err: unknown) => {
+          if (
+            err instanceof ApiError &&
+            err.code === "session.already_invoking"
+          ) {
+            // Phase N.2.7 — cross-device handoff: another tab/PC is
+            // still mid-turn on this session. Hold the payload + the
+            // optimistic echo so the user can either take over or
+            // back out cleanly.
+            setStaleInvoke({
+              message: outgoing,
+              mode: activeMode,
+              overrideBody,
+              echoSeq: seq,
+            });
+            return;
+          }
           setError(
             err instanceof ApiError
               ? `${err.code}: ${err.reason}`
@@ -506,6 +535,45 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     },
     [session, mode, modelOverride, thinkingBudget],
   );
+
+  // Phase N.2.7 — "강제로 이어받기" handler. The server's interrupt
+  // route (since N.2.7) waits for the cancelled task's terminal frame
+  // before returning, so retrying the invoke immediately after the
+  // await won't race the cleanup and re-hit `session.already_invoking`.
+  const takeOverStaleInvoke = useCallback(async () => {
+    if (!staleInvoke || !session) return;
+    setPending(true);
+    setError(null);
+    try {
+      await interruptSession(session.id);
+      await invokeSession(
+        session.id,
+        staleInvoke.message,
+        staleInvoke.mode,
+        staleInvoke.overrideBody,
+      );
+      setStaleInvoke(null);
+    } catch (err: unknown) {
+      setError(
+        err instanceof ApiError
+          ? `${err.code}: ${err.reason}`
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
+    } finally {
+      setPending(false);
+    }
+  }, [staleInvoke, session]);
+
+  const cancelStaleInvoke = useCallback(() => {
+    if (!staleInvoke) return;
+    // Roll back the optimistic user-bubble echo since we're abandoning
+    // the send. Without this the chat would carry a "ghost" entry for
+    // a message that never reached the agent.
+    setUserEvents((prev) => prev.filter((e) => e.seq !== staleInvoke.echoSeq));
+    setStaleInvoke(null);
+  }, [staleInvoke]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -564,9 +632,15 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
   // Reset the local user echoes when the session changes so a fresh
   // chat doesn't inherit the previous session's bubbles. Also clear
   // them when the user archives mid-conversation.
+  //
+  // Phase N.2.7 — clear the takeover banner state too. If the user
+  // hit a stale-invoke on one session and then switched to another,
+  // we'd be falsely offering to "take over" a payload bound to the
+  // previous session.id.
   useEffect(() => {
     setUserEvents([]);
     userSeqRef.current = -1;
+    setStaleInvoke(null);
   }, [session?.id]);
 
   // Tool pairs derived from the live event list — drives the
@@ -930,6 +1004,49 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               </div>
             </div>
           </form>
+
+          {staleInvoke ? (
+            <div
+              role="alert"
+              className="mx-3 mb-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2.5 text-[12px] text-warn"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-medium">다른 곳에서 작업이 진행 중입니다.</p>
+                  <p className="mt-0.5 text-[11.5px] opacity-90">
+                    다른 PC / 탭에서 시작한 invoke 가 아직 끝나지 않았어요.
+                    이어받으면 진행 중인 작업을 중단하고 이 메시지로 다음 turn 을 진행합니다.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={cancelStaleInvoke}
+                  disabled={pending}
+                  className="h-7 rounded-md border border-border bg-bg px-2.5 text-[11.5px] text-fg hover:bg-bg-subtle disabled:opacity-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void takeOverStaleInvoke()}
+                  disabled={pending}
+                  className="inline-flex h-7 items-center gap-1 rounded-md bg-warn px-2.5 text-[11.5px] font-medium text-bg hover:bg-warn/90 disabled:opacity-50"
+                >
+                  {pending ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      이어받는 중…
+                    </>
+                  ) : (
+                    "강제로 이어받기"
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {error ? (
             <p

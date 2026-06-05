@@ -120,25 +120,28 @@ export function ToolCallGroup({ pairs, defaultOpen = false }: Props) {
             : "rounded-md border border-border bg-bg-elevated"
       }
     >
+      {/* Phase N.2.7 — same `min-w-0 + shrink-0` pattern as
+          ToolCallCard so the badge stays single-line and the trailing
+          names summary is the part that disappears in narrow panels. */}
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-bg-subtle/40"
+        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left hover:bg-bg-subtle/40"
       >
-        <span className="grid h-5 w-5 place-items-center rounded text-fg-muted">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded text-fg-muted">
           {open ? (
             <ChevronDown className="h-3.5 w-3.5" />
           ) : (
             <ChevronRight className="h-3.5 w-3.5" />
           )}
         </span>
-        <Wrench className="h-3.5 w-3.5 text-fg-muted" />
-        <strong className="font-mono text-[12px] text-fg">
+        <Wrench className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+        <strong className="shrink-0 font-mono text-[12px] text-fg">
           {t("chat.tool_group.label").replace("{count}", String(pairs.length))}
         </strong>
-        {statusBadge}
-        <span className="ml-auto truncate text-[11px] text-fg-muted">
+        <span className="shrink-0">{statusBadge}</span>
+        <span className="ml-auto min-w-0 truncate text-[11px] text-fg-muted">
           {summariseNames(pairs)}
         </span>
       </button>

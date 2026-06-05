@@ -69,13 +69,17 @@ export function ToolCallCard({ pair }: Props) {
             : "rounded-md border border-accent/40 bg-accent/5"
       }
     >
-      <header className="flex items-center gap-2 px-3 py-2">
+      {/* Phase N.2.7 — `min-w-0` on the flex container so the trailing
+          args summary can actually truncate; `shrink-0` on the
+          chevron/tool/badge so they keep their natural width while the
+          args (which already has `truncate`) absorbs the squeeze. */}
+      <header className="flex min-w-0 items-center gap-2 px-3 py-2">
         <button
           type="button"
           aria-expanded={open}
           aria-label={open ? t("chat.tool.collapse") : t("chat.tool.expand")}
           onClick={() => setOpen((v) => !v)}
-          className="grid h-5 w-5 place-items-center rounded text-fg-muted hover:bg-surface-hover hover:text-fg"
+          className="grid h-5 w-5 shrink-0 place-items-center rounded text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           {open ? (
             <ChevronDown className="h-3.5 w-3.5" />
@@ -83,10 +87,12 @@ export function ToolCallCard({ pair }: Props) {
             <ChevronRight className="h-3.5 w-3.5" />
           )}
         </button>
-        <strong className="font-mono text-[12px] text-accent">{tool}</strong>
-        {statusBadge}
+        <strong className="shrink-0 font-mono text-[12px] text-accent">{tool}</strong>
+        <span className="shrink-0">{statusBadge}</span>
         {argsSummary ? (
-          <code className="ml-auto truncate text-[11px] text-fg-muted">{argsSummary}</code>
+          <code className="ml-auto min-w-0 truncate text-[11px] text-fg-muted">
+            {argsSummary}
+          </code>
         ) : null}
       </header>
 
