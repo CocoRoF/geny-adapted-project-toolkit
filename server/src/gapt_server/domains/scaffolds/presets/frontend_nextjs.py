@@ -114,7 +114,7 @@ _PACKAGE_JSON_TAILWIND = """\
     "start": "next start -p 3000"
   }},
   "dependencies": {{
-    "next": "15.0.3",
+    "next": "15.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   }},
@@ -141,7 +141,7 @@ _PACKAGE_JSON_PLAIN = """\
     "start": "next start -p 3000"
   }},
   "dependencies": {{
-    "next": "15.0.3",
+    "next": "15.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   }},
@@ -217,6 +217,14 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# CRITICAL: Next.js standalone's server.js binds to `localhost` by
+# default. Inside a container that means it only listens on 127.0.0.1
+# — Docker / Caddy / nginx can't reach it from outside, and the URL
+# returns 502 Bad Gateway. `HOSTNAME=0.0.0.0` forces a bind on all
+# interfaces so the published port + the reverse-proxy network both
+# work. `PORT` matches the EXPOSE below + the compose mapping.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 EXPOSE 3000
