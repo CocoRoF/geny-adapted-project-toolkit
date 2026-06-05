@@ -711,6 +711,8 @@ export const en = {
   "git.push": "Push",
   "git.push.done": "Pushed",
   "git.push.nothing": "Nothing to push — local is in sync with origin",
+  "git.push.first": "First push — establishes upstream tracking on origin",
+  "git.push.no_branch": "Nothing to push (detached HEAD or empty repo)",
   "git.push.error.rejected_ff": "Push rejected — remote is ahead. Run Pull (or Sync) first.",
   "git.push.error.auth": "Push failed — remote auth rejected. Check the project's git token.",
   "git.push.error.not_found": "Push failed — remote repository not found / access denied.",

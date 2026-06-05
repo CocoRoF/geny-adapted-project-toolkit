@@ -709,6 +709,8 @@ export const ko: Record<keyof typeof en, string> = {
   "git.push": "푸시",
   "git.push.done": "푸시 완료",
   "git.push.nothing": "보낼 커밋이 없습니다 — origin 과 동기화된 상태",
+  "git.push.first": "첫 푸시 — origin 에 upstream tracking 을 함께 설정합니다",
+  "git.push.no_branch": "푸시할 브랜치가 없습니다 (detached HEAD 또는 빈 레포)",
   "git.push.error.rejected_ff": "원격이 앞서 있어 push 거부됨. Pull (또는 Sync) 먼저 실행하세요.",
   "git.push.error.auth": "원격 인증 실패 — 프로젝트의 git 토큰을 확인하세요.",
   "git.push.error.not_found": "원격 저장소를 못 찾음 — 접근 권한 또는 URL 확인.",

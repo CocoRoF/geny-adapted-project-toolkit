@@ -443,6 +443,11 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
 
   const syncState = useMemo(() => {
     if (!status) return "unknown" as const;
+    // Branch with no upstream tracking — `ahead`/`behind` are
+    // meaningless (git couldn't compute them). Distinguish this from
+    // the genuine "everything is in sync" case so the badge stops
+    // lying about a freshly-scaffolded workspace.
+    if (!status.upstream) return "no-upstream" as const;
     if (status.ahead === 0 && status.behind === 0) return "synced" as const;
     if (status.ahead > 0 && status.behind > 0) return "diverged" as const;
     if (status.ahead > 0) return "ahead" as const;
@@ -606,15 +611,33 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
             ) : null}
           </Button>
           <div className="flex gap-1">
+            {/* Push button enable logic:
+                  * no branch    → disable (detached HEAD or empty repo)
+                  * no upstream  → ENABLE (first push will -u set upstream)
+                  * upstream + ahead === 0 → disable (nothing to push)
+                  * upstream + ahead > 0   → enable
+                Pre-fix the button was disabled whenever `ahead === 0`,
+                which collapsed the "synced" case and the "no upstream
+                yet" case into one — a freshly-scaffolded workspace
+                with commits but no tracking branch couldn't push at
+                all even though the backend supports `-u` first-push. */}
             <Button
               size="sm"
               variant="ghost"
               onClick={onPush}
-              disabled={busy !== null || (status?.ahead ?? 0) === 0}
+              disabled={
+                busy !== null ||
+                !status?.branch ||
+                (!!status?.upstream && (status.ahead ?? 0) === 0)
+              }
               title={
-                (status?.ahead ?? 0) === 0
-                  ? t("git.push.nothing")
-                  : t("git.push")
+                !status?.branch
+                  ? t("git.push.no_branch")
+                  : !status.upstream
+                    ? t("git.push.first")
+                    : (status.ahead ?? 0) === 0
+                      ? t("git.push.nothing")
+                      : t("git.push")
               }
               className="flex-1"
             >
@@ -626,6 +649,8 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
               {t("git.push")}
               {status && status.ahead > 0 ? (
                 <span className="ml-1 text-[10px] opacity-70">↑{status.ahead}</span>
+              ) : !status?.upstream && status?.branch ? (
+                <span className="ml-1 text-[10px] opacity-70">-u</span>
               ) : null}
             </Button>
             <Button
@@ -1122,12 +1147,18 @@ function SyncStateBadge({
   ahead,
   behind,
 }: {
-  state: "unknown" | "synced" | "ahead" | "behind" | "diverged";
+  state: "unknown" | "synced" | "ahead" | "behind" | "diverged" | "no-upstream";
   ahead: number;
   behind: number;
 }) {
   const { t } = useI18n();
   if (state === "unknown") return null;
+  if (state === "no-upstream") {
+    // Already covered by the "⚠ upstream 없음" pill rendered to the
+    // left in the header; suppress the redundant badge so the header
+    // doesn't carry two warnings for the same condition.
+    return null;
+  }
   if (state === "synced") {
     return (
       <Badge tone="success" className="text-[9.5px]">

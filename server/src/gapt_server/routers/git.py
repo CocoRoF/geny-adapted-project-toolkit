@@ -480,7 +480,15 @@ async def git_push(
     # into the env, then point `credential.helper` at a one-shot
     # script that echoes it. Resets the helper after push so the
     # token doesn't linger in git config.
-    push_argv: list[str] = ["push", "origin", f"HEAD:{branch}"]
+    #
+    # `--set-upstream` is idempotent — git just (re-)points
+    # `branch.<name>.{remote,merge}` at `origin/<branch>`. We add it
+    # unconditionally so a freshly-cloned (or worktree-added) branch
+    # that's missing tracking config gets it on first push. Without
+    # this the status endpoint keeps reporting `upstream=null` +
+    # `ahead=0` even AFTER a successful push, so the UI's "동기화됨"
+    # / disabled-push UX gets stuck on a workspace that just pushed.
+    push_argv: list[str] = ["push", "--set-upstream", "origin", f"HEAD:{branch}"]
     if payload.force_with_lease:
         push_argv.append("--force-with-lease")
 
