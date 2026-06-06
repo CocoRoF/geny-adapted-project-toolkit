@@ -148,18 +148,34 @@ def _summary_from(attrs: dict[str, Any]) -> ContainerSummary:
     # rely on the `gapt-ws-<wid>` containers which DO have the label).
     if workspace_id is None and name.startswith("gapt-ws-"):
         workspace_id = name[len("gapt-ws-") :].upper()
-    # Prod compose projects are named `gapt-prod-<environment_id>`.
-    environment_id: str | None = None
-    if compose_project and compose_project.startswith("gapt-prod-"):
-        environment_id = compose_project[len("gapt-prod-") :].upper()
+    # Prod compose projects are named `gapt-prod-<project_id>` (see
+    # `domains/deploy/local.py::_compose_project` + the docstring on
+    # `StackManager` at lines 78–84 — same project's envs share one
+    # stack name keyed on project_id, NOT environment_id).
+    #
+    # BUG FIX (Phase N.2.7): this code used to call the extracted ID
+    # `environment_id`, then the Performance dashboard tried to look
+    # it up in the environments table and (correctly) failed, marking
+    # every real prod stack as ORPHAN. The fix: trust the deploy
+    # layer's convention — what comes out is the project_id. We don't
+    # try to infer environment_id from the container at all (there's
+    # no label carrying it today; multi-env-per-project isn't yet a
+    # thing the deploy stack supports anyway).
+    project_id = labels.get("gapt.project_id")
+    if (
+        project_id is None
+        and compose_project
+        and compose_project.startswith("gapt-prod-")
+    ):
+        project_id = compose_project[len("gapt-prod-") :].upper()
     return ContainerSummary(
         id=attrs.get("Id", ""),
         name=name,
         image=(attrs.get("Config") or {}).get("Image", ""),
         category=_classify(attrs),
         workspace_id=workspace_id,
-        project_id=labels.get("gapt.project_id"),
-        environment_id=environment_id,
+        project_id=project_id,
+        environment_id=None,
         compose_project=compose_project,
         compose_service=labels.get("com.docker.compose.service"),
         status=state.get("Status", "unknown"),

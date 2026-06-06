@@ -881,8 +881,14 @@ function WorkspaceGroup({ ws, ...rest }: { ws: TreeWorkspace } & RowHelpers) {
             {ws.workspace.status}
           </Badge>
         ) : (
+          // Phase N.2.7 — when there's no Workspace row, the orphan
+          // cause is "deleted" (or never recorded), NOT "archived".
+          // Pre-fix the badge said "보관됨" for both, which read as
+          // "this was archived" — operators wondered why they were
+          // seeing rows they never archived. The accurate signal is
+          // that the DB row is gone, period.
           <Badge tone="warn" className="text-[9.5px]">
-            {t("performance.archived")}
+            {t("performance.orphan_no_row")}
           </Badge>
         )}
         <code className="text-[10px] text-fg-subtle">

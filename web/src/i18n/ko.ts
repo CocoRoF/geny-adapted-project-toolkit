@@ -238,6 +238,11 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.running_lower": "실행중",
   "performance.unbucketed": "분류되지 않은 컨테이너",
   "performance.archived": "보관됨",
+  // Phase N.2.7 — distinguish "the workspace row was archived" (status
+  // = ARCHIVED, row still in DB) from "the workspace row was deleted"
+  // (no row at all). Both end up under the orphan section but they
+  // describe different ops realities.
+  "performance.orphan_no_row": "DB row 없음",
   "performance.prod_stack": "prod 스택",
   "performance.svc.state.running": "실행 중",
   "performance.svc.state.starting": "시작 중",

@@ -361,6 +361,9 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# `public/` always exists because the scaffold ships `public/.gitkeep`.
+# Drop the file in your own assets (favicon, etc.) without changing
+# the Dockerfile.
 COPY --from=builder /app/public ./public
 EXPOSE 3000
 CMD ["node", "server.js"]
@@ -479,6 +482,11 @@ def _render(ctx: RenderContext) -> dict[str, bytes]:
         # ── frontend
         "frontend/app/page.tsx": _FRONTEND_PAGE.format(project_name=ctx.project_name).encode("utf-8"),
         "frontend/app/layout.tsx": _FRONTEND_LAYOUT.format(project_name=ctx.project_name).encode("utf-8"),
+        # `public/.gitkeep` is here so the Dockerfile's `COPY
+        # /app/public ./public` always finds a directory. Without
+        # this, docker build either errors (BuildKit strict) or
+        # silently produces an image missing the directory.
+        "frontend/public/.gitkeep": b"",
         "frontend/package.json": _FRONTEND_PACKAGE_JSON.format(slug=ctx.slug).encode("utf-8"),
         "frontend/next.config.mjs": _FRONTEND_NEXT_CONFIG.encode("utf-8"),
         "frontend/tsconfig.json": _FRONTEND_TSCONFIG.encode("utf-8"),

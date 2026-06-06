@@ -135,6 +135,7 @@ def _is_orphan(
     workspaces_by_id: dict[str, "models.Workspace"],
     environments_by_id: dict[str, "models.Environment"],
     archived_project_ids: set[str],
+    projects_by_id: dict[str, "models.Project"] | None = None,
 ) -> bool:
     """A sample is orphan when its workspace_id / environment_id
     don't resolve to a live DB row, OR when its owning project has
@@ -195,16 +196,22 @@ def _is_orphan(
         # project itself was archived → no point keeping the container.
         return row.project_id in archived_project_ids
     if sample.summary.category == ContainerCategory.PROD:
-        env_id = sample.summary.environment_id
-        if env_id is None:
+        # Phase N.2.7 fix — prod compose stacks key on PROJECT_ID, not
+        # environment_id (see sampler `_summary_from` for the deploy
+        # convention). Pre-fix, this branch looked up env_id and ALL
+        # prod stacks fell through as orphan because the extracted ID
+        # was a project_id that never matched the environments table.
+        project_id = sample.summary.project_id
+        if project_id is None:
             return True
-        env = environments_by_id.get(env_id)
-        if env is None:
+        # Backstop on the projects table when the caller supplied it:
+        # a stack whose project row is gone — or archived — has no
+        # legitimate reason to keep running. The legacy archived_set
+        # path keeps working when `projects_by_id` is None (older
+        # callers).
+        if projects_by_id is not None and project_id not in projects_by_id:
             return True
-        # Same project-level backstop as workspaces — a prod stack
-        # whose owning project is archived has no legitimate reason
-        # to keep running.
-        return env.project_id in archived_project_ids
+        return project_id in archived_project_ids
     # Infra (`gapt-dev-*`) is never orphan — those are control-plane.
     if sample.summary.category == ContainerCategory.INFRA:
         return False
@@ -220,6 +227,7 @@ async def build_plan(
     caddy_manager: "SubdomainManager | None",
     archived_project_ids: set[str] | None = None,
     archived_projects_meta: dict[str, dict[str, object]] | None = None,
+    projects_by_id: dict[str, "models.Project"] | None = None,
 ) -> OrphanPlan:
     """Snapshot the host + DB state once, return the cleanup target
     list. The same function backs both the dry-run preview and the
@@ -238,7 +246,9 @@ async def build_plan(
     orphan_samples = [
         s
         for s in samples
-        if _is_orphan(s, workspaces_by_id, environments_by_id, archived)
+        if _is_orphan(
+            s, workspaces_by_id, environments_by_id, archived, projects_by_id
+        )
     ]
 
     targets: list[OrphanTarget] = []
@@ -270,16 +280,46 @@ async def build_plan(
         except Exception:  # noqa: BLE001
             existing = []
         live_workspace_ids_lower = {wid.lower() for wid in workspaces_by_id}
+        # Phase N.2.7 fix — collect the live prod-deploy preview_slugs
+        # from the environments table so we DON'T accidentally classify
+        # them as orphan. Pre-fix the cleanup assumed every
+        # `gapt-preview-*` route keyed on a workspace ULID; that broke
+        # the moment an operator named their prod deploy something like
+        # `hr-test` (their hr-test.…  preview route got deleted as
+        # "no matching workspace", the deploy went unreachable, and
+        # the user lost a working production endpoint).
+        live_prod_slugs_lower: set[str] = set()
+        for env in environments_by_id.values():
+            cfg = env.deploy_target_config or {}
+            slug = cfg.get("preview_slug") if isinstance(cfg, dict) else None
+            if isinstance(slug, str) and slug.strip():
+                live_prod_slugs_lower.add(slug.strip().lower())
+        # ULID is the canonical 26-char Crockford-base32 workspace id.
+        # We only ever auto-delete routes whose slug matches that
+        # shape — anything else (operator-named prod slug, ad-hoc
+        # subdomain, etc.) stays in place. The operator can always
+        # delete a stale prod route by hand from their env's deploy
+        # settings; better to leave a stale one than to nuke a live
+        # production endpoint by overzealous cleanup.
+        import re as _re  # noqa: PLC0415
+
+        _ULID_RE = _re.compile(r"^[0-9a-hjkmnp-tv-z]{26}$")
         for route in existing:
             rid = (route.get("@id") or "") if isinstance(route, dict) else ""
             if not rid.startswith("gapt-preview-"):
                 continue
-            # `@id` looks like `gapt-preview-<workspace_id>-<label>`
-            # (or `…-asset` for the Referer-fallback variant). Pluck
-            # the workspace_id substring and check if the underlying
-            # workspace still exists.
             without_prefix = rid[len("gapt-preview-") :]
             slug = without_prefix.split("-", 1)[0]
+            # Skip zone-catchall + anything that's a live prod slug.
+            if without_prefix == "zone-catchall":
+                continue
+            if slug in live_prod_slugs_lower or without_prefix in live_prod_slugs_lower:
+                continue
+            # Only auto-orphan when the slug LOOKS like a workspace
+            # ULID. Anything else (custom prod slug, partial match,
+            # third-party route someone added) is left alone.
+            if not _ULID_RE.match(slug):
+                continue
             if slug not in live_workspace_ids_lower:
                 caddy_route_ids.append(rid)
 

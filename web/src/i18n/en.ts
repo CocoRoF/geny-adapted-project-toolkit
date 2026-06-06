@@ -239,6 +239,7 @@ export const en = {
   "performance.running_lower": "running",
   "performance.unbucketed": "Unbucketed containers",
   "performance.archived": "archived",
+  "performance.orphan_no_row": "no DB row",
   "performance.prod_stack": "prod stack",
   "performance.svc.state.running": "running",
   "performance.svc.state.starting": "starting",

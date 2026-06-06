@@ -968,6 +968,7 @@ async def _orphan_db_context(
     dict[str, models.Environment],
     set[str],
     dict[str, dict[str, object]],
+    dict[str, models.Project],
 ]:
     """Tables needed for orphan classification + DB purge:
 
@@ -976,12 +977,17 @@ async def _orphan_db_context(
       * per-archived-project cascade metadata (display_name +
         workspaces/envs/deploy_runs counts) so the cleanup modal can
         preview "5 DB rows will be deleted with this project"
+      * ALL projects keyed by id — needed since Phase N.2.7 so the
+        orphan classifier can resolve prod stacks against their owning
+        project (the stack name is `gapt-prod-<project_id>`, NOT
+        env_id; see sampler `_summary_from`).
     """
     if container.session_factory is None:
-        return ({}, {}, set(), {})
+        return ({}, {}, set(), {}, {})
     async with container.session_factory() as db:
         ws_rows = (await db.execute(select(models.Workspace))).scalars().all()
         env_rows = (await db.execute(select(models.Environment))).scalars().all()
+        project_rows = (await db.execute(select(models.Project))).scalars().all()
         archived_projects = (
             (
                 await db.execute(
@@ -1025,6 +1031,7 @@ async def _orphan_db_context(
         {e.id: e for e in env_rows},
         archived_ids,
         meta,
+        {p.id: p for p in project_rows},
     )
 
 
@@ -1069,7 +1076,7 @@ async def preview_orphan_cleanup(
     can see the blast radius before clicking the destructive
     button."""
     sampler = _get_sampler()
-    workspaces, environments, archived_projects, archived_meta = (
+    workspaces, environments, archived_projects, archived_meta, all_projects = (
         await _orphan_db_context(container)
     )
     caddy_manager = _build_subdomain_manager(settings)
@@ -1080,6 +1087,7 @@ async def preview_orphan_cleanup(
         caddy_manager=caddy_manager,
         archived_project_ids=archived_projects,
         archived_projects_meta=archived_meta,
+        projects_by_id=all_projects,
     )
     return _plan_dto(plan)
 
@@ -1097,7 +1105,7 @@ async def cleanup_orphans(
     the live container list + DB rows — the client cannot trick
     this into deleting a live workspace."""
     sampler = _get_sampler()
-    workspaces, environments, archived_projects, archived_meta = (
+    workspaces, environments, archived_projects, archived_meta, all_projects = (
         await _orphan_db_context(container)
     )
     caddy_manager = _build_subdomain_manager(settings)
@@ -1108,6 +1116,7 @@ async def cleanup_orphans(
         caddy_manager=caddy_manager,
         archived_project_ids=archived_projects,
         archived_projects_meta=archived_meta,
+        projects_by_id=all_projects,
     )
     report = await execute_cleanup(
         plan,
