@@ -468,11 +468,24 @@ def _enrich_summary(
 ) -> ContainerSummary:
     """Fill `project_*` / `workspace_branch` / `environment_name` by
     looking up the DB rows that match the container's labels /
-    derived IDs."""
+    derived IDs.
+
+    Phase N.2.7 — for PROD-category containers we ALSO infer the
+    environment_id from `project_id` by picking the most-recent live
+    env on the same project. The deploy layer keys the compose stack
+    on project_id only (one project = one prod stack today, see
+    `StackManager` docstring), so a container's env_id is implicit:
+    "whichever env is currently driving this project's prod deploy".
+    Pre-fix the sampler returned env_id=None for prod containers and
+    the frontend dropped them into the "unbucketed containers" bucket
+    under the project — operators saw their live prod stack outside
+    the "prod stack" panel that should have held it.
+    """
     project_id = summary.project_id
     workspace_branch = summary.workspace_branch
     project_slug = summary.project_slug
     project_display_name = summary.project_display_name
+    environment_id = summary.environment_id
     environment_name = summary.environment_name
 
     if summary.workspace_id and summary.workspace_id in workspaces:
@@ -480,10 +493,30 @@ def _enrich_summary(
         workspace_branch = ws.branch
         project_id = project_id or ws.project_id
 
-    if summary.environment_id and summary.environment_id in environments:
-        env = environments[summary.environment_id]
+    if environment_id and environment_id in environments:
+        env = environments[environment_id]
         environment_name = env.name
         project_id = project_id or env.project_id
+
+    # Phase N.2.7 — fill env_id for prod containers by walking the
+    # environments table on the resolved project_id. Prefer the newest
+    # env (by created_at descending) — that's the operator's "current"
+    # deployment target. If there's only one env on the project, the
+    # pick is unambiguous; if multiple exist, the newest is the best
+    # heuristic until per-stack env labels land on the deploy side.
+    if (
+        environment_id is None
+        and summary.category == ContainerCategory.PROD
+        and project_id
+    ):
+        candidate_envs = [
+            e for e in environments.values() if e.project_id == project_id
+        ]
+        if candidate_envs:
+            candidate_envs.sort(key=lambda e: e.created_at, reverse=True)
+            chosen = candidate_envs[0]
+            environment_id = chosen.id
+            environment_name = chosen.name
 
     if project_id and project_id in projects:
         proj = projects[project_id]
@@ -500,7 +533,7 @@ def _enrich_summary(
         project_slug=project_slug,
         project_display_name=project_display_name,
         workspace_branch=workspace_branch,
-        environment_id=summary.environment_id,
+        environment_id=environment_id,
         environment_name=environment_name,
         compose_project=summary.compose_project,
         compose_service=summary.compose_service,
