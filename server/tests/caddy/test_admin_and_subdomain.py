@@ -832,6 +832,78 @@ async def test_subdomain_register_clears_old_mode_routes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subdomain_zone_split_from_preview_domain() -> None:
+    """When `subdomain_zone` is set, subdomain-mode bindings AND the
+    zone catch-all use it (not `preview_domain`). Real-world driver:
+    GAPT lives at `gapt.hrletsgo.me` (a 2-level subdomain) so path
+    mode wants `/preview/<slug>` under `gapt.hrletsgo.me`, but
+    Cloudflare's free wildcard cert only covers `*.hrletsgo.me` —
+    subdomain mode therefore MUST resolve to `<slug>.hrletsgo.me`,
+    not `<slug>.gapt.hrletsgo.me` (which has no cert)."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(
+        client=client,
+        preview_domain="gapt.hrletsgo.me",
+        subdomain_zone="hrletsgo.me",
+        gapt_apex_host="gapt.hrletsgo.me",
+    )
+    host = await manager.register(
+        SubdomainBinding(
+            workspace_slug="hr-test",
+            upstream_host="gapt-prod-01x-frontend",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    # Returned host uses the zone, not preview_domain.
+    assert host == "hr-test.hrletsgo.me"
+    posted = calls[2][2]
+    host_route = next(r for r in posted if r.get("@id") == "gapt-preview-hr-test")
+    assert host_route["match"][0]["host"] == ["hr-test.hrletsgo.me"]
+    # Zone catch-all matches `*.<subdomain_zone>` and excludes the
+    # GAPT IDE host so visiting `gapt.hrletsgo.me` itself still works.
+    catchall = next(
+        r for r in posted if r.get("@id") == "gapt-preview-zone-catchall"
+    )
+    matcher = catchall["match"][0]
+    assert matcher["host"] == ["*.hrletsgo.me"]
+    assert matcher.get("not") == [{"host": ["gapt.hrletsgo.me"]}]
+
+
+@pytest.mark.asyncio
+async def test_subdomain_zone_unset_falls_back_to_preview_domain() -> None:
+    """Back-compat: when `subdomain_zone` is None, subdomain mode
+    keeps using `preview_domain` (the legacy single-zone install)."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="hrletsgo.me")
+    host = await manager.register(
+        SubdomainBinding(
+            workspace_slug="hr-test",
+            upstream_host="gapt-prod-01x-frontend",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+    assert host == "hr-test.hrletsgo.me"
+
+
+@pytest.mark.asyncio
 async def test_subdomain_manager_http_upstream_omits_transport() -> None:
     """Default HTTP upstream — no `transport`, no `headers` keys on
     the reverse_proxy handler. Keeps the route payload compact and

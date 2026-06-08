@@ -129,6 +129,13 @@ async def cleanup_stale_routes(
     if not preview_domain:
         return
 
+    # The catch-all sits on the SUBDOMAIN-mode wildcard zone, not
+    # the path-mode preview_domain. Keeping them split here so the
+    # cleanup pass agrees with what SubdomainManager registers on
+    # the next replay — otherwise we'd see a brand-new catchall as
+    # "mismatched" and delete it every boot.
+    catchall_zone = settings.caddy_subdomain_zone or preview_domain
+
     transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
     client = CaddyAdminClient(transport=transport)
 
@@ -138,7 +145,7 @@ async def cleanup_stale_routes(
         logger.warning("caddy.boot_resync.list_routes_failed", error=str(exc))
         return
 
-    expected_wildcard = f"*.{preview_domain.rstrip('.').lower()}"
+    expected_wildcard = f"*.{catchall_zone.rstrip('.').lower()}"
     for route in config or []:
         if not isinstance(route, dict):
             continue
@@ -191,6 +198,7 @@ async def replay_active_environments(
         client=CaddyAdminClient(transport=transport),
         preview_domain=settings.caddy_preview_domain,
         gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
     )
 
     async with session_factory() as db:
@@ -388,6 +396,7 @@ async def replay_single_environment(
         client=CaddyAdminClient(transport=transport),
         preview_domain=settings.caddy_preview_domain,
         gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
     )
 
     async with session_factory() as db:

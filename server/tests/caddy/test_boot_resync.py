@@ -86,6 +86,7 @@ class _FakeSettings:
     caddy_admin_url: str = "http://localhost:32019"
     caddy_preview_domain: str = "preview.example.com"
     caddy_apex_host: str | None = None
+    caddy_subdomain_zone: str | None = None
 
 
 # ─────────────────────────────────────── test helpers ──

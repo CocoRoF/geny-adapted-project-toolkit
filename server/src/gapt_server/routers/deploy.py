@@ -192,6 +192,7 @@ async def _build_subdomain_manager(
         client=client,
         preview_domain=domain,
         gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
     )
 
 
@@ -1415,6 +1416,7 @@ async def stack_down(
                 client=CaddyAdminClient(transport=transport),
                 preview_domain=effective_domain,
                 gapt_apex_host=settings.caddy_apex_host,
+                subdomain_zone=settings.caddy_subdomain_zone,
             )
             slug = _resolve_preview_slug(env_row)
             await manager.unregister(slug)
@@ -1591,6 +1593,7 @@ async def stack_reroute(
         client=CaddyAdminClient(transport=transport),
         preview_domain=effective_preview_domain,
         gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
     )
     mode_str = str(
         override.preview_mode

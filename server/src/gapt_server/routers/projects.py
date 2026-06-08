@@ -345,6 +345,8 @@ async def _cascade_archive_cleanup(
             manager = SubdomainManager(
                 client=CaddyAdminClient(transport=transport),
                 preview_domain=settings.caddy_preview_domain,
+                gapt_apex_host=settings.caddy_apex_host,
+                subdomain_zone=settings.caddy_subdomain_zone,
             )
             # Routes are id'd by workspace_slug (dev) or
             # `prod-<env_name>-<project_id>` (prod). The dev slugs

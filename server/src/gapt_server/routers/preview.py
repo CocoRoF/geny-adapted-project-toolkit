@@ -161,7 +161,12 @@ def _build_manager(settings: Settings) -> SubdomainManager | None:
         return None
     transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
     client = CaddyAdminClient(transport=transport)
-    return SubdomainManager(client=client, preview_domain=settings.caddy_preview_domain)
+    return SubdomainManager(
+        client=client,
+        preview_domain=settings.caddy_preview_domain,
+        gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
+    )
 
 
 async def _workspace_or_404(db: AsyncSession, *, wid: str) -> models.Workspace:

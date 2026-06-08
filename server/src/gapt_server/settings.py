@@ -202,6 +202,24 @@ class Settings(BaseSettings):
     # exclusion (safe when preview_domain is a strict sub-host
     # of the GAPT apex, like `previews.gapt.example`).
     caddy_apex_host: str | None = None
+    # Wildcard-cert zone for **subdomain-mode** previews. Distinct
+    # from `caddy_preview_domain` because the two answer different
+    # questions:
+    #   * `caddy_preview_domain` — host that serves the path-mode
+    #     `/preview/<slug>` route family. Typically the GAPT IDE
+    #     host itself (e.g. `gapt.hrletsgo.me`) so previews and IDE
+    #     share one cert.
+    #   * `caddy_subdomain_zone` — the parent zone whose wildcard
+    #     cert (`*.<zone>`) terminates subdomain-mode hosts like
+    #     `hr-test.<zone>`. On Cloudflare's free plan only the
+    #     one-level wildcard `*.<root-zone>` exists, so when GAPT
+    #     lives at a sub-host (e.g. `gapt.hrletsgo.me`) subdomain
+    #     mode MUST use the bare root (`hrletsgo.me`) here — using
+    #     `caddy_preview_domain` would build `<slug>.gapt.<root>`
+    #     which `*.<root>` doesn't cover → ERR_SSL_VERSION.
+    # Unset → subdomain mode falls back to `caddy_preview_domain`
+    # for full back-compat with single-host installs.
+    caddy_subdomain_zone: str | None = None
     # Share link HMAC secret. Do not leave the dev default in prod.
     share_link_secret: str = "dev-only-share-secret-change-me"
     # TTL ceiling for share links (seconds). Default 24h.

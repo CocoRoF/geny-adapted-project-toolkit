@@ -991,6 +991,8 @@ def _build_subdomain_manager(settings: Settings) -> SubdomainManager | None:
     return SubdomainManager(
         client=CaddyAdminClient(settings.caddy_admin_url),
         preview_domain=settings.caddy_preview_domain,
+        gapt_apex_host=settings.caddy_apex_host,
+        subdomain_zone=settings.caddy_subdomain_zone,
     )
 
 

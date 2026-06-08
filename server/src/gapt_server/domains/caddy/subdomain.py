@@ -452,6 +452,12 @@ class SubdomainManager:
     # the GAPT IDE at `gapt.hrletsgo.me`. None = no exclusion
     # (safe when preview_domain is a strict sub-host of GAPT apex).
     gapt_apex_host: str | None = None
+    # Wildcard-cert zone for subdomain-mode bindings. When set,
+    # `_full_host` builds `<slug>.<subdomain_zone>` and the zone
+    # catch-all is registered on `*.<subdomain_zone>`. When None
+    # (back-compat), subdomain mode falls back to `preview_domain`.
+    # See Settings.caddy_subdomain_zone for why this is split out.
+    subdomain_zone: str | None = None
     # Serialises register/unregister so the DELETE-then-POST splice
     # cycle (see _upsert) never has two callers racing on the same
     # routes array.
@@ -494,11 +500,12 @@ class SubdomainManager:
         }
 
         if binding.mode == PreviewMode.SUBDOMAIN:
+            zone = self.subdomain_zone or self.preview_domain
             await self._upsert(
-                [_subdomain_route_payload(binding, self.preview_domain)],
+                [_subdomain_route_payload(binding, zone)],
                 extra_clear=full_family,
             )
-            return _full_host(binding.workspace_slug, self.preview_domain)
+            return _full_host(binding.workspace_slug, zone)
 
         # Path mode — preview_domain is the apex (no subdomain).
         await self._upsert(_path_route_payloads(binding), extra_clear=full_family)
@@ -650,7 +657,10 @@ class SubdomainManager:
             # through to the apex GAPT redirect.
             arr.insert(
                 len(host_payloads),
-                _zone_catchall_payload(self.preview_domain, self.gapt_apex_host),
+                _zone_catchall_payload(
+                    self.subdomain_zone or self.preview_domain,
+                    self.gapt_apex_host,
+                ),
             )
 
             # Anchor for the path-keyed routes: the safety-net 404 or
