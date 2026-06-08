@@ -201,7 +201,7 @@ async def replay_active_environments(
         if last_run.get("status") != "success":
             continue
         try:
-            await _replay_one(env, manager, stack_manager, report)
+            new_host = await _replay_one(env, manager, stack_manager, report)
         except Exception as exc:  # noqa: BLE001
             # Catch-all so a single bad env can't poison the loop.
             report.replay_failures.append((env.id, str(exc)))
@@ -210,6 +210,20 @@ async def replay_active_environments(
                 env_id=env.id,
                 error=str(exc),
             )
+            continue
+        # Refresh `env.last_run.bound_url` when the URL Caddy is now
+        # serving doesn't match what the DB has. Without this the IDE
+        # keeps showing a stale link (typically from an old
+        # caddy_preview_domain value) and the operator's click 302s
+        # to GAPT instead of the deployed app. The reroute button used
+        # to be the only thing that fixed this — now boot_resync +
+        # the periodic reconciler heal it transparently.
+        if new_host is not None:
+            await _refresh_bound_url(
+                session_factory=session_factory,
+                env_id=env.id,
+                new_host=new_host,
+            )
 
 
 async def _replay_one(
@@ -217,9 +231,20 @@ async def _replay_one(
     manager: SubdomainManager,
     stack_manager: StackManager,
     report: ResyncReport,
-) -> None:
+) -> str | None:
     """Inner per-env step. Raises on any failure so the caller can
-    record + move on."""
+    record + move on.
+
+    Returns the user-visible URL host the route resolved to (e.g.
+    ``hr-test.gapt.hrletsgo.me`` for subdomain mode) on success, or
+    ``None`` when there was nothing to register (skip cases). The
+    caller uses this to refresh `env.last_run.bound_url` — pre-fix
+    this was missing and a Caddy replay would silently leave the DB
+    pointing at the OLD preview-domain URL, which is what the IDE's
+    "라이브 / https://…" link shows. The result: stack works, route
+    works, but the link the operator clicks goes nowhere because the
+    UI string is stale until "즉시 라우트 갱신" is clicked manually.
+    """
     cfg = env.deploy_target_config if isinstance(env.deploy_target_config, dict) else {}
 
     # Skip when no stack is actually running for this project. The
@@ -256,7 +281,7 @@ async def _replay_one(
     )
     if chosen is None:
         report.skipped_no_stack.append(env.id)
-        return
+        return None
     if cfg.get("primary_port") is None and chosen.service in reverse_proxy_names:
         primary_port = 80
 
@@ -280,7 +305,7 @@ async def _replay_one(
         upstream_host_header=upstream_host_header,
         upstream_tls_insecure=upstream_tls_insecure,
     )
-    await manager.register(binding)
+    host = await manager.register(binding)
     report.replayed.append(slug)
     logger.info(
         "caddy.boot_resync.route_replayed",
@@ -288,7 +313,9 @@ async def _replay_one(
         slug=slug,
         upstream=f"{upstream_scheme}://{chosen.container_name}:{primary_port}",
         mode=mode_str,
+        bound_url=f"https://{host}",
     )
+    return host
 
 
 # ────────────────────────────────────────────── entry ──
@@ -377,7 +404,7 @@ async def replay_single_environment(
         return report
 
     try:
-        await _replay_one(env, manager, stack_manager, report)
+        new_host = await _replay_one(env, manager, stack_manager, report)
     except Exception as exc:  # noqa: BLE001
         report.replay_failures.append((env.id, str(exc)))
         logger.warning(
@@ -385,4 +412,77 @@ async def replay_single_environment(
             env_id=env.id,
             error=str(exc),
         )
+        return report
+    if new_host is not None:
+        await _refresh_bound_url(
+            session_factory=session_factory,
+            env_id=env.id,
+            new_host=new_host,
+        )
     return report
+
+
+async def _refresh_bound_url(
+    *,
+    session_factory: async_sessionmaker,
+    env_id: str,
+    new_host: str,
+) -> None:
+    """Update ``env.last_run.bound_url`` (and the matching DeployRun
+    row) when the URL Caddy is now serving doesn't match what the DB
+    has. Idempotent — same input twice is a no-op.
+
+    Why this exists: the IDE's "라이브 / https://…" link reads from
+    DB, not Caddy. When `caddy_preview_domain` changes (typo fix,
+    domain migration) or the slug rule changes between releases, the
+    Caddy route gets re-registered with the new host but the DB blob
+    keeps the old URL forever. The operator clicks the stale link,
+    gets routed to GAPT (no matching Caddy route), and has to mash
+    "즉시 라우트 갱신" to refresh the DB.
+
+    Best-effort — failures are logged + swallowed so a flaky DB write
+    doesn't kill the boot resync or the periodic reconciler.
+    """
+    new_url = f"https://{new_host}"
+    try:
+        async with session_factory() as db:
+            row = (
+                await db.execute(
+                    select(models.Environment).where(
+                        models.Environment.id == env_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            last_run = dict(row.last_run or {})
+            if last_run.get("bound_url") == new_url:
+                return  # no drift
+            last_run["bound_url"] = new_url
+            row.last_run = last_run
+
+            # Also bump the matching DeployRun row so the sidebar /
+            # deploy detail panel show the same fresh URL. Best-effort
+            # — `run_id` may be missing on very old envs that pre-date
+            # the cached blob.
+            run_id = last_run.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                deploy_row = (
+                    await db.execute(
+                        select(models.DeployRun).where(
+                            models.DeployRun.id == run_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if deploy_row is not None and deploy_row.bound_url != new_url:
+                    deploy_row.bound_url = new_url
+            await db.commit()
+            logger.info(
+                "caddy.bound_url.refreshed",
+                env_id=env_id,
+                new_url=new_url,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "caddy.bound_url.refresh_failed", env_id=env_id, new_url=new_url
+        )
