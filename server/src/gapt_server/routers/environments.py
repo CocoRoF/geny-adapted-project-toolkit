@@ -29,7 +29,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from gapt_server.container import get_audit_sink, get_db_session
+import asyncio
+
+import structlog
+
+from gapt_server.container import (
+    AppContainer,  # noqa: TC001 — runtime Depends introspection
+    get_audit_sink,
+    get_container,
+    get_db_session,
+)
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditEvent, AuditSink
@@ -42,6 +51,84 @@ from gapt_server.domains.environments import (
 from gapt_server.domains.projects.service import ProjectError, fetch_project_for
 from gapt_server.routers.auth import get_current_user
 from gapt_server.routers.projects import http_from_project_error
+
+logger = structlog.get_logger(__name__)
+
+# Phase N.2.7 — fields whose change inside `deploy_target_config`
+# affects what Caddy proxies to. When any of these change between the
+# pre- and post-save snapshots, we kick off an async route resync so
+# the operator doesn't have to remember to click "즉시 라우트 갱신".
+# We intentionally DON'T include `compose_path` / `compose_paths` /
+# `build` — those affect what the deploy stack looks like, not what
+# Caddy targets, and a redeploy is the right trigger for them.
+_ROUTING_RELEVANT_FIELDS: frozenset[str] = frozenset({
+    "preview_mode",
+    "preview_slug",
+    "strip_prefix",
+    "primary_service",
+    "primary_port",
+    "upstream_scheme",
+    "upstream_host_header",
+    "upstream_tls_insecure",
+})
+
+
+def _routing_changed(old_cfg: dict[str, Any], new_cfg: dict[str, Any]) -> bool:
+    """Returns True when any routing-relevant field's value differs
+    between the snapshots. Treats `None` and missing key as equivalent
+    so adding a key with the same value as the old default doesn't
+    fire a spurious resync."""
+    for k in _ROUTING_RELEVANT_FIELDS:
+        if old_cfg.get(k) != new_cfg.get(k):
+            return True
+    return False
+
+
+async def _resync_route_after_save(
+    *,
+    env_id: str,
+    container: AppContainer,
+) -> None:
+    """Async resync triggered after env config save. Best-effort —
+    logs failures, never raises into the caller. Mirrors what the
+    "즉시 라우트 갱신" button does for one env, just kicked off
+    automatically when routing-relevant fields changed."""
+    try:
+        from gapt_server.domains.caddy.boot_resync import (  # noqa: PLC0415
+            replay_single_environment,
+        )
+        from gapt_server.domains.deploy.stack_manager import (  # noqa: PLC0415
+            StackManager,
+        )
+        from gapt_server.domains.sandbox import make_default_client  # noqa: PLC0415
+
+        if (
+            container.session_factory is None
+            or not container.settings.caddy_admin_url
+        ):
+            return
+        sm = StackManager(client=make_default_client())
+        report = await replay_single_environment(
+            env_id,
+            session_factory=container.session_factory,
+            settings=container.settings,
+            stack_manager=sm,
+        )
+        if report.replayed:
+            logger.info(
+                "env.update.auto_resync_done",
+                env_id=env_id,
+                slug=report.replayed[0],
+            )
+        elif report.replay_failures:
+            logger.warning(
+                "env.update.auto_resync_failed",
+                env_id=env_id,
+                reason=report.replay_failures[0][1],
+            )
+        # else: stack down or no successful last_run — quiet no-op.
+    except Exception:  # noqa: BLE001
+        logger.exception("env.update.auto_resync_crashed", env_id=env_id)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -296,6 +383,7 @@ async def update_environment(
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> EnvironmentResponse:
     row = await _row_or_404(db, env_id)
     try:
@@ -327,6 +415,11 @@ async def update_environment(
     cleaned_config = _validate_or_422(
         payload.deploy_target_kind, payload.deploy_target_config
     )
+    # Phase N.2.7 — snapshot the old routing-relevant fields BEFORE
+    # mutating the row so we can detect drift in the auto-resync
+    # decision below.
+    old_cfg = dict(row.deploy_target_config or {})
+
     row.name = payload.name
     row.deploy_target_kind = payload.deploy_target_kind
     row.deploy_target_config = cleaned_config
@@ -346,6 +439,34 @@ async def update_environment(
         )
     )
     await db.commit()
+
+    # Phase N.2.7 — robust auto-resync. When the operator changes a
+    # routing-relevant field (preview_mode flip, preview_slug rename,
+    # primary_service swap, port change, upstream_scheme/host header
+    # tweak), we kick off the same replay path the boot resync uses
+    # for one env. Pre-fix the operator had to remember to click
+    # "즉시 라우트 갱신" after every settings save — easy to forget,
+    # and the symptom (502 / wrong upstream) only surfaces minutes
+    # later when they try the URL.
+    #
+    # Conditions for firing:
+    #   * Caddy is configured (caddy_admin_url set)
+    #   * env's last_run was a successful deploy (a stack exists to
+    #     route to — replay_single_environment double-checks this)
+    #   * a routing-relevant field actually changed
+    last_run = row.last_run if isinstance(row.last_run, dict) else {}
+    if (
+        container.settings.caddy_admin_url
+        and last_run.get("status") == "success"
+        and _routing_changed(old_cfg, cleaned_config)
+    ):
+        # Detach from the request lifecycle — fire-and-forget so a
+        # slow Caddy admin call doesn't slow the PUT response.
+        asyncio.create_task(
+            _resync_route_after_save(env_id=row.id, container=container),
+            name=f"env-auto-resync-{row.id}",
+        )
+
     return EnvironmentResponse.from_row(row)
 
 

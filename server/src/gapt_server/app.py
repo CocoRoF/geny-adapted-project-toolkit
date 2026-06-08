@@ -149,6 +149,65 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reconcile_loop(), name="gapt-net-reconciler"
     )
 
+    # Phase N.2.7 — Caddy route reconciler. Periodic safety-net loop
+    # that re-runs `run_boot_resync` every few minutes so any drift
+    # between Caddy's in-memory routes and the DB's expected set
+    # self-heals without the operator having to notice + click
+    # "즉시 라우트 갱신". Catches:
+    #
+    #   * Caddy container restart (routes live in memory only, lost
+    #     on `docker compose restart caddy`).
+    #   * Compose stack restart out-of-band (operator ran `docker
+    #     compose restart` in the terminal — container names change
+    #     across some operations, leaving Caddy's dial target stale).
+    #   * GAPT server clock skew or transient Caddy admin-API blip
+    #     during boot that left a route un-replayed.
+    #
+    # Interval picked at 5 minutes — short enough that drift is
+    # caught before the operator notices, long enough that the load
+    # on the Caddy admin API stays trivial. Failures are logged but
+    # the loop never dies (a single bad iteration shouldn't kill the
+    # safety net for everyone).
+    caddy_reconciler_task: _asyncio.Task[None] | None = None
+    if container.session_factory is not None and settings.caddy_admin_url:
+        from gapt_server.domains.caddy.boot_resync import (  # noqa: PLC0415
+            run_boot_resync as _run_caddy_resync,
+        )
+        from gapt_server.domains.deploy.stack_manager import (  # noqa: PLC0415
+            StackManager as _StackManager,
+        )
+        from gapt_server.domains.sandbox import (  # noqa: PLC0415
+            make_default_client as _make_docker_client,
+        )
+
+        async def _caddy_reconcile_loop() -> None:
+            interval_s = 300.0  # 5 min
+            while True:
+                try:
+                    await _asyncio.sleep(interval_s)
+                except _asyncio.CancelledError:
+                    return
+                try:
+                    sm = _StackManager(client=_make_docker_client())
+                    rep = await _run_caddy_resync(
+                        session_factory=container.session_factory,
+                        settings=settings,
+                        stack_manager=sm,
+                    )
+                    if rep.replayed or rep.replay_failures:
+                        logger.info(
+                            "caddy.reconciler.tick",
+                            replayed=len(rep.replayed),
+                            failures=len(rep.replay_failures),
+                            skipped_no_stack=len(rep.skipped_no_stack),
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("caddy.reconciler.crashed")
+
+        caddy_reconciler_task = _asyncio.create_task(
+            _caddy_reconcile_loop(), name="caddy-route-reconciler"
+        )
+
     # Caddy ↔ DB resync — stale-route cleanup + active-env replay.
     # Stale cleanup is what fixes the "preview-domain typo left a
     # stuck wildcard" class of bug deterministically on every boot.
@@ -219,6 +278,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await reconciler_task
         except BaseException:
             pass
+        if caddy_reconciler_task is not None:
+            caddy_reconciler_task.cancel()
+            try:
+                await caddy_reconciler_task
+            except BaseException:
+                pass
         await container.aclose()
         logger.info("gapt.server.shutdown")
 

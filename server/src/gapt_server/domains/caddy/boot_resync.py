@@ -320,3 +320,69 @@ async def run_boot_resync(
         report=report,
     )
     return report
+
+
+# ──────────────────────────────────────── single-env entry ──
+
+
+async def replay_single_environment(
+    env_id: str,
+    *,
+    session_factory: async_sessionmaker,
+    settings: Settings,
+    stack_manager: StackManager,
+) -> ResyncReport:
+    """Phase N.2.7 — re-register the Caddy route for ONE env, using
+    the same per-env logic ``replay_active_environments`` loops over.
+
+    Used by two new strong-robustness paths:
+      * ``update_environment`` auto-resync: when the operator edits
+        routing-relevant fields (preview_mode / preview_slug /
+        primary_service / primary_port / strip_prefix / upstream_*),
+        we replay this env's route in the background so the operator
+        doesn't have to remember to click "즉시 라우트 갱신".
+      * Periodic reconciler loop in ``app.lifespan`` — every few
+        minutes it walks active envs and re-registers, so a Caddy
+        restart / out-of-band stack restart self-heals without the
+        operator having to notice + click.
+
+    Never raises — returns a report. Skips when:
+      * Caddy isn't configured.
+      * Env row is missing.
+      * Env's last_run isn't a successful deploy (no stack to route to).
+      * No stack is currently running for the env's project.
+    """
+    report = ResyncReport()
+    if not settings.caddy_admin_url or not settings.caddy_preview_domain:
+        return report
+
+    transport = CaddyHttpTransport(base_url=settings.caddy_admin_url)
+    manager = SubdomainManager(
+        client=CaddyAdminClient(transport=transport),
+        preview_domain=settings.caddy_preview_domain,
+        gapt_apex_host=settings.caddy_apex_host,
+    )
+
+    async with session_factory() as db:
+        env = (
+            await db.execute(
+                select(models.Environment).where(models.Environment.id == env_id)
+            )
+        ).scalar_one_or_none()
+    if env is None:
+        return report
+
+    last_run = env.last_run if isinstance(env.last_run, dict) else {}
+    if last_run.get("status") != "success":
+        return report
+
+    try:
+        await _replay_one(env, manager, stack_manager, report)
+    except Exception as exc:  # noqa: BLE001
+        report.replay_failures.append((env.id, str(exc)))
+        logger.warning(
+            "caddy.replay_single.failed",
+            env_id=env.id,
+            error=str(exc),
+        )
+    return report
