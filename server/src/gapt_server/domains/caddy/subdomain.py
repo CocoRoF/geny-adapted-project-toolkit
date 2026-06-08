@@ -129,6 +129,17 @@ def _route_id(workspace_slug: str) -> str:
     return f"gapt-preview-{workspace_slug.lower()}"
 
 
+def _find_handler(handles: list[Any], handler_name: str) -> dict[str, Any] | None:
+    """Walk a Caddy route's `handle` array and return the FIRST entry
+    whose `handler` field matches `handler_name`. Used by the drift-
+    check short-circuit so we can compare upstream dials without
+    care about the order of headers / encode / tls intermediates."""
+    for h in handles:
+        if isinstance(h, dict) and h.get("handler") == handler_name:
+            return h
+    return None
+
+
 def _reverse_proxy_handler(binding: SubdomainBinding) -> dict[str, Any]:
     """Build the Caddy `reverse_proxy` handler for a binding.
 
@@ -486,7 +497,17 @@ class SubdomainManager:
         this slug (`gapt-preview-<slug>`, `-asset`, `-cookie`) is
         cleared from the routes array — so switching mode (e.g.
         path → subdomain) doesn't leave the old fallback routes
-        orphaned."""
+        orphaned.
+
+        Phase N.3 — short-circuits when the live Caddy state already
+        matches the binding. ``_upsert`` does a DELETE-then-POST on
+        the full routes array which, for the few hundred ms between
+        the two calls, leaves Caddy with zero routes. Every keep-
+        alive connection through Caddy (vite HMR ws, chat SSE,
+        polling fetches) gets reset during that window, and the IDE
+        treats the HMR drop as a "force reload page" signal. The
+        5-minute reconciler was hitting this every tick. With this
+        short-circuit, a drift-free system is a true no-op."""
         # Stale @ids to clear regardless of which mode we're entering.
         # This is the cross-mode cleanup — without it a path-mode
         # binding upgraded to subdomain would leave its `-asset` /
@@ -501,6 +522,8 @@ class SubdomainManager:
 
         if binding.mode == PreviewMode.SUBDOMAIN:
             zone = self.subdomain_zone or self.preview_domain
+            if await self._subdomain_route_current(binding, zone):
+                return _full_host(binding.workspace_slug, zone)
             await self._upsert(
                 [_subdomain_route_payload(binding, zone)],
                 extra_clear=full_family,
@@ -508,9 +531,90 @@ class SubdomainManager:
             return _full_host(binding.workspace_slug, zone)
 
         # Path mode — preview_domain is the apex (no subdomain).
+        if await self._path_routes_current(binding):
+            host_unchanged = self.preview_domain.rstrip(".").lower()
+            return f"{host_unchanged}/preview/{binding.workspace_slug.lower()}"
         await self._upsert(_path_route_payloads(binding), extra_clear=full_family)
         host = self.preview_domain.rstrip(".").lower()
         return f"{host}/preview/{binding.workspace_slug.lower()}"
+
+    async def _subdomain_route_current(
+        self, binding: SubdomainBinding, zone: str
+    ) -> bool:
+        """True when the live Caddy route for this slug already has
+        the expected host + upstream dial. Caller skips `_upsert` so
+        the DELETE-then-POST cycle never fires for drift-free state.
+
+        Compares only the routing-critical fields (host match list +
+        reverse_proxy first-upstream dial). Doesn't try to compare
+        every header transform / sticky / TLS knob — those are
+        op-trivial differences that would force a rewrite even when
+        the user-visible behaviour is unchanged."""
+        primary_id = _route_id(binding.workspace_slug)
+        try:
+            route = await self.client.get(f"/id/{primary_id}")
+        except CaddyAdminError:
+            return False
+        if not isinstance(route, dict):
+            return False
+
+        expected_host = _full_host(binding.workspace_slug, zone)
+        hosts = (route.get("match") or [{}])[0].get("host") or []
+        if expected_host not in hosts:
+            return False
+
+        proxy = _find_handler(route.get("handle") or [], "reverse_proxy")
+        if proxy is None:
+            return False
+        upstreams = proxy.get("upstreams") or []
+        if not upstreams:
+            return False
+        expected_dial = (
+            f"{binding.upstream_host}:{int(binding.upstream_port)}"
+        )
+        return upstreams[0].get("dial") == expected_dial
+
+    async def _path_routes_current(self, binding: SubdomainBinding) -> bool:
+        """Path-mode counterpart of `_subdomain_route_current`. Checks
+        only the primary `/preview/<slug>` route — the Referer / cookie
+        fallbacks are derived from the same upstream, so when the
+        primary's dial matches the rest are guaranteed to match too
+        (they were produced from the same binding the previous time).
+
+        Short-circuit purpose is identical: keep the reconciler's
+        idle ticks from blasting Caddy with DELETE-then-POST."""
+        primary_id = _route_id(binding.workspace_slug)
+        try:
+            route = await self.client.get(f"/id/{primary_id}")
+        except CaddyAdminError:
+            return False
+        if not isinstance(route, dict):
+            return False
+
+        # Path mode's primary route's `match` carries the path
+        # prefix; host is implicit (the apex). We don't compare it
+        # explicitly — what matters is the upstream is still pointing
+        # at the right container.
+        proxy = _find_handler(route.get("handle") or [], "reverse_proxy")
+        if proxy is None:
+            # Path mode's handle is `subroute` → reverse_proxy. Walk
+            # one level if needed.
+            subroute = _find_handler(route.get("handle") or [], "subroute")
+            if isinstance(subroute, dict):
+                inner_routes = subroute.get("routes") or []
+                for r in inner_routes:
+                    proxy = _find_handler(r.get("handle") or [], "reverse_proxy")
+                    if proxy is not None:
+                        break
+        if proxy is None:
+            return False
+        upstreams = proxy.get("upstreams") or []
+        if not upstreams:
+            return False
+        expected_dial = (
+            f"{binding.upstream_host}:{int(binding.upstream_port)}"
+        )
+        return upstreams[0].get("dial") == expected_dial
 
     async def _upsert(
         self,

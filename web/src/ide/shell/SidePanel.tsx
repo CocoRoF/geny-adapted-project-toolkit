@@ -40,7 +40,11 @@ export function SidePanel({
   return (
     <aside
       data-view={view}
-      className="flex h-full min-w-0 flex-col bg-bg-elevated"
+      // Phase N.3 — explicit right border so the seam against the
+      // editor column is obvious (the SplitHandle's hover-only
+      // accent was too subtle for the operator to find at rest).
+      // `border-border-strong` matches the chat rail's left edge.
+      className="flex h-full min-w-0 flex-col border-r border-border-strong bg-bg-elevated"
     >
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3 text-[11px] font-medium uppercase tracking-wider text-fg-muted">
         {TITLES[view]}

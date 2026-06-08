@@ -410,10 +410,13 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
             <div
               className={
                 layout.editorOpen
-                  ? "h-full shrink-0 overflow-hidden border-l border-border bg-bg-elevated"
+                  ? // Phase N.3 — `border-border-strong` mirrors the
+                    // sidebar's right edge so both seams against the
+                    // editor look intentional + symmetric.
+                    "h-full shrink-0 overflow-hidden border-l border-border-strong bg-bg-elevated"
                   : // Editor hidden → chat grows to fill the row instead
                     // of being pinned to a fixed pixel width.
-                    "h-full min-w-0 flex-1 overflow-hidden border-l border-border bg-bg-elevated"
+                    "h-full min-w-0 flex-1 overflow-hidden border-l border-border-strong bg-bg-elevated"
               }
               style={layout.editorOpen ? { width: `${layout.chatWidth}px` } : undefined}
             >

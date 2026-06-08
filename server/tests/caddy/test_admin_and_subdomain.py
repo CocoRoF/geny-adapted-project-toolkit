@@ -84,10 +84,18 @@ async def test_subdomain_manager_path_mode_default() -> None:
     )
 
     assert host == "gapt.example/preview/01kws"
-    # Three-call sequence: GET, DELETE, POST.
-    assert [c[0] for c in calls] == ["GET", "DELETE", "POST"]
-    assert calls[2][1] == "/config/apps/http/servers/main/routes"
-    posted = calls[2][2]
+    # Four-call sequence: drift-check GET, _upsert GET, DELETE, POST.
+    # Phase N.3 — register() now does a "is the current Caddy state
+    # already what we want" probe via GET /id/<id> before calling
+    # _upsert. When the probe says yes (route is current), the whole
+    # DELETE-then-POST cycle is skipped to avoid disturbing keep-
+    # alive connections (vite HMR, chat SSE) that flow through Caddy.
+    # In this test the mock transport returns the routes array (not
+    # a dict) for the /id/ GET, so the short-circuit detects "not
+    # current" and full upsert runs.
+    assert [c[0] for c in calls] == ["GET", "GET", "DELETE", "POST"]
+    assert calls[3][1] == "/config/apps/http/servers/main/routes"
+    posted = calls[3][2]
     # The IDE catch-all should still be present, and our new route
     # should be inserted BEFORE it.
     ide_idx = next(
@@ -130,7 +138,7 @@ async def test_subdomain_manager_path_mode_strip_prefix_opt_in() -> None:
             strip_prefix=True,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     # The path-match primary route carries the rewrite handler (the
     # Referer-only `-asset` fallback no longer rewrites since
     # strip_prefix=True means the upstream serves at root). Find it
@@ -167,7 +175,7 @@ async def test_subdomain_manager_subdomain_mode() -> None:
     )
 
     assert host == "01kws.preview.gapt.example"
-    posted = calls[2][2]
+    posted = calls[3][2]
     assert posted[0]["match"][0]["host"] == ["01kws.preview.gapt.example"]
     assert posted[0]["handle"][0]["handler"] == "reverse_proxy"
     assert posted[0]["handle"][0]["upstreams"][0]["dial"] == "10.0.0.5:3000"
@@ -235,7 +243,7 @@ async def test_upsert_inserts_before_preview_safety_net_404() -> None:
     await manager.register(
         SubdomainBinding(workspace_slug="01KWS", upstream_host="gapt-ws-01kws", upstream_port=3000)
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     new_idx = next(i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws")
     safety_net_idx = next(
         i
@@ -287,7 +295,7 @@ async def test_upsert_referer_fallback_lands_above_api_route() -> None:
             strip_prefix=True,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     asset_idx = next(
         i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws-asset"
     )
@@ -345,7 +353,7 @@ async def test_subdomain_manager_https_upstream_with_host_override() -> None:
             upstream_tls_insecure=True,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
     proxy = next(h for h in primary["handle"] if h.get("handler") == "reverse_proxy")
     assert proxy["transport"]["protocol"] == "http"
@@ -379,7 +387,7 @@ async def test_cookie_pinning_sets_short_lived_cookie_and_fallback_route() -> No
             upstream_port=3000,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     # Primary route carries Set-Cookie via a `headers` response handler.
     primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
     headers_handler = next(h for h in primary["handle"] if h["handler"] == "headers")
@@ -430,7 +438,7 @@ async def test_cookie_pinning_disabled_when_ttl_zero() -> None:
             cookie_pinning_ttl_s=0,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
     assert not any(h["handler"] == "headers" for h in primary["handle"])
     assert not any(
@@ -487,7 +495,7 @@ async def test_switching_from_path_to_subdomain_drops_stale_fallback_routes() ->
             mode=PreviewMode.SUBDOMAIN,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     # Exactly one route bearing the slug family should remain — the
     # new host-keyed subdomain route. The old `-asset` and `-cookie`
     # routes must have been cleared.
@@ -526,7 +534,7 @@ async def test_cookie_fallback_lands_above_api_route_and_safety_net() -> None:
     await manager.register(
         SubdomainBinding(workspace_slug="01KWS", upstream_host="gapt-ws-01kws", upstream_port=3000)
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     cookie_idx = next(
         i for i, r in enumerate(posted) if r.get("@id") == "gapt-preview-01kws-cookie"
     )
@@ -567,7 +575,7 @@ async def test_cookie_doc_redirect_route_exists_and_uses_307() -> None:
             upstream_port=3000,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     doc = next(
         (r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie-doc"),
         None,
@@ -607,7 +615,7 @@ async def test_cookie_doc_redirect_excluded_when_pinning_off() -> None:
             cookie_pinning_ttl_s=0,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     cookie_doc = [r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie-doc"]
     cookie = [r for r in posted if r.get("@id") == "gapt-preview-01kws-cookie"]
     assert cookie_doc == [], "cookie-doc should not exist when pinning disabled"
@@ -644,7 +652,7 @@ async def test_fallback_routes_exclude_gapt_reserved_paths() -> None:
             upstream_port=3000,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     expected_reserved = ["/_gapt/*", "/preview", "/preview/*", "/health"]
     for rid_suffix in ("-asset", "-cookie"):
         route = next(
@@ -694,7 +702,7 @@ async def test_zone_catchall_404_inserted_after_specific_hosts() -> None:
             mode=PreviewMode.SUBDOMAIN,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     # [0] specific host route → terminal
     # [1] zone catch-all 404 → terminal, with `not` clause for the
     #     GAPT apex so visiting GAPT itself still works
@@ -735,7 +743,7 @@ async def test_zone_catchall_no_exclusion_when_apex_unset() -> None:
             mode=PreviewMode.SUBDOMAIN,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     catchall = next(p for p in posted if p.get("@id") == "gapt-preview-zone-catchall")
     matcher = catchall.get("match", [{}])[0]
     assert matcher.get("host") == ["*.previews.gapt.example"]
@@ -779,7 +787,7 @@ async def test_subdomain_mode_host_route_inserted_at_index_0() -> None:
             mode=PreviewMode.SUBDOMAIN,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     # The subdomain host route must be at index 0 — before every
     # path matcher.
     host_route = posted[0]
@@ -821,7 +829,7 @@ async def test_subdomain_register_clears_old_mode_routes() -> None:
             mode=PreviewMode.SUBDOMAIN,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     ids = [r.get("@id") for r in posted]
     # All path-mode family entries dropped, only the new subdomain
     # host route should reference the slug.
@@ -865,7 +873,7 @@ async def test_subdomain_zone_split_from_preview_domain() -> None:
     )
     # Returned host uses the zone, not preview_domain.
     assert host == "hr-test.hrletsgo.me"
-    posted = calls[2][2]
+    posted = calls[3][2]
     host_route = next(r for r in posted if r.get("@id") == "gapt-preview-hr-test")
     assert host_route["match"][0]["host"] == ["hr-test.hrletsgo.me"]
     # Zone catch-all matches `*.<subdomain_zone>` and excludes the
@@ -925,8 +933,118 @@ async def test_subdomain_manager_http_upstream_omits_transport() -> None:
             upstream_port=3000,
         )
     )
-    posted = calls[2][2]
+    posted = calls[3][2]
     primary = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
     proxy = next(h for h in primary["handle"] if h.get("handler") == "reverse_proxy")
     assert "transport" not in proxy
+
+
+@pytest.mark.asyncio
+async def test_register_short_circuits_when_subdomain_route_already_current() -> None:
+    """Phase N.3 — drift-free reconciler tick.
+
+    When the live Caddy route under the binding's @id already has the
+    expected host + upstream dial, ``register`` returns the URL host
+    WITHOUT executing the DELETE-then-POST cycle inside ``_upsert``.
+
+    Driver: the 5-minute reconciler loop was calling register() every
+    tick on every active env. Each register triggered DELETE-then-
+    POST on the full routes array which left Caddy with zero routes
+    for a few hundred ms — long enough to reset every keep-alive
+    connection (vite HMR websocket, chat SSE streams, ...). With the
+    IDE itself proxied through Caddy, the HMR reset was being
+    interpreted by the browser as "force reload page" and the IDE
+    refreshed every five minutes for the operator. This short-circuit
+    is the fix."""
+    calls: list[tuple[str, str, Any]] = []
+    expected_dial = "10.0.0.5:3000"
+    current_route = {
+        "@id": "gapt-preview-01kws",
+        "match": [{"host": ["01kws.preview.gapt.example"]}],
+        "handle": [
+            {
+                "handler": "reverse_proxy",
+                "upstreams": [{"dial": expected_dial}],
+            }
+        ],
+        "terminal": True,
+    }
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        # The drift check hits `/id/gapt-preview-01kws` — return the
+        # already-registered route. Anything else is unexpected for a
+        # drift-free path.
+        if method == "GET" and path == "/id/gapt-preview-01kws":
+            return (200, current_route)
+        # If _upsert is reached at all the test fails — assert below.
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="preview.gapt.example")
+    host = await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="10.0.0.5",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+
+    assert host == "01kws.preview.gapt.example"
+    # ONE GET only — the drift check. No second GET (which _upsert
+    # would do), no DELETE, no POST.
+    methods = [c[0] for c in calls]
+    assert methods == ["GET"], methods
+    assert calls[0][1] == "/id/gapt-preview-01kws"
+
+
+@pytest.mark.asyncio
+async def test_register_does_full_upsert_when_subdomain_dial_drifted() -> None:
+    """Counterpart of the short-circuit test: when the live Caddy
+    upstream dial has drifted (e.g. compose recreated the container
+    so its name changed), register() must NOT short-circuit. The
+    full DELETE-then-POST cycle re-registers the route with the new
+    container name."""
+    calls: list[tuple[str, str, Any]] = []
+    stale_route = {
+        "@id": "gapt-preview-01kws",
+        "match": [{"host": ["01kws.preview.gapt.example"]}],
+        "handle": [
+            {
+                "handler": "reverse_proxy",
+                "upstreams": [{"dial": "old-container:3000"}],  # drift!
+            }
+        ],
+        "terminal": True,
+    }
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET" and path == "/id/gapt-preview-01kws":
+            return (200, stale_route)
+        if method == "GET":
+            return (200, [stale_route])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="preview.gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="new-container",  # drifted to a different name
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+
+    # Drift detected → full sequence: drift GET, upsert GET, DELETE,
+    # POST. The POSTed route's upstream dial must point at the NEW
+    # container.
+    methods = [c[0] for c in calls]
+    assert methods == ["GET", "GET", "DELETE", "POST"], methods
+    posted = calls[3][2]
+    new_route = next(r for r in posted if r.get("@id") == "gapt-preview-01kws")
+    proxy = next(h for h in new_route["handle"] if h.get("handler") == "reverse_proxy")
+    assert proxy["upstreams"][0]["dial"] == "new-container:3000"
     assert "headers" not in proxy
