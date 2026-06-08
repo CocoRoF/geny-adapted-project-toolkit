@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleSlash,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import type { ToolPair } from "@/chat/tool-pair";
@@ -38,7 +45,18 @@ export function ToolCallCard({ pair }: Props) {
   const errorCode = pair.error ? asString(pair.error.data["exec_code"], "error") : null;
   const errorReason = pair.error ? asString(pair.error.data["reason"]) : null;
 
-  const status = pair.error ? "error" : pair.result ? "ok" : "running";
+  // Phase N.3 — "abandoned" is distinct from "error" and "running":
+  // the call's result frame never arrived because the session
+  // terminated under it. Keep it visually quieter (warn-tone, no
+  // spinner) so the operator can scan a transcript and recognise the
+  // stuck-mid-turn case at a glance.
+  const status: "error" | "ok" | "abandoned" | "running" = pair.error
+    ? "error"
+    : pair.result
+      ? "ok"
+      : pair.abandoned
+        ? "abandoned"
+        : "running";
   const statusBadge =
     status === "error" ? (
       <Badge tone="danger">
@@ -49,6 +67,11 @@ export function ToolCallCard({ pair }: Props) {
       <Badge tone="success">
         <CheckCircle2 className="mr-1 h-2.5 w-2.5" />
         {t("chat.tool.ok")}
+      </Badge>
+    ) : status === "abandoned" ? (
+      <Badge tone="warn">
+        <CircleSlash className="mr-1 h-2.5 w-2.5" />
+        {t("chat.tool.abandoned")}
       </Badge>
     ) : (
       <Badge tone="accent">
@@ -61,12 +84,15 @@ export function ToolCallCard({ pair }: Props) {
     <div
       data-testid="tool-card"
       data-tool-name={tool}
+      data-status={status}
       className={
         status === "error"
           ? "rounded-md border border-danger/40 bg-danger/5"
           : status === "ok"
             ? "rounded-md border border-border bg-bg-elevated"
-            : "rounded-md border border-accent/40 bg-accent/5"
+            : status === "abandoned"
+              ? "rounded-md border border-warn/40 bg-warn/5"
+              : "rounded-md border border-accent/40 bg-accent/5"
       }
     >
       {/* Phase N.2.7 — `min-w-0` on the flex container so the trailing
@@ -114,6 +140,11 @@ export function ToolCallCard({ pair }: Props) {
               <pre className="max-h-40 overflow-auto rounded bg-bg-subtle p-2 text-[11px] text-fg-muted">
                 {JSON.stringify(pair.result.data, null, 2)}
               </pre>
+            </div>
+          ) : null}
+          {status === "abandoned" ? (
+            <div className="rounded border border-warn/40 bg-warn/10 p-2 text-[11px] text-warn">
+              {t("chat.tool.abandoned_hint")}
             </div>
           ) : null}
           {pair.error && errorCode ? (

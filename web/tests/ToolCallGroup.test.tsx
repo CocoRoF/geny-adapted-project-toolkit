@@ -23,16 +23,18 @@ function pair(name: string, opts: { running?: boolean; error?: boolean } = {}): 
       result: null,
       error: ev(seq + 1, "error", { exec_code: "exec.tool.failed", tool_use_id: `t-${seq}` }),
       running: false,
+      abandoned: false,
     };
   }
   if (opts.running) {
-    return { call, result: null, error: null, running: true };
+    return { call, result: null, error: null, running: true, abandoned: false };
   }
   return {
     call,
     result: ev(seq + 1, "tool_result", { tool: name, tool_use_id: `t-${seq}`, content: "ok" }),
     error: null,
     running: false,
+    abandoned: false,
   };
 }
 

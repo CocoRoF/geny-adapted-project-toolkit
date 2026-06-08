@@ -506,6 +506,9 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.tool.running": "실행 중…",
   "chat.tool.ok": "성공",
   "chat.tool.error": "실패",
+  "chat.tool.abandoned": "중단됨",
+  "chat.tool.abandoned_hint":
+    "이 도구의 결과가 도착하기 전에 세션이 종료됐습니다. 작업이 완료됐는지 여부는 불확실하니, 쓰기 작업이었다면 워크스페이스 상태를 확인하세요.",
   "chat.tool.expand": "출력 보기",
   "chat.tool.collapse": "출력 숨기기",
   "chat.tool.args": "인자",

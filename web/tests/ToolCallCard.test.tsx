@@ -29,6 +29,7 @@ describe("<ToolCallCard />", () => {
       result: null,
       error: null,
       running: true,
+      abandoned: false,
     });
     expect(screen.getByText(/Running…|실행 중…/)).toBeInTheDocument();
     expect(screen.getByText("gapt_grep")).toBeInTheDocument();
@@ -40,6 +41,7 @@ describe("<ToolCallCard />", () => {
       result: ev(2, "tool_result", { tool: "gapt_read", content: "hi" }),
       error: null,
       running: false,
+      abandoned: false,
     });
     expect(screen.getByText(/^OK$|^성공$/)).toBeInTheDocument();
   });
@@ -54,6 +56,7 @@ describe("<ToolCallCard />", () => {
         reason: "PolicyEngine denied",
       }),
       running: false,
+      abandoned: false,
     });
     expect(screen.getByText(/Failed|실패/)).toBeInTheDocument();
     // Expand to confirm the friendly message renders.
@@ -69,6 +72,7 @@ describe("<ToolCallCard />", () => {
       result: ev(2, "tool_result", { tool: "gapt_read", content: "hello" }),
       error: null,
       running: false,
+      abandoned: false,
     });
     expect(screen.queryByText("hello")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Show output|출력 보기/ }));

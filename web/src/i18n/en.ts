@@ -503,6 +503,9 @@ export const en = {
   "chat.tool.running": "Running…",
   "chat.tool.ok": "OK",
   "chat.tool.error": "Failed",
+  "chat.tool.abandoned": "Interrupted",
+  "chat.tool.abandoned_hint":
+    "The session ended before this tool returned a result. The action may or may not have completed — check the workspace if it was a write.",
   "chat.tool.expand": "Show output",
   "chat.tool.collapse": "Hide output",
   "chat.tool.args": "Arguments",
