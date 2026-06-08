@@ -3,6 +3,7 @@ import {
   FlaskConical,
   Files,
   GitBranch,
+  Globe,
   KeyRound,
   type LucideIcon,
   MessageSquare,
@@ -12,7 +13,13 @@ import {
 
 import { cn } from "@/ui/cn";
 
-export type SideView = "files" | "search" | "git" | "tests" | "env";
+export type SideView =
+  | "files"
+  | "search"
+  | "git"
+  | "tests"
+  | "env"
+  | "services";
 
 interface Item {
   id: SideView;
@@ -27,6 +34,10 @@ const ITEMS: Item[] = [
   { id: "git", icon: GitBranch, label: "Source Control", shortcut: "Ctrl+Shift+G" },
   { id: "tests", icon: FlaskConical, label: "Tests", shortcut: "Ctrl+Shift+T" },
   { id: "env", icon: KeyRound, label: ".env Files", shortcut: "Ctrl+Shift+V" },
+  // Phase N.3 — "Services" launches dev servers + lets the user
+  // open a Preview tab in the editor column (VSCode Simple Browser
+  // parity). Replaces the old top-level "개발" tab.
+  { id: "services", icon: Globe, label: "Services", shortcut: "Ctrl+Shift+S" },
 ];
 
 interface Props {

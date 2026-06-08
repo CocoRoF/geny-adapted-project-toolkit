@@ -18,17 +18,30 @@ interface Props {
   workspaceStatus: string;
 }
 
-/** Phase F — what the editor column is showing right now.
+/** Phase N.3 — One tab in the editor column.
  *
- * - `file` : Monaco editor on the workspace file at `path`.
- * - `diff` : Single-file diff view (working tree vs HEAD) for `path`.
+ * - `file`    : Monaco editor on the workspace file at `path`.
+ * - `diff`    : Single-file diff view (working tree vs HEAD) for `path`.
+ * - `preview` : Embedded browser-style iframe at `url` (VSCode Simple
+ *               Browser parity). Opened from the Services sidebar.
  *
- * `null` (in the parent state) means the column is empty — the
- * column either renders a tiny "open something" hint or stays
- * hidden entirely (controlled by `LayoutState.editorOpen`). */
-export type EditorView =
-  | { kind: "file"; path: string }
-  | { kind: "diff"; path: string };
+ * `id` is the stable tab identity used for activate/close. For file
+ * and diff tabs it's derived from `path` so re-opening the same file
+ * activates the existing tab instead of stacking duplicates; for
+ * preview tabs it's the URL for the same reason. */
+export type EditorTab =
+  | { id: string; kind: "file"; path: string }
+  | { id: string; kind: "diff"; path: string }
+  | { id: string; kind: "preview"; url: string; label: string };
+
+/** Stable id derivation — caller can compare strings without
+ * having to know each kind's identity rule. */
+export function tabIdFor(
+  kind: EditorTab["kind"],
+  key: string,
+): string {
+  return `${kind}:${key}`;
+}
 
 const STORAGE_KEY_PREFIX = "gapt.ide.shell";
 
@@ -125,25 +138,71 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
   const navigate = useNavigate();
   const { t } = useI18n();
   const [layout, setLayout] = useState<LayoutState>(() => readStored(workspaceId));
-  // Phase F — Editor area content. `null` means the area is empty
-  // (placeholder shown when the column is open + auto-collapsed
-  // when paired with `editorOpen=false`). Switching between file
-  // edit and diff is just changing the union tag — same column,
-  // different renderer.
-  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  // Phase N.3 — Editor column is now multi-tab (VSCode-style). `tabs`
+  // is the open set in insertion order; `activeTabId` is which one's
+  // body is visible. Empty `tabs` renders a placeholder; closing the
+  // last tab also collapses the column via `editorOpen=false`.
+  const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
-  const openFileInEditor = useCallback((path: string) => {
-    setEditorView({ kind: "file", path });
+  /** Add a tab if one with this id doesn't already exist; activate
+   * it either way. The editor column auto-opens so the user always
+   * sees what they just clicked. */
+  const openTab = useCallback((tab: EditorTab) => {
+    setTabs((prev) =>
+      prev.some((t) => t.id === tab.id) ? prev : [...prev, tab],
+    );
+    setActiveTabId(tab.id);
     setLayout((s) => (s.editorOpen ? s : { ...s, editorOpen: true }));
   }, []);
-  const openDiffInEditor = useCallback((path: string) => {
-    setEditorView({ kind: "diff", path });
-    setLayout((s) => (s.editorOpen ? s : { ...s, editorOpen: true }));
+
+  const openFileInEditor = useCallback(
+    (path: string) => {
+      openTab({ id: tabIdFor("file", path), kind: "file", path });
+    },
+    [openTab],
+  );
+  const openDiffInEditor = useCallback(
+    (path: string) => {
+      openTab({ id: tabIdFor("diff", path), kind: "diff", path });
+    },
+    [openTab],
+  );
+  const openPreviewTab = useCallback(
+    (url: string, label: string) => {
+      openTab({ id: tabIdFor("preview", url), kind: "preview", url, label });
+    },
+    [openTab],
+  );
+
+  /** Close one tab; if it was active, fall back to the previous
+   * sibling (or the next, if none). Closing the last tab keeps the
+   * column open but with the placeholder so the user can still see
+   * the close-all `×` and toggle terminal — VSCode parity. */
+  const closeTab = useCallback((id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx < 0) return prev;
+      const next = prev.filter((t) => t.id !== id);
+      setActiveTabId((current) => {
+        if (current !== id) return current;
+        if (next.length === 0) return null;
+        const fallback = next[Math.max(0, idx - 1)] ?? next[0];
+        return fallback?.id ?? null;
+      });
+      return next;
+    });
   }, []);
-  const closeEditor = useCallback(() => {
-    setEditorView(null);
+
+  /** Hide the editor column entirely (the `×` in the column header).
+   * Tabs are preserved so re-opening shows the same set. */
+  const closeEditorColumn = useCallback(() => {
     setLayout((s) => ({ ...s, editorOpen: false }));
   }, []);
+
+  const activeTab = activeTabId
+    ? tabs.find((t) => t.id === activeTabId) ?? null
+    : null;
 
   // Phase D.5 — palette-driven layout presets. One usePaletteAction
   // per preset (the cmdk fuzzy filter handles ranking).
@@ -231,6 +290,12 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
       } else if (code === "KeyV") {
         e.preventDefault();
         setSideView(layout.sideView === "env" ? null : "env");
+      } else if (code === "KeyS") {
+        // Phase N.3 — Services sidebar (replaces the old top-level
+        // "개발" tab). Doesn't clash with Monaco's Ctrl+S because that
+        // command needs no Shift.
+        e.preventDefault();
+        setSideView(layout.sideView === "services" ? null : "services");
       } else if (code === "KeyA") {
         e.preventDefault();
         setChatOpen(!layout.chatOpen);
@@ -274,6 +339,7 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
                 workspaceId={workspaceId}
                 onOpenFile={openFileInEditor}
                 onOpenDiff={openDiffInEditor}
+                onOpenPreview={openPreviewTab}
               />
             </div>
             <SplitHandle
@@ -297,8 +363,11 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <EditorArea
               workspaceId={workspaceId}
-              view={editorView}
-              onClose={closeEditor}
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onActivateTab={setActiveTabId}
+              onCloseTab={closeTab}
+              onCloseColumn={closeEditorColumn}
             />
             {layout.bottomTab !== null ? (
               <>
@@ -357,7 +426,7 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
       <StatusBar
         branch={branch}
         workspaceStatus={workspaceStatus}
-        openFile={editorView?.kind === "file" ? editorView.path : null}
+        openFile={activeTab?.kind === "file" ? activeTab.path : null}
         onToggleTerminal={onToggleTerminal}
         editorOpen={layout.editorOpen}
         onOpenEditor={() => setEditorOpen(true)}

@@ -330,8 +330,6 @@ export const en = {
   "ide.panel.git": "Git",
   "workspace.view.aria_label": "Workspace view",
   "workspace.view.ide": "IDE",
-  "workspace.view.service": "Service",
-  "workspace.view.dev": "Dev",
   "workspace.view.deploy": "Deploy",
 
   // --- Deploy workspace ---

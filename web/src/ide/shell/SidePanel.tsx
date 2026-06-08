@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { EnvEditor } from "@/ide/EnvEditor";
 import { FileTree } from "@/ide/FileTree";
 import { GitPanel } from "@/ide/GitPanel";
+import { ServicesPanel } from "@/ide/ServicesPanel";
 import type { SideView } from "@/ide/shell/ActivityBar";
 import { TestRunnerPanel } from "@/ide/TestRunnerPanel";
 
@@ -13,6 +14,9 @@ interface Props {
   /** Phase F — Source Control's per-file row routes its click into
    *  the editor column's diff view (VSCode parity). */
   onOpenDiff: (path: string) => void;
+  /** Phase N.3 — "Open in preview" from the Services panel adds a
+   *  preview tab to the editor column. */
+  onOpenPreview: (url: string, label: string) => void;
 }
 
 const TITLES: Record<SideView, string> = {
@@ -21,11 +25,18 @@ const TITLES: Record<SideView, string> = {
   git: "Source Control",
   tests: "Tests",
   env: ".env Files",
+  services: "Services",
 };
 
 /** The toggleable left panel. Title strip on top, view body fills
  * the rest. Width is controlled by the parent shell. */
-export function SidePanel({ view, workspaceId, onOpenFile, onOpenDiff }: Props) {
+export function SidePanel({
+  view,
+  workspaceId,
+  onOpenFile,
+  onOpenDiff,
+  onOpenPreview,
+}: Props) {
   return (
     <aside
       data-view={view}
@@ -45,6 +56,8 @@ export function SidePanel({ view, workspaceId, onOpenFile, onOpenDiff }: Props) 
           <TestRunnerPanel workspaceId={workspaceId} />
         ) : view === "env" ? (
           <EnvEditor workspaceId={workspaceId} onOpenFile={onOpenFile} />
+        ) : view === "services" ? (
+          <ServicesPanel workspaceId={workspaceId} onOpenPreview={onOpenPreview} />
         ) : null}
       </div>
     </aside>

@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Rocket, Server } from "lucide-react";
+import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Rocket } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -13,13 +13,15 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { DeployWorkspace } from "@/ide/DeployWorkspace";
 import { IdeShell } from "@/ide/shell/IdeShell";
 import { IntrospectionWizard } from "@/ide/IntrospectionWizard";
-import { ServiceWorkspace } from "@/ide/ServiceWorkspace";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 
 const WIZARD_DISMISS_KEY_PREFIX = "gapt.ide.wizard.dismissed";
 
-type WorkspaceView = "ide" | "service" | "deploy";
+// Phase N.3 — "service" was folded into the IDE shell as a sidebar
+// view ("서비스" in the ActivityBar) + preview tabs in the editor
+// column. Only IDE / deploy remain as workspace-level views.
+type WorkspaceView = "ide" | "deploy";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -126,12 +128,6 @@ export function WorkspaceIde() {
               onClick={() => setView("ide")}
             />
             <ViewTab
-              active={view === "service"}
-              icon={<Server className="h-3.5 w-3.5" />}
-              label={t("workspace.view.dev")}
-              onClick={() => setView("service")}
-            />
-            <ViewTab
               active={view === "deploy"}
               icon={<Rocket className="h-3.5 w-3.5" />}
               label={t("workspace.view.deploy")}
@@ -174,8 +170,6 @@ export function WorkspaceIde() {
               branch={workspace.branch}
               workspaceStatus={workspace.status}
             />
-          ) : view === "service" ? (
-            <ServiceWorkspace workspaceId={wid} />
           ) : (
             <DeployWorkspace projectId={pid} />
           )}

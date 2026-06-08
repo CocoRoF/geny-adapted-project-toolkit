@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Clipboard,
   ExternalLink,
   Eye,
+  Globe,
   Loader2,
   Pencil,
   Play,
@@ -32,6 +33,11 @@ import { Field, Input } from "@/ui/Input";
 
 interface Props {
   workspaceId: string;
+  /** Phase N.3 — when the panel is mounted inside the IDE SidePanel,
+   *  clicking the globe on an exposed service opens a Preview tab in
+   *  the editor column. Optional: when undefined the globe button is
+   *  hidden (panel still works for service start / stop / expose). */
+  onOpenPreview?: (url: string, label: string) => void;
 }
 
 const POLL_MS = 2000;
@@ -45,7 +51,7 @@ const POLL_MS = 2000;
  * the registry; this poll is the cheapest way to surface auto_port
  * + exit-code transitions without piling another SSE channel onto
  * the connection budget. */
-export function ServicesPanel({ workspaceId }: Props) {
+export function ServicesPanel({ workspaceId, onOpenPreview }: Props) {
   const [services, setServices] = useState<WorkspaceService[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -132,6 +138,7 @@ export function ServicesPanel({ workspaceId }: Props) {
               onChanged={refresh}
               tailing={tailLabel === svc.label}
               onToggleTail={() => setTailLabel((c) => (c === svc.label ? null : svc.label))}
+              {...(onOpenPreview ? { onOpenPreview } : {})}
             />
           ))
         )}
@@ -218,12 +225,14 @@ function ServiceRow({
   onChanged,
   tailing,
   onToggleTail,
+  onOpenPreview,
 }: {
   service: WorkspaceService;
   workspaceId: string;
   onChanged: () => Promise<void>;
   tailing: boolean;
   onToggleTail: () => void;
+  onOpenPreview?: (url: string, label: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
 
@@ -262,14 +271,46 @@ function ServiceRow({
 
       {service.bound_url ? (
         <div className="flex items-center gap-2 border-t border-border bg-bg-subtle px-2.5 py-1">
-          <ExternalLink className="h-3 w-3 shrink-0 text-accent" />
+          <Globe className="h-3 w-3 shrink-0 text-accent" />
+          {onOpenPreview ? (
+            // Phase N.3 — the URL text itself is the primary "open
+            // inside IDE" action. Matches the user's mental model:
+            // they see a prominent link and expect it to render inline
+            // (VSCode Simple Browser parity). The small external-link
+            // icon to the right is the secondary "kick out to browser"
+            // escape hatch.
+            <button
+              type="button"
+              onClick={() => {
+                if (service.bound_url) {
+                  onOpenPreview(service.bound_url, service.label);
+                }
+              }}
+              title="Open in IDE preview tab"
+              className="truncate text-left text-[11px] text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              {service.bound_url}
+            </button>
+          ) : (
+            // Fallback for callers that don't wire onOpenPreview —
+            // a plain external link.
+            <a
+              href={service.bound_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="truncate text-[11px] text-accent hover:underline"
+            >
+              {service.bound_url}
+            </a>
+          )}
           <a
             href={service.bound_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="truncate text-[11px] text-accent hover:underline"
+            title="Open in new browser tab"
+            className="grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-bg hover:text-fg"
           >
-            {service.bound_url}
+            <ExternalLink className="h-3 w-3" />
           </a>
           <Button
             variant="ghost"

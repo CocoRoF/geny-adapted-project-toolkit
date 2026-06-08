@@ -333,8 +333,6 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.panel.git": "Git",
   "workspace.view.aria_label": "워크스페이스 뷰",
   "workspace.view.ide": "IDE",
-  "workspace.view.service": "서비스",
-  "workspace.view.dev": "개발",
   "workspace.view.deploy": "배포",
 
   // --- Deploy workspace ---
