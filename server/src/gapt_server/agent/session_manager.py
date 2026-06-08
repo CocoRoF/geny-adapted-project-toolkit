@@ -78,6 +78,22 @@ class AgentSessionHandle:
     worktree_path: str = ""
     status: enums.AgentSessionStatus = enums.AgentSessionStatus.ACTIVE
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Phase N.3 — per-session USD cap enforced by GAPT's invoke handler.
+    # `None` means no cap (free mode). Carried through to the runtime
+    # so a rehydrate after server restart preserves the policy.
+    cost_budget_usd: float | None = None
+    # Phase N.3 — snapshot of the persisted token / cost counters at
+    # handle-construction time. Zero for freshly created sessions,
+    # populated from the DB row when rehydrating. The router uses
+    # these to seed the in-memory `CostAccumulator` so the budget
+    # gate sees the FULL cumulative spend across all server lives
+    # (pre-fix, every rehydrate reset the accumulator to 0 and the
+    # next cost_callback would clobber the DB's totals back down).
+    initial_cost_usd: float = 0.0
+    initial_input_tokens: int = 0
+    initial_output_tokens: int = 0
+    initial_cache_write_tokens: int = 0
+    initial_cache_read_tokens: int = 0
 
 
 @dataclass
@@ -171,6 +187,15 @@ class ProjectAwareSessionManager:
                 f"pipeline boot for env {env_manifest_id!r} failed: {exc!s}",
             ) from exc
 
+        # Phase N.3 — derive the effective budget cap GAPT will enforce.
+        # Session override wins; otherwise inherit the admin pref.
+        # `None` at both levels = no cap (free mode).
+        effective_budget: float | None = None
+        if session_overrides is not None and session_overrides.cost_budget_usd is not None:
+            effective_budget = float(session_overrides.cost_budget_usd)
+        elif prefs is not None and prefs.cost_budget_usd is not None:
+            effective_budget = float(prefs.cost_budget_usd)
+
         # 4) Persist + audit.
         session_id = new_ulid()
         row = models.AgentSession(
@@ -179,6 +204,7 @@ class ProjectAwareSessionManager:
             workspace_id=ws.id,
             env_manifest_id=env_manifest_id,
             status=enums.AgentSessionStatus.ACTIVE,
+            cost_budget_usd=effective_budget,
         )
         db.add(row)
         await db.flush()
@@ -193,7 +219,10 @@ class ProjectAwareSessionManager:
                     "workspace_id": ws.id,
                     "session_id": session_id,
                 },
-                subject={"env_manifest_id": env_manifest_id},
+                subject={
+                    "env_manifest_id": env_manifest_id,
+                    "cost_budget_usd": effective_budget,
+                },
             )
         )
         logger.info(
@@ -202,6 +231,7 @@ class ProjectAwareSessionManager:
             project_id=ws.project_id,
             workspace_id=ws.id,
             env_manifest_id=env_manifest_id,
+            cost_budget_usd=effective_budget,
         )
         return AgentSessionHandle(
             session_id=session_id,
@@ -212,6 +242,7 @@ class ProjectAwareSessionManager:
             pipeline=pipeline,
             worktree_path=ws.worktree_path,
             status=enums.AgentSessionStatus.ACTIVE,
+            cost_budget_usd=effective_budget,
         )
 
     # ───────────────────────────────────────────── rehydrate ──
@@ -299,6 +330,14 @@ class ProjectAwareSessionManager:
             pipeline=pipeline,
             worktree_path=ws.worktree_path,
             status=row.status,
+            cost_budget_usd=(
+                float(row.cost_budget_usd) if row.cost_budget_usd is not None else None
+            ),
+            initial_cost_usd=float(row.cost_usd or 0.0),
+            initial_input_tokens=int(row.input_tokens or 0),
+            initial_output_tokens=int(row.output_tokens or 0),
+            initial_cache_write_tokens=int(row.cache_write_tokens or 0),
+            initial_cache_read_tokens=int(row.cache_read_tokens or 0),
         )
 
     # ───────────────────────────────────────────── archive ──

@@ -303,6 +303,13 @@ class AgentSession(Base):
     cache_read_tokens: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default="0"
     )
+    # Phase N.3 — per-session USD cap enforced by GAPT before each
+    # invoke turn. NULL = no cap (free mode). When set, the invoke
+    # handler 402s with `session.budget_exhausted` once `cost_usd`
+    # crosses this number — geny-executor's own `--max-budget-usd`
+    # flag is no longer wired up, so the agent never sees budget
+    # metadata in its prompt context.
+    cost_budget_usd: Mapped[float | None] = mapped_column(Numeric(10, 4))
     created_at: Mapped[datetime] = _created_at()
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

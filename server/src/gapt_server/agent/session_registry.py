@@ -91,6 +91,14 @@ class SessionRuntime:
     # `token.tracked` payload with `cost_usd=0` (model-alias gap).
     # `None` keeps the pre-fix behaviour (no fallback).
     model_name: str | None = None
+    # Phase N.3 — per-session USD cap enforced by GAPT's invoke
+    # handler. `None` = no cap (free mode — opt-in by leaving the
+    # session's `cost_budget_usd` unset). When set, the next invoke
+    # rejects with `session.budget_exhausted` once the cumulative
+    # `accumulator.cost_usd` crosses this number. geny-executor's
+    # own `--max-budget-usd` flag is no longer wired up so the agent
+    # never sees budget metadata in its prompt context.
+    cost_budget_usd: float | None = None
     # Phase L.1 — geny-executor's PipelineState carried across every
     # `run_stream()` call on this session. Holds `session_id` (so the
     # executor's SESSION_* hooks group correctly) and `messages` —

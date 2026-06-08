@@ -106,6 +106,23 @@ def test_claude_code_cli_creds_omits_unset_optionals() -> None:
     assert "workspace_root" not in creds.extras
 
 
+def test_claude_code_cli_creds_default_omits_budget_flag() -> None:
+    """Phase N.3 — the spawned ``claude`` CLI no longer receives
+    ``--max-budget-usd`` unless an explicit value is passed in.
+    Budget enforcement is GAPT-side now (see
+    ``routers/sessions.invoke_session``). When the agent sees a
+    budget flag, the CLI's "your budget is X" metadata leaks into
+    the LLM's prompt context and the model starts producing
+    "남은 예산이 빠듯하니..." meta-cognitive chatter mid-task. The
+    default-None behaviour is the fix.
+
+    Tests and ops paths that need the CLI-side cap still can pass
+    ``max_budget_usd=<float>`` explicitly — this test pins only the
+    default."""
+    creds = build_claude_code_cli_creds(binary_path="/usr/local/bin/claude")
+    assert "max_budget_usd" not in creds.extras
+
+
 # ─────────────────────────────────────── integration (Postgres) ──
 
 

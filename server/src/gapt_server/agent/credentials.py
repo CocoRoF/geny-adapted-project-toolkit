@@ -117,7 +117,15 @@ def build_claude_code_cli_creds(
     mcp_config: dict[str, Any] | None = None,
     settings_path: str | None = None,
     timeout_s: float = 180.0,
-    max_budget_usd: float | None = 1.0,
+    # Phase N.3 — default flipped to ``None``. Budget enforcement is
+    # GAPT-side now: the invoke router checks the session's
+    # `cost_budget_usd` against the cumulative `accumulator.cost_usd`
+    # before each turn (see ``routers/sessions.invoke_session``). The
+    # spawned ``claude`` CLI no longer receives ``--max-budget-usd``
+    # so it can't leak "남은 예산이 빠듯하니" meta-cognitive chatter
+    # into the agent's responses. Tests that need to exercise the old
+    # CLI-side flag still can by passing the arg explicitly.
+    max_budget_usd: float | None = None,
     default_permission_mode: str = "bypassPermissions",
     extra_args: tuple[str, ...] = (),
 ) -> ProviderCredentials:
@@ -171,7 +179,9 @@ async def build_for_session(
     mcp_config: dict[str, Any] | None = None,
     settings_path: str | None = None,
     timeout_s: float = 180.0,
-    max_budget_usd: float | None = 1.0,
+    # Phase N.3 — see `build_claude_code_cli_creds`. Default None
+    # because GAPT enforces budget; flag never reaches the CLI.
+    max_budget_usd: float | None = None,
     permission_mode: str = "bypassPermissions",
 ) -> CredentialBundle:
     """Build a `CredentialBundle` for an agent session.

@@ -306,6 +306,7 @@ def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (co
         sandbox=sandbox,
         mode_ref=mode_ref,
         max_state_messages=container.settings.session_max_messages_in_state,
+        cost_budget_usd=handle.cost_budget_usd,
         _baseline_model=bundled_model,
     )
 
@@ -333,7 +334,18 @@ def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (co
 
         runtime.bus.persister = _persist_event
 
-    _last = {"input": 0, "output": 0, "cost": 0.0}
+    # Phase N.3 — seed delta cache with the per-row snapshot so that
+    # on rehydrate the first cost_callback only emits the genuine NEW
+    # spending, not the entire historical cumulative again. Without
+    # this fix the DB cost_usd column would oscillate / get clobbered
+    # back down on every rehydrate; the budget gate would also see
+    # the accumulator's reset-to-zero state and let a session past
+    # its cap run another full turn.
+    _last = {
+        "input": int(handle.initial_input_tokens),
+        "output": int(handle.initial_output_tokens),
+        "cost": float(handle.initial_cost_usd),
+    }
     _reg = container.registry
     _project_label = {"project_id": handle.project_id}
 
@@ -375,6 +387,15 @@ def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (co
         on_cost_update=_on_cost_update,
         mode_ref=mode_ref,
     )
+    # Phase N.3 — seed the fresh accumulator from the handle's snapshot
+    # so a rehydrated session starts at "what we've already spent",
+    # not zero. This is what makes the budget gate enforce against
+    # cumulative spend across server restarts.
+    accumulator.cost_usd = float(handle.initial_cost_usd)
+    accumulator.input_tokens = int(handle.initial_input_tokens)
+    accumulator.output_tokens = int(handle.initial_output_tokens)
+    accumulator.cache_write_tokens = int(handle.initial_cache_write_tokens)
+    accumulator.cache_read_tokens = int(handle.initial_cache_read_tokens)
     runtime.accumulator = accumulator
     # Phase I.1 — same callback the POST_TOOL_USE hook gets, so the
     # `token.tracked` path in `_drive_pipeline` can land the cost in
@@ -819,6 +840,33 @@ async def invoke_session(
         await fetch_project_for(access.db, actor=access.user, project_id=runtime.project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
+
+    # Phase N.3 — GAPT-side budget gate. When the session was created
+    # with `cost_budget_usd`, GAPT (not geny-executor) enforces it:
+    # if the cumulative spend has already reached the cap, the new
+    # turn is rejected before the executor ever runs, so the agent
+    # never sees budget metadata in its prompt context (which is
+    # what caused the "남은 예산이 빠듯하니..." meta-cognitive chatter
+    # pre-fix). Setting `cost_budget_usd=None` (default) leaves the
+    # session uncapped — opt-in spending discipline only.
+    if (
+        runtime.cost_budget_usd is not None
+        and runtime.accumulator.cost_usd >= runtime.cost_budget_usd
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "session.budget_exhausted",
+                "reason": (
+                    f"session has reached its cost cap "
+                    f"(spent ${runtime.accumulator.cost_usd:.4f} / "
+                    f"cap ${runtime.cost_budget_usd:.4f}). "
+                    f"Start a new session or raise the cap in Settings."
+                ),
+                "cost_usd": round(runtime.accumulator.cost_usd, 6),
+                "cost_budget_usd": runtime.cost_budget_usd,
+            },
+        )
 
     # Phase M.2 — per-invoke model + thinking override (and revert).
     # We mutate `pipeline._config.model.*` (NOT `state.*`) because the

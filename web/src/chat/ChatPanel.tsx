@@ -189,6 +189,17 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     overrideBody: InvokeOverrides;
     echoSeq: number;
   } | null>(null);
+  // Phase N.3 — budget-exhausted banner. When GAPT rejects an invoke
+  // with `session.budget_exhausted` (cumulative cost reached the
+  // per-session cap), we surface the current totals + a path forward
+  // ("새 세션 시작" / Settings 에서 한도 조정) instead of a raw red
+  // alert. `echoSeq` is the optimistic user-bubble seq so we can roll
+  // it back when the user dismisses the banner.
+  const [budgetExhausted, setBudgetExhausted] = useState<{
+    cost_usd: number;
+    cost_budget_usd: number;
+    echoSeq: number;
+  } | null>(null);
   const [mode, setMode] = useState<ChatMode>("act");
   const [showCostModal, setShowCostModal] = useState(false);
   const [guardSeq, setGuardSeq] = useState<number | null>(null);
@@ -523,6 +534,28 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             });
             return;
           }
+          if (
+            err instanceof ApiError &&
+            err.code === "session.budget_exhausted"
+          ) {
+            // Phase N.3 — GAPT-side budget cap reached. The server
+            // attached the live totals via structured `details` so we
+            // can render exact spend + cap in the banner; falling back
+            // to 0/0 is safe (the banner just hides the figures).
+            const d = err.details;
+            const cost =
+              typeof d.cost_usd === "number" ? d.cost_usd : 0;
+            const cap =
+              typeof d.cost_budget_usd === "number"
+                ? d.cost_budget_usd
+                : 0;
+            setBudgetExhausted({
+              cost_usd: cost,
+              cost_budget_usd: cap,
+              echoSeq: seq,
+            });
+            return;
+          }
           setError(
             err instanceof ApiError
               ? `${err.code}: ${err.reason}`
@@ -574,6 +607,17 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     setUserEvents((prev) => prev.filter((e) => e.seq !== staleInvoke.echoSeq));
     setStaleInvoke(null);
   }, [staleInvoke]);
+
+  // Phase N.3 — dismiss budget banner. Same optimistic-echo rollback
+  // shape as `cancelStaleInvoke`: the message never reached the agent,
+  // so the local bubble is a ghost that has to be cleared.
+  const dismissBudgetExhausted = useCallback(() => {
+    if (!budgetExhausted) return;
+    setUserEvents((prev) =>
+      prev.filter((e) => e.seq !== budgetExhausted.echoSeq),
+    );
+    setBudgetExhausted(null);
+  }, [budgetExhausted]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -641,6 +685,7 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     setUserEvents([]);
     userSeqRef.current = -1;
     setStaleInvoke(null);
+    setBudgetExhausted(null);
   }, [session?.id]);
 
   // Tool pairs derived from the live event list — drives the
@@ -1004,6 +1049,42 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
               </div>
             </div>
           </form>
+
+          {budgetExhausted ? (
+            <div
+              role="alert"
+              className="mx-3 mb-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2.5 text-[12px] text-danger"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-medium">
+                    이 세션의 예산 한도에 도달했습니다.
+                  </p>
+                  <p className="mt-0.5 text-[11.5px] opacity-90">
+                    누적 비용{" "}
+                    <span className="font-mono">
+                      ${budgetExhausted.cost_usd.toFixed(4)}
+                    </span>
+                    {" / 한도 "}
+                    <span className="font-mono">
+                      ${budgetExhausted.cost_budget_usd.toFixed(4)}
+                    </span>
+                    . 새 세션을 시작하거나 Settings 에서 한도를 조정하세요.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={dismissBudgetExhausted}
+                  className="h-7 rounded-md border border-border bg-bg px-2.5 text-[11.5px] text-fg hover:bg-bg-subtle"
+                >
+                  확인
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {staleInvoke ? (
             <div

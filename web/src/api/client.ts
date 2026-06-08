@@ -14,6 +14,12 @@ const DEFAULT_BASE = "/";
 export interface ApiErrorBody {
   code: string;
   reason: string;
+  // Phase N.3 — handlers may attach extra structured context (e.g.
+  // `session.budget_exhausted` reports `cost_usd` + `cost_budget_usd`)
+  // so the UI can render an actionable banner instead of a generic
+  // red blob. Free-form so we don't have to extend the interface
+  // each time a new error code shows up.
+  [extra: string]: unknown;
 }
 
 export class ApiError extends Error {
@@ -21,6 +27,10 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     public readonly reason: string,
+    /** Phase N.3 — full `detail` object from the server. Lets the
+     *  UI fish out structured context (cost / cap / etc.) without
+     *  parsing the reason string. */
+    public readonly details: Record<string, unknown> = {},
   ) {
     super(`${code}: ${reason}`);
     this.name = "ApiError";
@@ -44,18 +54,20 @@ function url(path: string): string {
 async function parseError(resp: Response): Promise<ApiError> {
   let code = `http.${resp.status}`;
   let reason = resp.statusText || "request failed";
+  let details: Record<string, unknown> = {};
   try {
     const body = (await resp.json()) as { detail?: ApiErrorBody | string };
     if (body && typeof body.detail === "object" && body.detail !== null) {
       code = body.detail.code ?? code;
       reason = body.detail.reason ?? reason;
+      details = body.detail as Record<string, unknown>;
     } else if (typeof body?.detail === "string") {
       reason = body.detail;
     }
   } catch {
     // Body wasn't JSON — keep the synthesised code/reason.
   }
-  return new ApiError(resp.status, code, reason);
+  return new ApiError(resp.status, code, reason, details);
 }
 
 interface RequestInitJson extends Omit<RequestInit, "body"> {

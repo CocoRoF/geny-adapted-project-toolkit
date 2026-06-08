@@ -376,6 +376,95 @@ async def test_invoke_404_when_runtime_missing(fx: _Fx) -> None:
         assert resp.json()["detail"]["code"] == "session.not_found"
 
 
+@pytest.mark.asyncio
+async def test_invoke_returns_budget_exhausted_when_cost_at_or_above_cap(
+    fx: _Fx,
+) -> None:
+    """Phase N.3 — when ``cost_budget_usd`` is set AND cumulative
+    ``cost_usd`` has reached the cap, the next invoke is rejected
+    with HTTP 402 ``session.budget_exhausted`` BEFORE the executor
+    runs. This keeps geny-executor's own budget metadata from ever
+    landing in the agent's prompt context (the leak that produced
+    the "남은 예산이 빠듯하니..." meta-cognitive chatter)."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id, "cost_budget_usd": 0.10},
+        )
+        assert created.status_code == 201, created.text
+        session_id = created.json()["id"]
+
+        # Simulate the session having already spent past its cap. The
+        # accumulator is the live cost source consulted by the gate;
+        # the DB column tracks the same value once on_cost_update
+        # fires in real flow.
+        registry = client._transport.app.state.container.session_registry  # type: ignore[attr-defined]
+        runtime = await registry.get(session_id)
+        assert runtime.cost_budget_usd == pytest.approx(0.10)
+        runtime.accumulator.cost_usd = 0.15
+
+        resp = await client.post(
+            f"/_gapt/api/sessions/{session_id}/invoke",
+            json={"message": "next turn"},
+        )
+        assert resp.status_code == 402, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "session.budget_exhausted"
+        assert detail["cost_usd"] == pytest.approx(0.15)
+        assert detail["cost_budget_usd"] == pytest.approx(0.10)
+
+
+@pytest.mark.asyncio
+async def test_invoke_proceeds_when_no_budget_cap_set(fx: _Fx) -> None:
+    """Phase N.3 — leaving ``cost_budget_usd`` unset = no cap. The
+    gate must be a true no-op so existing "free mode" sessions
+    keep behaving the same as before the budget enforcement landed."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id},
+        )
+        session_id = created.json()["id"]
+
+        registry = client._transport.app.state.container.session_registry  # type: ignore[attr-defined]
+        runtime = await registry.get(session_id)
+        # Cap unset; pile up any cost — the gate must not trip.
+        assert runtime.cost_budget_usd is None
+        runtime.accumulator.cost_usd = 9999.99
+
+        resp = await client.post(
+            f"/_gapt/api/sessions/{session_id}/invoke",
+            json={"message": "should pass"},
+        )
+        assert resp.status_code == 202, resp.text
+
+
+@pytest.mark.asyncio
+async def test_invoke_proceeds_when_cost_below_cap(fx: _Fx) -> None:
+    """Phase N.3 — strict ``>=`` gate: an in-budget session must
+    still be allowed to invoke even when the cumulative cost is
+    just shy of the cap. Boundary test for the gate condition."""
+    async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
+        project_id, workspace_id = await _create_project_with_workspace(client)
+        created = await client.post(
+            f"/_gapt/api/projects/{project_id}/sessions",
+            json={"workspace_id": workspace_id, "cost_budget_usd": 1.00},
+        )
+        session_id = created.json()["id"]
+
+        registry = client._transport.app.state.container.session_registry  # type: ignore[attr-defined]
+        runtime = await registry.get(session_id)
+        runtime.accumulator.cost_usd = 0.50  # half the cap
+
+        resp = await client.post(
+            f"/_gapt/api/sessions/{session_id}/invoke",
+            json={"message": "in budget"},
+        )
+        assert resp.status_code == 202, resp.text
+
+
 # ────────────────────────────────────────────────── archive ──
 
 
