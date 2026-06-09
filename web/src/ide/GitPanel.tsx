@@ -658,6 +658,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
               actual header rows (branch switcher, sync trio, etc.)
               are suppressed when the body is in an empty state. */}
           {showNormalBody ? (
+          <>
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
