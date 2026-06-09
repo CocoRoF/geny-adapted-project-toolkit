@@ -419,6 +419,24 @@ async def trigger_deploy(
     compose_path = compose_cfg.get("compose_path", "docker-compose.yml")
     raw_paths = compose_cfg.get("compose_paths") or []
     compose_paths: list[str] = [p for p in raw_paths if isinstance(p, str)]
+    # Phase N.4 — auto-prefix compose paths with the env's repository
+    # subpath so a multi-repo project's `prod` env deploying the
+    # `frontend` repo runs `frontend/docker-compose.yml` even when the
+    # operator stored just `docker-compose.yml` in the env config.
+    # Operator-supplied paths that ALREADY start with the subpath are
+    # left alone (idempotent), and single-repo projects (subpath="")
+    # are no-ops here.
+    if env_row.repository_id:
+        from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+        env_repo = await _repo_svc.get(db, repository_id=env_row.repository_id)
+        if env_repo is not None and env_repo.subpath:
+            def _prefix(rel: str) -> str:
+                if not rel or rel.startswith(env_repo.subpath + "/"):
+                    return rel
+                return f"{env_repo.subpath}/{rel}"
+            compose_path = _prefix(compose_path)
+            compose_paths = [_prefix(p) for p in compose_paths]
     # Merge env-level options with caller overrides (caller wins, eg
     # one-off SSH host). secret_refs come from the env row.
     target_options: dict[str, Any] = {
@@ -575,6 +593,20 @@ async def trigger_rollback(
     compose_path = compose_cfg.get("compose_path", "docker-compose.yml")
     raw_paths = compose_cfg.get("compose_paths") or []
     compose_paths: list[str] = [p for p in raw_paths if isinstance(p, str)]
+    # Phase N.4 — same subpath auto-prefix as the deploy path above.
+    # Rollback hits the same compose stack so it must resolve to the
+    # same files on disk.
+    if env_row.repository_id:
+        from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+        env_repo = await _repo_svc.get(db, repository_id=env_row.repository_id)
+        if env_repo is not None and env_repo.subpath:
+            def _prefix(rel: str) -> str:
+                if not rel or rel.startswith(env_repo.subpath + "/"):
+                    return rel
+                return f"{env_repo.subpath}/{rel}"
+            compose_path = _prefix(compose_path)
+            compose_paths = [_prefix(p) for p in compose_paths]
     target_options: dict[str, Any] = {
         **(env_row.deploy_target_config or {}),
         **payload.target_options,

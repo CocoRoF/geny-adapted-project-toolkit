@@ -14,7 +14,9 @@ import { StatusBar } from "@/ide/shell/StatusBar";
 interface Props {
   workspaceId: string;
   projectId: string;
-  branch: string;
+  /** Phase N.5 — workspace identity is now ``name``. Per-repo branches
+   *  flow through GitPanel via its repo selector + status fetch. */
+  name: string;
   workspaceStatus: string;
 }
 
@@ -134,7 +136,7 @@ function writeStored(workspaceId: string, state: LayoutState): void {
  * Each split has a `SplitHandle` for resize; the activity-bar items
  * + chat icon toggle their respective panels in/out. Layout state
  * persists in localStorage per workspace. */
-export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Props) {
+export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Props) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const [layout, setLayout] = useState<LayoutState>(() => readStored(workspaceId));
@@ -337,6 +339,7 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
               <SidePanel
                 view={layout.sideView}
                 workspaceId={workspaceId}
+                projectId={projectId}
                 onOpenFile={openFileInEditor}
                 onOpenDiff={openDiffInEditor}
                 onOpenPreview={openPreviewTab}
@@ -427,7 +430,7 @@ export function IdeShell({ workspaceId, projectId, branch, workspaceStatus }: Pr
       </div>
 
       <StatusBar
-        branch={branch}
+        name={name}
         workspaceStatus={workspaceStatus}
         openFile={activeTab?.kind === "file" ? activeTab.path : null}
         onToggleTerminal={onToggleTerminal}

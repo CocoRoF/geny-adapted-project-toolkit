@@ -185,8 +185,8 @@ function buildTree(resp: ContainersResponse): {
   // Sort workspaces by branch and envs by name within each project.
   for (const p of projects.values()) {
     p.workspaces.sort((a, b) =>
-      (a.workspace?.branch ?? a.workspace_id).localeCompare(
-        b.workspace?.branch ?? b.workspace_id,
+      (a.workspace?.name ?? a.workspace_id).localeCompare(
+        b.workspace?.name ?? b.workspace_id,
       ),
     );
     p.environments.sort((a, b) =>
@@ -874,7 +874,7 @@ function WorkspaceGroup({ ws, ...rest }: { ws: TreeWorkspace } & RowHelpers) {
         )}
         <GitBranch className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.5} />
         <span className="text-[12px] font-medium text-fg">
-          {ws.workspace?.branch ?? ws.workspace_id}
+          {ws.workspace?.name ?? ws.workspace_id}
         </span>
         {ws.workspace ? (
           <Badge tone="neutral" className="text-[9.5px]">

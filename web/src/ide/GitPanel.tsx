@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -51,6 +52,11 @@ import {
   gitStashPush,
   gitSync,
 } from "@/api/git";
+import {
+  type ProjectRepository,
+  listProjectRepositories,
+} from "@/api/repositories";
+import { rehydrateWorkspace } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
@@ -58,6 +64,12 @@ import { cn } from "@/ui/cn";
 
 interface Props {
   workspaceId: string;
+  /** Phase N.4 — Source Control fetches the project's repository
+   *  list so the operator can choose which one to inspect. Single-
+   *  repo projects render without the selector (just the legacy
+   *  single-repo view). Empty projects (0 repos) render an empty
+   *  state. */
+  projectId: string;
   /** Phase F — clicking a changed-file row hands the diff off to the
    *  editor column instead of rendering it inside this sidebar. */
   onOpenDiff: (path: string) => void;
@@ -94,8 +106,15 @@ type BusyOp =
  *
  * All endpoints are scoped to one workspace_id; `.gapt/` is filtered
  * server-side so runtime log files never clutter the changes list. */
-export function GitPanel({ workspaceId, onOpenDiff }: Props) {
+export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   const { t } = useI18n();
+  // Phase N.4 — list of repos attached to the project + which one
+  // the operator is currently inspecting. ``null`` for selectedRepoId
+  // means "use the project's primary" (the server picks the lowest
+  // sort_order active row). When ``repos.length <= 1`` the selector
+  // chrome is hidden — single-repo projects keep the legacy UX.
+  const [repos, setRepos] = useState<ProjectRepository[]>([]);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
   const [branchesResp, setBranchesResp] = useState<GitBranchesResponse | null>(null);
   const [stash, setStash] = useState<GitStashListResponse | null>(null);
@@ -122,14 +141,60 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
   const [stashHeight, setStashHeight] = useState(140);
   const [historyHeight, setHistoryHeight] = useState(200);
 
+  // Phase N.4 — fetch the repo list once per project. The selector
+  // hides itself when there's only one row (legacy UX), surfaces a
+  // dropdown when there are multiple. Empty projects render a tiny
+  // "no source control" state in the body below.
+  const [reposLoaded, setReposLoaded] = useState(false);
+  // Phase N.4 — "this repo isn't on disk in the current workspace"
+  // detector. Triggers when the backend's `git status` comes back
+  // with "not a git repository" for the selected subpath — happens
+  // when the operator added the repo to the project AFTER an
+  // existing workspace was created, so the worktree subdir is
+  // missing its `.git` marker.
+  const [notCloned, setNotCloned] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void listProjectRepositories(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        setRepos(rows);
+        // Default to the primary (lowest sort_order) if nothing
+        // selected yet. Preserves the legacy single-repo view.
+        setSelectedRepoId((current) => current ?? rows[0]?.id ?? null);
+        setReposLoaded(true);
+      })
+      .catch(() => {
+        // 404 / 403 — leave repos empty; the body will fall back to
+        // the empty-state. We never want a repo-list failure to break
+        // git ops entirely.
+        setReposLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   const refresh = useCallback(async () => {
+    // Phase N.4 — empty project: no repos to query. Bail out before
+    // hitting the backend so the operator doesn't see a raw "fatal:
+    // not a git repository" surfaced from `git status`.
+    if (reposLoaded && repos.length === 0) {
+      setStatus(null);
+      setBranchesResp(null);
+      setStash(null);
+      setLog(null);
+      setNotCloned(false);
+      return;
+    }
     setLoading(true);
+    setNotCloned(false);
     try {
       const [s, b, st, l] = await Promise.all([
-        getGitStatus(workspaceId),
-        getGitBranches(workspaceId),
-        getGitStashList(workspaceId),
-        getGitLog(workspaceId, { limit: 50, all_branches: true }),
+        getGitStatus(workspaceId, selectedRepoId),
+        getGitBranches(workspaceId, selectedRepoId),
+        getGitStashList(workspaceId, selectedRepoId),
+        getGitLog(workspaceId, { limit: 50, all_branches: true }, selectedRepoId),
       ]);
       setStatus(s);
       setBranchesResp(b);
@@ -139,15 +204,72 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
         prev.size === 0 ? new Set(s.entries.map((e) => e.path)) : prev,
       );
     } catch (e) {
-      setFlash({ kind: "error", text: errText(e) });
+      // Phase N.4 — backend translates "fatal: not a git repository"
+      // into structured 412 ``git.repo_not_cloned`` so all 4 parallel
+      // git calls fail with the same code instead of fanning out raw
+      // 500s into the browser console. We render the friendly empty
+      // state and swallow the secondary errors silently.
+      //
+      // Defensive fallback: a backend that hasn't been redeployed yet
+      // still returns 500 with the raw stderr in ``reason``. Match
+      // that string too so the panel degrades gracefully — without
+      // this, the operator sees the raw "fatal: not a git repository"
+      // text as a flash even though the new structured code is in
+      // the client.
+      const msg = errText(e);
+      const isStructured =
+        e instanceof ApiError && e.code === "git.repo_not_cloned";
+      const isLegacyRawError = msg.includes("not a git repository");
+      if (isStructured || isLegacyRawError) {
+        setNotCloned(true);
+      } else {
+        setFlash({ kind: "error", text: msg });
+      }
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, selectedRepoId, reposLoaded, repos.length]);
+
+  // Phase N.4 — re-clone any project repos that aren't on disk yet.
+  // The endpoint is idempotent, so calling it on a fully-cloned
+  // workspace is a no-op. We surface success/failure through the
+  // flash bar + refresh the panel so the operator sees the changes
+  // section come back to life on success.
+  const [rehydrating, setRehydrating] = useState(false);
+  const onRehydrate = useCallback(async () => {
+    setRehydrating(true);
+    try {
+      const r = await rehydrateWorkspace(workspaceId);
+      if (r.outcome === "cloned" || r.outcome === "exists" || r.outcome === "skipped") {
+        setNotCloned(false);
+        setFlash({ kind: "info", text: `워크스페이스에 레포가 준비됐어요 (${r.outcome})` });
+        await refresh();
+      } else if (r.outcome === "empty") {
+        setNotCloned(false);
+        setFlash({ kind: "info", text: "빈 프로젝트 — 클론할 레포가 없어요" });
+      } else {
+        setFlash({
+          kind: "error",
+          text: `재클론 실패: ${(r.detail ?? r.outcome).slice(0, 200)}`,
+        });
+      }
+    } catch (e) {
+      setFlash({ kind: "error", text: errText(e) });
+    } finally {
+      setRehydrating(false);
+    }
+  }, [workspaceId, refresh]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Reset selected files + active diff when switching repos so the
+  // changes panel doesn't carry stale highlights from another repo.
+  useEffect(() => {
+    setSelected(new Set());
+    setActivePath(null);
+  }, [selectedRepoId]);
 
   const dirty = (status?.entries.length ?? 0) > 0;
   const stashCount = stash?.entries.length ?? 0;
@@ -185,7 +307,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
         return;
       setBusy("discard");
       try {
-        const r = await gitDiscard(workspaceId, [path]);
+        const r = await gitDiscard(workspaceId, [path], selectedRepoId);
         setFlash(
           r.ok
             ? { kind: "info", text: t("git.discard.done") }
@@ -247,7 +369,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
     }
     setBusy("commit");
     try {
-      const r = await gitCommit(workspaceId, { message, paths: Array.from(selected) });
+      const r = await gitCommit(workspaceId, { message, paths: Array.from(selected) }, selectedRepoId);
       setFlash({
         kind: "info",
         text: `${t("git.commit.done")} ${r.sha}${r.branch ? ` (${r.branch})` : ""}`,
@@ -265,7 +387,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
   const onPush = useCallback(async () => {
     setBusy("push");
     try {
-      const r: GitPushResponse = await gitPush(workspaceId, {});
+      const r: GitPushResponse = await gitPush(workspaceId, {}, selectedRepoId);
       setFlash({ kind: "info", text: `${t("git.push.done")} → origin/${r.branch ?? "?"}` });
       await refresh();
     } catch (e) {
@@ -286,11 +408,15 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
     setBusy("pr");
     setPrUrl(null);
     try {
-      const r: CreatePrResponse = await createPr(workspaceId, {
-        title: message.split("\n")[0]?.trim() || "GAPT-authored changes",
-        body: message,
-        base: "main",
-      });
+      const r: CreatePrResponse = await createPr(
+        workspaceId,
+        {
+          title: message.split("\n")[0]?.trim() || "GAPT-authored changes",
+          body: message,
+          base: "main",
+        },
+        selectedRepoId,
+      );
       setPrUrl(r.url);
       setFlash({ kind: "info", text: `${t("git.pr.done")} #${r.number}` });
     } catch (e) {
@@ -305,11 +431,15 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
     async (branchName: string, opts: { create?: boolean; startPoint?: string } = {}) => {
       setBusy("checkout");
       try {
-        const r = await gitCheckout(workspaceId, {
-          branch: branchName,
-          create: opts.create ?? false,
-          start_point: opts.startPoint ?? null,
-        });
+        const r = await gitCheckout(
+          workspaceId,
+          {
+            branch: branchName,
+            create: opts.create ?? false,
+            start_point: opts.startPoint ?? null,
+          },
+          selectedRepoId,
+        );
         if (r.ok) {
           setFlash({ kind: "info", text: `${t("git.checkout.done")} ${branchName}` });
           setBranchMenuOpen(false);
@@ -336,7 +466,11 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
         return;
       setBusy("branch-delete");
       try {
-        const r = await gitBranchDelete(workspaceId, { branch: branchName });
+        const r = await gitBranchDelete(
+          workspaceId,
+          { branch: branchName },
+          selectedRepoId,
+        );
         if (r.ok) {
           setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
         } else {
@@ -348,10 +482,11 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
                 (r.error || "").slice(0, 200),
             )
           ) {
-            const r2 = await gitBranchDelete(workspaceId, {
-              branch: branchName,
-              force: true,
-            });
+            const r2 = await gitBranchDelete(
+              workspaceId,
+              { branch: branchName, force: true },
+              selectedRepoId,
+            );
             if (r2.ok) {
               setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
             } else {
@@ -376,10 +511,14 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
   const onStashPush = useCallback(async () => {
     setBusy("stash");
     try {
-      const r = await gitStashPush(workspaceId, {
-        message: stashMsgInput.trim() || undefined,
-        include_untracked: true,
-      });
+      const r = await gitStashPush(
+        workspaceId,
+        {
+          message: stashMsgInput.trim() || undefined,
+          include_untracked: true,
+        },
+        selectedRepoId,
+      );
       setFlash(
         r.ok
           ? { kind: "info", text: t("git.stash.pushed") }
@@ -398,7 +537,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
     async (ref: string) => {
       setBusy("stash");
       try {
-        const r = await gitStashPop(workspaceId, { ref });
+        const r = await gitStashPop(workspaceId, { ref }, selectedRepoId);
         setFlash(
           r.ok
             ? { kind: "info", text: `${t("git.stash.popped")} ${ref}` }
@@ -422,7 +561,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
       if (!window.confirm(t("git.stash.drop_confirm").replace("{ref}", ref))) return;
       setBusy("stash");
       try {
-        const r = await gitStashDrop(workspaceId, { ref });
+        const r = await gitStashDrop(workspaceId, { ref }, selectedRepoId);
         setFlash(
           r.ok
             ? { kind: "info", text: `${t("git.stash.dropped")} ${ref}` }
@@ -454,6 +593,85 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
     return "behind" as const;
   }, [status]);
 
+  // Phase N.4 — friendly empty / not-cloned states before the main
+  // panel so the operator never sees a raw "fatal: not a git
+  // repository" or a confusing "(detached HEAD)" indicator on a
+  // workspace that just doesn't have this repo's worktree on disk.
+  if (reposLoaded && repos.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <GitBranch className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />
+        <div>
+          <p className="text-[13px] font-medium text-fg">레포지토리가 없어요</p>
+          <p className="mt-1 text-[11.5px] text-fg-muted">
+            이 프로젝트는 빈 상태입니다. 프로젝트 페이지의 "레포지토리" 섹션에서
+            <strong className="mx-1 text-fg">레포 추가</strong>로 git URL 을 등록하거나,
+            URL 없이 빈 폴더만 만들 수도 있어요.
+          </p>
+        </div>
+        <Link
+          to={`/projects/${projectId}`}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-bg-elevated px-3 text-[11.5px] font-medium text-fg hover:bg-surface-hover"
+        >
+          프로젝트 페이지로 이동 →
+        </Link>
+      </div>
+    );
+  }
+  if (notCloned) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <RefreshCw
+          className={cn(
+            "h-8 w-8 text-fg-subtle",
+            rehydrating && "animate-spin",
+          )}
+          strokeWidth={1.25}
+        />
+        <div>
+          <p className="text-[13px] font-medium text-fg">이 레포는 아직 워크스페이스에 없어요</p>
+          <p className="mt-1 text-[11.5px] text-fg-muted">
+            프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요.
+            아래 버튼으로 지금 바로 가져올 수 있습니다.
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={onRehydrate}
+          disabled={rehydrating}
+        >
+          {rehydrating ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5" />
+          )}
+          {rehydrating ? "클론 중…" : "지금 클론하기"}
+        </Button>
+        <Link
+          to={`/projects/${projectId}`}
+          className="text-[11px] text-fg-subtle hover:text-accent"
+        >
+          또는 프로젝트 페이지에서 새 워크스페이스 만들기 →
+        </Link>
+        {flash ? (
+          <p
+            className={cn(
+              "px-2 text-[11px]",
+              flash.kind === "error"
+                ? "text-danger"
+                : flash.kind === "warn"
+                  ? "text-warn"
+                  : "text-accent",
+            )}
+          >
+            {flash.text}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div
       className="grid h-full grid-cols-1"
@@ -462,6 +680,31 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
         {/* ── Header (branch · upstream · sync state all on ONE row;
                        action buttons on the row below) ── */}
         <header className="relative flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2">
+          {/* Phase N.4 — repository selector. Shown only when the
+              project has more than one repo (VS Code's
+              REPOSITORIES tree). Single-repo projects keep the
+              legacy single-line header. */}
+          {repos.length > 1 ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Package className="h-3.5 w-3.5 shrink-0 text-fg-muted" strokeWidth={1.5} />
+              <select
+                value={selectedRepoId ?? ""}
+                onChange={(e) => setSelectedRepoId(e.target.value || null)}
+                className="min-w-0 flex-1 truncate rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11.5px] text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+                title="Phase N.4 — switch which repository this panel inspects"
+              >
+                {repos.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.display_name}
+                    {r.subpath ? `  ·  ${r.subpath}/` : ""}
+                  </option>
+                ))}
+              </select>
+              <Badge tone="neutral" className="text-[9.5px]">
+                {repos.length}
+              </Badge>
+            </div>
+          ) : null}
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
@@ -511,7 +754,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => runSync("fetch", () => gitFetch(workspaceId))}
+              onClick={() => runSync("fetch", () => gitFetch(workspaceId, selectedRepoId))}
               disabled={busy !== null}
               title={t("git.fetch.title")}
             >
@@ -525,7 +768,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => runSync("pull", () => gitPull(workspaceId))}
+              onClick={() => runSync("pull", () => gitPull(workspaceId, selectedRepoId))}
               disabled={busy !== null}
               title={t("git.pull.title")}
             >
@@ -542,7 +785,7 @@ export function GitPanel({ workspaceId, onOpenDiff }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => runSync("sync", () => gitSync(workspaceId))}
+              onClick={() => runSync("sync", () => gitSync(workspaceId, selectedRepoId))}
               disabled={busy !== null}
               title={t("git.sync.title")}
             >

@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink,
   FolderGit2,
+  FolderPlus,
   GitBranch,
   Plus,
   RefreshCw,
@@ -24,6 +25,7 @@ import {
 } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
 import { ImportProjectModal } from "@/routes/ImportProjectModal";
+import { NewProjectModal } from "@/routes/NewProjectModal";
 import { NewProjectScaffoldModal } from "@/routes/NewProjectScaffoldModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
@@ -40,8 +42,11 @@ export function ProjectsIndex() {
   const [showCreate, setShowCreate] = useState(false);  // ← Import (legacy)
   // Phase N.2.6 — split "+ 새 프로젝트" into a dropdown menu with two
   // entry points: scaffold (create new repo) vs import (existing repo).
+  // Phase N.4 adds a third: "empty" project (no git, multi-repo
+  // designed via ProjectDetail's Repositories section).
   const [menuOpen, setMenuOpen] = useState(false);
   const [showScaffold, setShowScaffold] = useState(false);
+  const [showEmpty, setShowEmpty] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Close the dropdown on outside click.
@@ -221,6 +226,28 @@ export function ProjectsIndex() {
                     </div>
                   </button>
                 </li>
+                {/* Phase N.4 — empty project entry. No git URL, no
+                    preset. The Repositories section in ProjectDetail
+                    is where the operator adds repos one at a time. */}
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowEmpty(true);
+                    }}
+                    className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-bg-subtle"
+                  >
+                    <FolderPlus className="mt-0.5 h-3.5 w-3.5 text-fg-muted" />
+                    <div>
+                      <div className="text-[13px] font-medium text-fg">빈 프로젝트</div>
+                      <div className="text-[11px] text-fg-muted">
+                        git 없이 시작 + 나중에 레포 추가 (VS Code 식 multi-root)
+                      </div>
+                    </div>
+                  </button>
+                </li>
               </ul>
             ) : null}
           </div>
@@ -296,10 +323,31 @@ export function ProjectsIndex() {
                       ) : null}
                     </div>
                     <code className="block truncate text-[11px] text-fg-muted">{p.slug}</code>
-                    <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
-                      <GitBranch className="h-3 w-3" />
-                      <span className="truncate">{p.git_remote_url}</span>
-                    </div>
+                    {/* Phase N.4 — render the multi-repo badge when the
+                        project carries more than one repository; empty
+                        projects (count 0) show "비어있음" so the operator
+                        can tell at a glance which projects need a clone
+                        before they can start. Single-repo (count 1)
+                        keeps the legacy one-line view. */}
+                    {p.repository_count > 1 ? (
+                      <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
+                        <GitBranch className="h-3 w-3" />
+                        <span className="truncate">
+                          {p.repository_count}개 레포지토리
+                        </span>
+                        <Badge tone="accent" className="text-[9px]">multi</Badge>
+                      </div>
+                    ) : p.repository_count === 0 ? (
+                      <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
+                        <GitBranch className="h-3 w-3" />
+                        <span className="italic">비어있음 (레포 없음)</span>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
+                        <GitBranch className="h-3 w-3" />
+                        <span className="truncate">{p.git_remote_url}</span>
+                      </div>
+                    )}
                   </Link>
                   {/* Phase C.2.a — show top 3 active workspaces inline
                       so the operator can jump straight into an IDE
@@ -377,6 +425,19 @@ export function ProjectsIndex() {
         onCreated={(project) => {
           setProjects((prev) => [project, ...prev]);
           setShowScaffold(false);
+        }}
+      />
+
+      {/* Phase N.4 — empty project. Same modal as the "불러오기"
+          import flow but forced into emptyMode so the URL field
+          hides and the submit POSTs with git_remote_url="". */}
+      <NewProjectModal
+        open={showEmpty}
+        forceEmpty
+        onClose={() => setShowEmpty(false)}
+        onCreated={(project) => {
+          setProjects((prev) => [project, ...prev]);
+          setShowEmpty(false);
         }}
       />
 

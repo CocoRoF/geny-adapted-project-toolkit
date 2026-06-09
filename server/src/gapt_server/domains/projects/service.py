@@ -145,6 +145,33 @@ class ProjectService:
                 f"slug={slug!r} already exists",
             ) from exc
 
+        # Phase N.4 — every new Project also gets a paired
+        # ProjectRepository row at ``subpath=''`` carrying the same
+        # git + compose bundle, UNLESS the operator created an empty
+        # project (``git_remote_url=""``). Empty projects start with
+        # zero rows so the operator can ``Add repository`` from the
+        # UI to design the multi-root layout from scratch. The schema
+        # migration only auto-creates rows for projects that existed
+        # at upgrade time; new projects get theirs here.
+        if git_remote_url and git_remote_url.strip():
+            db.add(
+                models.ProjectRepository(
+                    id=new_ulid(),
+                    project_id=project.id,
+                    subpath="",
+                    display_name=display_name,
+                    git_remote_url=git_remote_url,
+                    git_provider=git_provider,
+                    git_auth_secret_ref=git_auth_secret_ref,
+                    default_compose_paths=default_compose_paths or [],
+                    compose_profile_dev=compose_profile_dev,
+                    compose_profile_prod=compose_profile_prod,
+                    default_branch=None,
+                    sort_order=0,
+                )
+            )
+            await db.flush()
+
         view = _project_view(project)
         await self._audit.log(
             AuditEvent(
@@ -252,6 +279,10 @@ class ProjectService:
         secret_refs: list[str] | None = None,
         cost_multiplier: float = 1.0,
         hooks: dict[str, Any] | None = None,
+        # Phase N.4 — pin the env to a specific repository for multi-
+        # repo projects. NULL on single-repo projects keeps backward
+        # compatibility with the legacy "project default" behaviour.
+        repository_id: str | None = None,
     ) -> EnvironmentView:
         await fetch_project_for(db, actor=actor, project_id=project_id)
         # Phase H.1 — validate deploy_target_config against the kind's
@@ -271,6 +302,16 @@ class ProjectService:
             )
             err.fields = exc.fields  # type: ignore[attr-defined]
             raise err from exc
+        # Phase N.4 — when the caller didn't pin a repo, default to
+        # the project's primary so multi-repo workspaces still get a
+        # sensible target. Single-repo projects naturally end up with
+        # their only repo here.
+        if repository_id is None:
+            from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+            primary = await _repo_svc.primary_for_project(db, project_id=project_id)
+            if primary is not None:
+                repository_id = primary.id
         env = models.Environment(
             id=new_ulid(),
             project_id=project_id,
@@ -281,6 +322,7 @@ class ProjectService:
             secret_refs=secret_refs or [],
             cost_multiplier=cost_multiplier,
             hooks=hooks or {},
+            repository_id=repository_id,
         )
         db.add(env)
         try:

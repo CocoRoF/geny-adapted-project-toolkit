@@ -80,7 +80,7 @@ async def _seed(factory):  # type: ignore[no-untyped-def]
         workspace = models.Workspace(
             id=new_ulid(),
             project_id=project.id,
-            branch="main",
+            name="main",
             worktree_path="/workspace",
             status=enums.WorkspaceStatus.RUNNING,
         )

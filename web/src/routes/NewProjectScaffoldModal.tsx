@@ -45,7 +45,7 @@ interface Props {
   onCreated: (project: ProjectResponse) => void;
 }
 
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$/;
+const SLUG_PATTERN = /^[a-z0-9](?:[-a-z0-9]{0,118}[a-z0-9])?$/;
 const REPO_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/;
 
 type Step = 0 | 1 | 2 | 3;

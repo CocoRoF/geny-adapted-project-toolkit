@@ -131,7 +131,7 @@ async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]
 
     wks = await client.post(
         f"/_gapt/api/projects/{project_id}/workspaces",
-        json={"branch": "main"},
+        json={"name": "main"},
     )
     assert wks.status_code == 201, wks.text
     return project_id, wks.json()["id"]

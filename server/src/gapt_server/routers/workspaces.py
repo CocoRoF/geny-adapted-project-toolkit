@@ -113,24 +113,81 @@ by_id = APIRouter(prefix="/_gapt/api/workspaces", tags=["workspaces"])
 # ──────────────────────────────────────────────────────── DTOs ──
 
 
+class WorkspaceRepoSelectionRequest(BaseModel):
+    """Phase N.5 — one (repo, branch) pair at workspace-create time.
+
+    ``repository_id`` MUST be a non-archived ``ProjectRepository``
+    belonging to the same project; the service validates this and
+    returns ``workspace.unknown_repository`` (400) otherwise.
+    ``branch`` is empty string when the project repo has no remote
+    (empty / git-init candidate) — the clone path then skips that
+    entry and just makes sure the subdir exists.
+    """
+
+    repository_id: str = Field(min_length=1, max_length=26)
+    branch: str = Field(default="", max_length=255)
+
+
 class CreateWorkspaceRequest(BaseModel):
-    branch: str = Field(min_length=1, max_length=255)
+    """Phase N.5 — workspace identity is now ``name``.
+
+    ``selections`` is optional: when None / omitted the service falls
+    back to "every project repo at its default_branch" which keeps
+    the trivial single-repo case a one-field request. Multi-repo
+    operators pass an explicit list with per-repo branch picks.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    selections: list[WorkspaceRepoSelectionRequest] | None = None
     worktree_path: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class WorkspaceSelectionResponse(BaseModel):
+    """Phase N.5 — one entry in the workspace's repo selection. Mirrors
+    ``WorkspaceSelectionView`` so the UI can render per-repo chips on
+    the workspace card (and the GitPanel repo selector) directly from
+    the workspace response, without a separate join lookup."""
+
+    repository_id: str | None
+    subpath: str
+    display_name: str
+    branch: str
+    git_remote_url: str | None
 
 
 class WorkspaceResponse(BaseModel):
     id: str
     project_id: str
-    branch: str
+    name: str
     worktree_path: str
     sandbox_id: str | None
     status: enums.WorkspaceStatus
     last_activity_at: datetime
     created_at: datetime
+    selections: list[WorkspaceSelectionResponse] = Field(default_factory=list)
 
     @classmethod
     def from_view(cls, v: WorkspaceView) -> WorkspaceResponse:
-        return cls(**v.__dict__)
+        return cls(
+            id=v.id,
+            project_id=v.project_id,
+            name=v.name,
+            worktree_path=v.worktree_path,
+            sandbox_id=v.sandbox_id,
+            status=v.status,
+            last_activity_at=v.last_activity_at,
+            created_at=v.created_at,
+            selections=[
+                WorkspaceSelectionResponse(
+                    repository_id=s.repository_id,
+                    subpath=s.subpath,
+                    display_name=s.display_name,
+                    branch=s.branch,
+                    git_remote_url=s.git_remote_url,
+                )
+                for s in v.selections
+            ],
+        )
 
 
 class WorkspaceStatsResponse(BaseModel):
@@ -186,11 +243,25 @@ async def create_workspace(
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
 ) -> WorkspaceResponse:
     try:
+        from gapt_server.domains.workspaces.service import (  # noqa: PLC0415
+            WorkspaceRepoSelectionInput,
+        )
+
+        selections: list[WorkspaceRepoSelectionInput] | None = None
+        if payload.selections is not None:
+            selections = [
+                WorkspaceRepoSelectionInput(
+                    repository_id=s.repository_id,
+                    branch=s.branch,
+                )
+                for s in payload.selections
+            ]
         view = await svc.create(
             db,
             actor=user,
             project_id=project_id,
-            branch=payload.branch,
+            name=payload.name,
+            selections=selections,
             worktree_path=payload.worktree_path,
         )
         await db.commit()
@@ -355,6 +426,40 @@ async def start_workspace(
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
     return WorkspaceResponse.from_view(view)
+
+
+class RehydrateResponse(BaseModel):
+    workspace: WorkspaceResponse
+    outcome: str
+    detail: str | None = None
+
+
+@by_id.post("/{workspace_id}/rehydrate", response_model=RehydrateResponse)
+async def rehydrate_workspace(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    svc: WorkspaceService = Depends(get_workspace_service),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> RehydrateResponse:
+    """Phase N.4 — re-clone any missing project repositories into the
+    existing workspace's worktree. Recovery action for the case where
+    the operator added a repo to the project AFTER the workspace was
+    created, so the worktree subdir is missing its ``.git`` marker.
+    Idempotent — repos already on disk are skipped."""
+    try:
+        view, outcome, detail = await svc.rehydrate(
+            db, actor=user, workspace_id=workspace_id
+        )
+        await db.commit()
+    except WorkspaceError as exc:
+        raise _http_from_workspace_error(exc) from exc
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    return RehydrateResponse(
+        workspace=WorkspaceResponse.from_view(view),
+        outcome=outcome,
+        detail=detail,
+    )
 
 
 @by_id.delete("/{workspace_id}", response_model=WorkspaceResponse)

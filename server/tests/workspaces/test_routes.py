@@ -157,11 +157,11 @@ async def test_workspace_full_lifecycle(fx: _Fx) -> None:
 
         created = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert created.status_code == 201, created.text
         wks = created.json()
-        assert wks["branch"] == "main"
+        assert wks["name"] == "main"
         # Background clone leaves the row in `creating` until it
         # finishes (RUNNING) or errors out (FAILED). Poll briefly.
         assert wks["status"] in ("creating", "running")
@@ -220,7 +220,7 @@ async def test_sandbox_boot_failure_marks_workspace_failed(fx: _Fx) -> None:
             project_id = await _create_project(client)
             resp = await client.post(
                 f"/_gapt/api/projects/{project_id}/workspaces",
-                json={"branch": "main"},
+                json={"name": "main"},
             )
             assert resp.status_code == 409
             assert resp.json()["detail"]["code"] == "workspace.sandbox_boot_failed"
@@ -291,7 +291,7 @@ async def test_create_at_cap_returns_429(fx: _Fx) -> None:
 
             first = await client.post(
                 f"/_gapt/api/projects/{project_id}/workspaces",
-                json={"branch": "main"},
+                json={"name": "main"},
             )
             assert first.status_code == 201
 
@@ -299,7 +299,7 @@ async def test_create_at_cap_returns_429(fx: _Fx) -> None:
             # the first row is already CREATING/RUNNING.
             second = await client.post(
                 f"/_gapt/api/projects/{project_id}/workspaces",
-                json={"branch": "feature/x"},
+                json={"name": "feature-x"},
             )
             assert second.status_code == 429
             assert second.json()["detail"]["code"] == "workspace.cap_reached"
@@ -309,7 +309,7 @@ async def test_create_at_cap_returns_429(fx: _Fx) -> None:
             # rate-limited.
             repeat_main = await client.post(
                 f"/_gapt/api/projects/{project_id}/workspaces",
-                json={"branch": "main"},
+                json={"name": "main"},
             )
             assert repeat_main.status_code in (200, 201)
             assert repeat_main.json()["id"] == first.json()["id"]
@@ -318,13 +318,13 @@ async def test_create_at_cap_returns_429(fx: _Fx) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_with_existing_active_branch_returns_same_workspace(
+async def test_create_with_existing_active_name_returns_same_workspace(
     fx: _Fx,
 ) -> None:
-    """Phase C.1: POST /workspaces with a (project, branch) that
-    already has a live row hands the existing workspace back instead
-    of creating a duplicate. Lets the UI's "open branch X" action
-    work whether or not the workspace already exists."""
+    """Phase N.5: POST /workspaces with a (project, name) that already
+    has a live row hands the existing workspace back instead of
+    creating a duplicate. Lets the UI's "open workspace X" action work
+    whether or not the workspace already exists."""
     async with AsyncClient(
         transport=ASGITransport(app=fx.app), base_url="http://test"
     ) as client:
@@ -332,7 +332,7 @@ async def test_create_with_existing_active_branch_returns_same_workspace(
 
         first = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert first.status_code == 201
         first_id = first.json()["id"]
@@ -340,14 +340,14 @@ async def test_create_with_existing_active_branch_returns_same_workspace(
         # Same branch again — should NOT create a second row.
         second = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert second.status_code in (200, 201)
         assert second.json()["id"] == first_id
 
         # Exactly one workspace listed.
         listed = await client.get(f"/_gapt/api/projects/{project_id}/workspaces")
-        assert len([w for w in listed.json() if w["branch"] == "main"]) == 1
+        assert len([w for w in listed.json() if w["name"] == "main"]) == 1
 
 
 @pytest.mark.asyncio
@@ -362,7 +362,7 @@ async def test_create_after_archive_succeeds_with_new_id(fx: _Fx) -> None:
 
         first = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert first.status_code == 201
         first_id = first.json()["id"]
@@ -373,14 +373,14 @@ async def test_create_after_archive_succeeds_with_new_id(fx: _Fx) -> None:
 
         second = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert second.status_code == 201
         assert second.json()["id"] != first_id
 
 
 @pytest.mark.asyncio
-async def test_create_different_branches_makes_separate_rows(fx: _Fx) -> None:
+async def test_create_different_names_makes_separate_rows(fx: _Fx) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=fx.app), base_url="http://test"
     ) as client:
@@ -388,11 +388,11 @@ async def test_create_different_branches_makes_separate_rows(fx: _Fx) -> None:
 
         a = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         b = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "feature/x"},
+            json={"name": "feature-x"},
         )
         assert a.status_code == 201
         assert b.status_code == 201

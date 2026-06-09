@@ -108,7 +108,25 @@ export function WorkspaceIde() {
           {workspace ? (
             <>
               <GitBranch className="h-3.5 w-3.5 text-fg-muted" />
-              <span className="text-[13px] font-semibold text-fg">{workspace.branch}</span>
+              <span className="text-[13px] font-semibold text-fg">{workspace.name}</span>
+              {/* Phase N.5 — per-repo branch chips. The workspace's
+                  identity is `name`; the chips show which repos are
+                  inside and at what branch each. The GitPanel's
+                  source-control selector mirrors the same list. */}
+              {workspace.selections.length > 0 ? (
+                <span className="flex items-center gap-1 text-[10.5px] text-fg-subtle">
+                  {workspace.selections.slice(0, 3).map((s, i) => (
+                    <span key={s.repository_id ?? i}>
+                      {s.display_name}
+                      {s.branch ? `@${s.branch}` : ""}
+                      {i < Math.min(2, workspace.selections.length - 1) ? "·" : ""}
+                    </span>
+                  ))}
+                  {workspace.selections.length > 3 ? (
+                    <span>+{workspace.selections.length - 3}</span>
+                  ) : null}
+                </span>
+              ) : null}
               <Badge tone={STATUS_TONE[workspace.status] ?? "neutral"}>{workspace.status}</Badge>
             </>
           ) : (
@@ -167,7 +185,7 @@ export function WorkspaceIde() {
             <IdeShell
               workspaceId={wid}
               projectId={pid}
-              branch={workspace.branch}
+              name={workspace.name}
               workspaceStatus={workspace.status}
             />
           ) : (

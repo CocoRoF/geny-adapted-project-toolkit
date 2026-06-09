@@ -165,7 +165,7 @@ class SummaryDto(BaseModel):
     project_id: str | None
     project_slug: str | None
     project_display_name: str | None
-    workspace_branch: str | None
+    workspace_name: str | None
     environment_id: str | None
     environment_name: str | None
     compose_project: str | None
@@ -254,7 +254,9 @@ class WorkspaceServiceDto(BaseModel):
 class WorkspaceDto(BaseModel):
     id: str
     project_id: str
-    branch: str
+    # Phase N.5 — was ``branch``; workspace identity is now the
+    # operator-chosen ``name``.
+    name: str
     status: str
     services: list[WorkspaceServiceDto] = []
 
@@ -466,7 +468,7 @@ def _enrich_summary(
     workspaces: dict[str, models.Workspace],
     environments: dict[str, models.Environment],
 ) -> ContainerSummary:
-    """Fill `project_*` / `workspace_branch` / `environment_name` by
+    """Fill `project_*` / `workspace_name` / `environment_name` by
     looking up the DB rows that match the container's labels /
     derived IDs.
 
@@ -482,7 +484,7 @@ def _enrich_summary(
     the "prod stack" panel that should have held it.
     """
     project_id = summary.project_id
-    workspace_branch = summary.workspace_branch
+    workspace_name = summary.workspace_name
     project_slug = summary.project_slug
     project_display_name = summary.project_display_name
     environment_id = summary.environment_id
@@ -490,7 +492,10 @@ def _enrich_summary(
 
     if summary.workspace_id and summary.workspace_id in workspaces:
         ws = workspaces[summary.workspace_id]
-        workspace_branch = ws.branch
+        # Phase N.5 — workspace identity is now ``name`` (was ``branch``
+        # in pre-N.5; per-repo branches now live on
+        # ``workspace_repositories``).
+        workspace_name = ws.name
         project_id = project_id or ws.project_id
 
     if environment_id and environment_id in environments:
@@ -532,7 +537,7 @@ def _enrich_summary(
         project_id=project_id,
         project_slug=project_slug,
         project_display_name=project_display_name,
-        workspace_branch=workspace_branch,
+        workspace_name=workspace_name,
         environment_id=environment_id,
         environment_name=environment_name,
         compose_project=summary.compose_project,
@@ -553,7 +558,7 @@ def _summary_dto(s: ContainerSummary) -> SummaryDto:
         project_id=s.project_id,
         project_slug=s.project_slug,
         project_display_name=s.project_display_name,
-        workspace_branch=s.workspace_branch,
+        workspace_name=s.workspace_name,
         environment_id=s.environment_id,
         environment_name=s.environment_name,
         compose_project=s.compose_project,
@@ -741,7 +746,7 @@ def _build_workspace_dtos(
         WorkspaceDto(
             id=w.id,
             project_id=w.project_id,
-            branch=w.branch,
+            name=w.name,
             status=w.status.value,
             services=svc_by_workspace.get(w.id, []),
         )

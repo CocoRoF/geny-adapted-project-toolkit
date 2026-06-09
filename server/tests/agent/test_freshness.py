@@ -168,7 +168,7 @@ async def _seed(factory) -> tuple[models.Project, models.Workspace]:  # type: ig
         ws = models.Workspace(
             id=new_ulid(),
             project_id=project.id,
-            branch="main",
+            name="main",
             worktree_path="/workspace",
             status=enums.WorkspaceStatus.RUNNING,
         )

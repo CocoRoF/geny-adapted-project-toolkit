@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import json
 import shlex
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -79,9 +80,14 @@ async def _read_github_token(
     actor_id: str,
     vault: SecretVault,
     container: AppContainer | None = None,
+    repository_id: str | None = None,
 ) -> str | None:
     """Resolve a GitHub token for git operations. Priority:
 
+      0. (Phase N.4) Repository's vault-bound secret
+         (``ProjectRepository.git_auth_secret_ref``). Per-repo token,
+         lets one project hold an OSS repo (anonymous) next to a
+         private one (token), each with the right credential.
       1. Project's vault-bound secret (`git_auth_secret_ref`). Per-
          project token, set by the operator in Settings + bound at
          project create / edit time.
@@ -103,6 +109,23 @@ async def _read_github_token(
     scaffolded project couldn't push even though Settings had the
     token. The chain is now consistent with the scaffold side.
     """
+    # 0. Phase N.4 — repository-scoped binding (highest priority).
+    #    Allows one project to mix OSS + private repos.
+    if repository_id is not None:
+        repo_row = await db.get(models.ProjectRepository, repository_id)
+        if repo_row is not None and repo_row.git_auth_secret_ref:
+            try:
+                token = await vault.read(
+                    db,
+                    secret_id=repo_row.git_auth_secret_ref,
+                    purpose="workspace.git",
+                    actor_id=actor_id,
+                )
+                if token:
+                    return token
+            except (SecretVaultError, Exception):
+                pass
+
     # 1. Per-project binding wins when explicitly set.
     project = (
         await db.execute(select(models.Project).where(models.Project.id == project_id))
@@ -161,11 +184,16 @@ async def _git_exec(
     *,
     env: dict[str, str] | None = None,
     timeout_s: float = 30.0,
+    subpath: str = "",
 ) -> tuple[int, str, str]:
-    """Run `git <argv>` in `/workspace`. Returns (rc, stdout, stderr).
-    We never let git's password prompt block — `GIT_TERMINAL_PROMPT=0`
-    + `GIT_ASKPASS=/bin/true` ensure failed auth turns into a real
-    error code instead of hanging."""
+    """Run `git <argv>` in ``/workspace[/<subpath>]``. Returns
+    (rc, stdout, stderr). We never let git's password prompt block —
+    ``GIT_TERMINAL_PROMPT=0`` + ``GIT_ASKPASS=/bin/true`` ensure
+    failed auth turns into a real error code instead of hanging.
+
+    Phase N.4 — ``subpath`` lets the same git op target one of the
+    project's many repos. Empty string keeps the legacy "workspace
+    root is the repo" behaviour for single-repo projects."""
     full_env = {
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ASKPASS": "/bin/true",
@@ -176,13 +204,116 @@ async def _git_exec(
     }
     if env:
         full_env.update(env)
+    cwd = "/workspace" if not subpath else f"/workspace/{subpath}"
     rc, out, err = await sandbox.exec(
         ["git", *argv],
         env=full_env,
-        cwd="/workspace",
+        cwd=cwd,
         timeout_s=timeout_s,
     )
     return rc, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
+
+
+async def _git_exec_in(
+    sandbox: WorkspaceSandbox,
+    target: "_RepoTarget",
+    argv: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout_s: float = 30.0,
+) -> tuple[int, str, str]:
+    """``_git_exec`` shorthand that targets a specific repo. Phase
+    N.4 — endpoints resolve a ``_RepoTarget`` once via
+    ``_resolve_repo_target`` then thread it through every git call
+    so all ops fire in the right ``<worktree>/<subpath>/`` cwd.
+
+    When the repo's subdir exists but holds no ``.git`` (e.g. the repo
+    row was added AFTER the workspace was created, so the clone never
+    materialised), git returns rc!=0 with "not a git repository" on
+    stderr. We translate that into a structured 412 so the UI can show
+    "이 레포는 아직 워크스페이스에 없어요" instead of letting all 17 git
+    endpoints fan out 500s into the browser console."""
+    rc, out, err = await _git_exec(
+        sandbox, argv, env=env, timeout_s=timeout_s, subpath=target.subpath
+    )
+    if rc != 0 and "not a git repository" in err.lower():
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "git.repo_not_cloned",
+                "reason": (
+                    f"repository '{target.display_name}' has no clone in this "
+                    "workspace — recreate the workspace to fetch all current repos"
+                ),
+                "repository_id": target.id,
+            },
+        )
+    return rc, out, err
+
+
+@dataclass
+class _RepoTarget:
+    """Resolved target for a git op: which row + where it lives on
+    disk + which remote URL it speaks to. Empty repo (no remote) is
+    represented by ``git_remote_url=None`` — endpoints that need a
+    remote should 412 in that case."""
+
+    id: str
+    subpath: str
+    display_name: str
+    git_remote_url: str | None
+    git_auth_secret_ref: str | None
+
+
+async def _resolve_repo_target(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    repo_id: str | None,
+) -> _RepoTarget:
+    """Phase N.4 — pick which repository to operate on.
+
+    Explicit ``repo_id`` query param wins. Otherwise we fall back to
+    the project's PRIMARY repository (lowest sort_order, oldest
+    created_at on tie). Empty projects (no repository rows) raise a
+    412 with ``code='repository.none'`` so the UI can render the
+    "no source control" empty state instead of a server error."""
+    from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+    if repo_id is not None:
+        row = await _repo_svc.get(db, repository_id=repo_id)
+        if row is None or row.project_id != project_id or row.archived_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "repository.not_found", "reason": repo_id},
+            )
+        return _RepoTarget(
+            id=row.id,
+            subpath=row.subpath,
+            display_name=row.display_name,
+            git_remote_url=row.git_remote_url,
+            git_auth_secret_ref=row.git_auth_secret_ref,
+        )
+
+    primary = await _repo_svc.primary_for_project(db, project_id=project_id)
+    if primary is None:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": "repository.none",
+                "reason": (
+                    "this project has no repositories — add one via "
+                    "Settings → Project → Repositories or pass repo_id"
+                ),
+            },
+        )
+    return _RepoTarget(
+        id=primary.id,
+        subpath=primary.subpath,
+        display_name=primary.display_name,
+        git_remote_url=primary.git_remote_url,
+        git_auth_secret_ref=primary.git_auth_secret_ref,
+    )
 
 
 # ─── status ─────────────────────────────────────────────────────────
@@ -211,18 +342,21 @@ class GitStatusResponse(BaseModel):
 )
 async def git_status(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — which repo of the project to inspect. Omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStatusResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
 
     # branch + upstream tracking — `--porcelain=v2 -b` lines start
     # with `# branch.{head,upstream,ab}`. Then file rows.
-    rc, out, err = await _git_exec(
-        sandbox, ["status", "--porcelain=v2", "-b", "--untracked-files=all"]
+    rc, out, err = await _git_exec_in(
+        sandbox, target,
+        ["status", "--porcelain=v2", "-b", "--untracked-files=all"],
     )
     if rc != 0:
         raise HTTPException(
@@ -272,8 +406,8 @@ async def git_status(
     # are GAPT's concern alone.
     entries = [e for e in entries if not _is_gapt_managed_path(e.path)]
 
-    rc, out, _ = await _git_exec(
-        sandbox,
+    rc, out, _ = await _git_exec_in(
+        sandbox, target,
         ["log", "-10", "--pretty=%h%x09%s", "--no-color"],
         timeout_s=10.0,
     )
@@ -310,6 +444,7 @@ async def git_diff(
     workspace_id: str,
     path: str,
     staged: bool = False,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -318,13 +453,14 @@ async def git_diff(
     HEAD diff (for files the user already staged); otherwise the
     worktree-vs-HEAD diff (the common case)."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     argv = ["diff", "--no-color", "--unified=3"]
     if staged:
         argv.append("--staged")
     argv.extend(["--", path])
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=10.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=10.0)
     if rc != 0:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -356,11 +492,13 @@ class GitCommitResponse(BaseModel):
 async def git_commit(
     workspace_id: str,
     payload: GitCommitRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitCommitResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
 
@@ -373,7 +511,7 @@ async def git_commit(
         add_argv.extend(["--", *payload.paths])
     else:
         add_argv.append("-A")
-    rc, _, err = await _git_exec(sandbox, add_argv, timeout_s=30.0)
+    rc, _, err = await _git_exec_in(sandbox, target, add_argv, timeout_s=30.0)
     if rc != 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -412,8 +550,8 @@ async def git_commit(
         )
 
     # Capture the SHA + branch the commit landed on.
-    rc, sha_out, _ = await _git_exec(sandbox, ["rev-parse", "--short", "HEAD"])
-    rc, branch_out, _ = await _git_exec(sandbox, ["rev-parse", "--abbrev-ref", "HEAD"])
+    rc, sha_out, _ = await _git_exec_in(sandbox, target, ["rev-parse", "--short", "HEAD"])
+    rc, branch_out, _ = await _git_exec_in(sandbox, target, ["rev-parse", "--abbrev-ref", "HEAD"])
     return GitCommitResponse(
         sha=sha_out.strip(),
         branch=branch_out.strip() or None,
@@ -444,12 +582,14 @@ class GitPushResponse(BaseModel):
 async def git_push(
     workspace_id: str,
     payload: GitPushRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
 ) -> GitPushResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     token = await _read_github_token(
         db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
@@ -467,7 +607,7 @@ async def git_push(
 
     branch = payload.branch
     if branch is None:
-        rc, out, _ = await _git_exec(sandbox, ["rev-parse", "--abbrev-ref", "HEAD"])
+        rc, out, _ = await _git_exec_in(sandbox, target, ["rev-parse", "--abbrev-ref", "HEAD"])
         if rc == 0:
             branch = out.strip()
     if not branch or branch == "HEAD":
@@ -532,6 +672,7 @@ class CreatePrResponse(BaseModel):
 async def create_pr(
     workspace_id: str,
     payload: CreatePrRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -544,6 +685,7 @@ async def create_pr(
     github token (same one used for push).
     """
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     token = await _read_github_token(
         db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
@@ -557,7 +699,7 @@ async def create_pr(
 
     head_branch = payload.head
     if head_branch is None:
-        rc, out, _ = await _git_exec(sandbox, ["rev-parse", "--abbrev-ref", "HEAD"])
+        rc, out, _ = await _git_exec_in(sandbox, target, ["rev-parse", "--abbrev-ref", "HEAD"])
         if rc == 0:
             head_branch = out.strip()
     if not head_branch or head_branch == "HEAD":
@@ -657,7 +799,7 @@ async def _git_fetch(sandbox: WorkspaceSandbox, token: str | None) -> tuple[int,
     same `http.extraHeader` mechanism the clone path uses so private
     repos work transparently."""
     argv = _with_auth_prefix(["fetch", "origin", "--prune"], token)
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=60.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=60.0)
     return rc, (out + err).strip()
 
 
@@ -680,6 +822,7 @@ def _with_auth_prefix(argv: list[str], token: str | None) -> list[str]:
 )
 async def git_fetch(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -689,6 +832,7 @@ async def git_fetch(
     refreshes ahead/behind counts. The cheap version of sync, runs in
     ~1s on small repos."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
@@ -710,6 +854,7 @@ async def git_fetch(
 )
 async def git_pull(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -722,6 +867,7 @@ async def git_pull(
     Sequence: fetch → check fast-forward possible → ff-merge. Skips
     the merge step when already up-to-date (behind=0)."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
@@ -776,6 +922,7 @@ async def git_pull(
 )
 async def git_sync(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -787,6 +934,7 @@ async def git_sync(
     Status flag distinguishes "ahead=0 + behind=0 + nothing pushed"
     (already synced) from real action."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     token = await _read_github_token(
@@ -899,6 +1047,7 @@ class GitDiscardResponse(BaseModel):
 async def git_discard(
     workspace_id: str,
     payload: GitDiscardRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -914,6 +1063,7 @@ async def git_discard(
     `..` segment is rejected outright.
     """
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
 
@@ -995,6 +1145,7 @@ class GitBranchesResponse(BaseModel):
 )
 async def git_branches(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -1004,6 +1155,7 @@ async def git_branches(
     last commit. Single `git for-each-ref` covers local + remote in
     one shot — way cheaper than calling `git branch` twice."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
 
@@ -1123,11 +1275,13 @@ class GitCheckoutResponse(BaseModel):
 async def git_checkout(
     workspace_id: str,
     payload: GitCheckoutRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitCheckoutResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     argv: list[str] = ["checkout"]
@@ -1138,7 +1292,7 @@ async def git_checkout(
     argv.append(payload.branch)
     if payload.start_point:
         argv.append(payload.start_point)
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=30.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=30.0)
     combined = (out + err).strip()
     return GitCheckoutResponse(
         ok=rc == 0,
@@ -1170,11 +1324,13 @@ class GitBranchDeleteResponse(BaseModel):
 async def git_branch_delete(
     workspace_id: str,
     payload: GitBranchDeleteRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitBranchDeleteResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     flag = "-D" if payload.force else "-d"
@@ -1211,11 +1367,13 @@ class GitStashListResponse(BaseModel):
 )
 async def git_stash_list(
     workspace_id: str,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStashListResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     # `git stash list --format=...`. We grab the ref name, branch
@@ -1269,11 +1427,13 @@ class GitStashOpResponse(BaseModel):
 async def git_stash_push(
     workspace_id: str,
     payload: GitStashPushRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStashOpResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     argv: list[str] = ["stash", "push"]
@@ -1281,7 +1441,7 @@ async def git_stash_push(
         argv.append("-u")
     if payload.message:
         argv.extend(["-m", payload.message])
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=20.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=20.0)
     return GitStashOpResponse(
         ok=rc == 0,
         output=(out + err).strip(),
@@ -1302,17 +1462,19 @@ class GitStashRefRequest(BaseModel):
 async def git_stash_pop(
     workspace_id: str,
     payload: GitStashRefRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStashOpResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     argv: list[str] = ["stash", "pop"]
     if payload.ref:
         argv.append(payload.ref)
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=20.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=20.0)
     return GitStashOpResponse(
         ok=rc == 0,
         output=(out + err).strip(),
@@ -1326,17 +1488,19 @@ async def git_stash_pop(
 async def git_stash_drop(
     workspace_id: str,
     payload: GitStashRefRequest,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> GitStashOpResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     argv: list[str] = ["stash", "drop"]
     if payload.ref:
         argv.append(payload.ref)
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=10.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=10.0)
     return GitStashOpResponse(
         ok=rc == 0,
         output=(out + err).strip(),
@@ -1374,6 +1538,7 @@ async def git_log(
     workspace_id: str,
     limit: int = 50,
     all_branches: bool = True,
+    repo_id: str | None = Query(None, description="Phase N.4 — repo to target; omit for primary."),  # noqa: B008
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
@@ -1383,6 +1548,7 @@ async def git_log(
     "show every branch" view; flip to False for "current branch only"
     if the panel adds a filter toggle later."""
     ws = await _resolve_workspace(db, workspace_id=workspace_id, user=user)
+    target = await _resolve_repo_target(db, project_id=ws.project_id, repo_id=repo_id)
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     limit = max(1, min(limit, 500))
@@ -1401,7 +1567,7 @@ async def git_log(
     argv = ["log", f"--max-count={limit}", f"--format={fmt}"]
     if all_branches:
         argv.append("--all")
-    rc, out, err = await _git_exec(sandbox, argv, timeout_s=15.0)
+    rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=15.0)
     if rc != 0:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -2,19 +2,42 @@ import { apiDelete, apiGet, apiPost } from "@/api/client";
 
 export type WorkspaceStatus = "creating" | "running" | "paused" | "stopped" | "failed" | "archived";
 
+/** Phase N.5 — one entry in a workspace's repo selection. Mirrors
+ *  the backend ``WorkspaceSelectionResponse``. ``repository_id`` is
+ *  null only when the project's repo row was archived after the
+ *  workspace was created (FK ondelete=SET NULL on the join table). */
+export interface WorkspaceSelection {
+  repository_id: string | null;
+  subpath: string;
+  display_name: string;
+  branch: string;
+  git_remote_url: string | null;
+}
+
 export interface WorkspaceResponse {
   id: string;
   project_id: string;
-  branch: string;
+  /** Phase N.5 — workspace identity. Replaces the old ``branch``
+   *  field; per-repo branches live on ``selections`` now. */
+  name: string;
   worktree_path: string;
   sandbox_id: string | null;
   status: WorkspaceStatus;
   last_activity_at: string;
   created_at: string;
+  selections: WorkspaceSelection[];
+}
+
+/** Phase N.5 — operator-supplied repo pick at create time. */
+export interface WorkspaceRepoSelectionInput {
+  repository_id: string;
+  branch: string;
 }
 
 export interface CreateWorkspaceInput {
-  branch: string;
+  name: string;
+  /** Omit / null for "every project repo at its default_branch". */
+  selections?: WorkspaceRepoSelectionInput[] | null;
   worktree_path?: string;
 }
 
@@ -42,6 +65,20 @@ export const startWorkspace = (workspaceId: string): Promise<WorkspaceResponse> 
 
 export const deleteWorkspace = (workspaceId: string): Promise<void> =>
   apiDelete<void>(`/_gapt/api/workspaces/${workspaceId}`);
+
+// Phase N.4 — re-clone any project repositories that aren't on disk
+// in this workspace yet. Idempotent; returns the post-clone outcome
+// so the UI can surface success vs partial-failure.
+export interface RehydrateResponse {
+  workspace: WorkspaceResponse;
+  outcome: string;
+  detail: string | null;
+}
+
+export const rehydrateWorkspace = (
+  workspaceId: string,
+): Promise<RehydrateResponse> =>
+  apiPost<RehydrateResponse>(`/_gapt/api/workspaces/${workspaceId}/rehydrate`);
 
 // Phase C.2.d — cap stats. `cap=null` means no cap configured.
 export interface WorkspaceStats {

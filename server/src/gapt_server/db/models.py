@@ -112,6 +112,95 @@ class Project(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# ─────────────────────────────────────────────────── project_repositories ──
+
+
+class ProjectRepository(Base):
+    """Phase N.4 — one project can carry zero or more git repositories.
+
+    The old model baked git_remote_url / provider / compose paths /
+    auth onto ``Project`` itself, so every project was exactly one git
+    repo. The new model promotes that bundle to its own row and makes
+    Project a logical container. An empty project (no rows) is now a
+    first-class citizen — its workspaces get a plain worktree dir
+    with no clones, ready for an operator to drop loose files or
+    `git init` later. A project with N rows clones each repo into its
+    own ``subpath`` under the workspace's worktree, side-by-side
+    (VS Code's "multi-root workspace" semantics).
+
+    Auto-migration of pre-N.4 projects: for each existing
+    ``projects`` row, one ``project_repositories`` row is inserted
+    carrying its git+compose bundle with ``subpath=''`` (legacy
+    project-root layout). Once that has run the Project columns can
+    be retired in a follow-up migration.
+    """
+
+    __tablename__ = "project_repositories"
+
+    id: Mapped[str] = _pk()
+    project_id: Mapped[str] = mapped_column(
+        String(ULID_LEN), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Folder name inside the workspace's worktree. Empty string is
+    # the legacy "project root" layout — the single repo sits AT
+    # ``/workspace`` rather than under a sub-folder. Multi-repo
+    # projects use non-empty subpaths like "geny-executor", "vendor",
+    # etc. Validated at write-time: must be a single path segment
+    # (no slashes), unique within a project.
+    subpath: Mapped[str] = mapped_column(
+        String(120), nullable=False, server_default=""
+    )
+    # Human-friendly label for the GitPanel tree node. Defaults to
+    # the repo's short name (last segment of the URL) when not set.
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Git URL. NULL is reserved for the "empty subdir, git init
+    # later" case — not exposed in the create flow yet but the
+    # column allows it so we can add empty-repo support without a
+    # migration later.
+    git_remote_url: Mapped[str | None] = mapped_column(Text)
+    git_provider: Mapped[GitProvider | None] = mapped_column(
+        _pg_enum(GitProvider, "git_provider_enum")
+    )
+    # Per-repo auth. NULL → fall back to Project.git_auth_secret_ref
+    # (still readable post-migration via the legacy column or a
+    # future ProjectDefault row). Lets OSS + private repos coexist
+    # in one project with different GitHub accounts.
+    git_auth_secret_ref: Mapped[str | None] = mapped_column(Text)
+    # Per-repo compose paths. Each repo deploys as its own stack
+    # (decision: "each repo deploys independently"). Empty array =
+    # "this repo is not deployable on its own" (e.g. a vendored
+    # library that ships inside another repo's image).
+    default_compose_paths: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
+    compose_profile_dev: Mapped[str | None] = mapped_column(String(80))
+    compose_profile_prod: Mapped[str | None] = mapped_column(String(80))
+    # Branch the workspace clones initially. NULL → server's HEAD.
+    # Per-repo branches let one workspace hold (e.g.) main of one
+    # repo + a feature branch of another — the VS Code multi-root
+    # use case.
+    default_branch: Mapped[str | None] = mapped_column(String(255))
+    # Display order in the GitPanel tree + the "first match" default
+    # for empty deploy-target pickers. Lower comes first. Not unique
+    # — operators are free to assign whatever order they like.
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = _created_at()
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "subpath",
+            name="uq_project_repositories_subpath",
+        ),
+        Index(
+            "ix_project_repositories_project_sort",
+            "project_id", "sort_order",
+        ),
+    )
+
+
 # ─────────────────────────────────────────────────────── environments ──
 
 
@@ -121,6 +210,15 @@ class Environment(Base):
     id: Mapped[str] = _pk()
     project_id: Mapped[str] = mapped_column(
         String(ULID_LEN), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Phase N.4 — which of the project's repositories supplies the
+    # compose files / deploy target for this env. NULL = legacy
+    # behaviour (project-wide compose paths). Set on env creation;
+    # the auto-migration fills it with the project's primary repo
+    # for every existing row so behaviour is preserved on upgrade.
+    repository_id: Mapped[str | None] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("project_repositories.id", ondelete="SET NULL"),
     )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     deploy_target_kind: Mapped[DeployTargetKind] = mapped_column(
@@ -200,13 +298,32 @@ class DeployRun(Base):
 
 
 class Workspace(Base):
+    """Phase N.5 — a workspace is a logical workspace, not a branch.
+
+    Pre-N.5 every workspace was identified by ``(project, branch)`` so
+    creating a workspace meant "open branch X", which collapsed in the
+    multi-repo world where each repo can be on a different branch. The
+    new model:
+
+    - ``name`` is the user-facing identity (operator types it, or we
+      auto-generate "workspace-N"). Idempotency is now keyed on
+      ``(project, name)`` so reopening "workspace-1" twice is a no-op.
+    - Which repositories get cloned + which branch each lands on is
+      recorded in the ``workspace_repositories`` join rows below. The
+      old ``branch`` column is gone — branch is per-repo now.
+    """
+
     __tablename__ = "workspaces"
 
     id: Mapped[str] = _pk()
     project_id: Mapped[str] = mapped_column(
         String(ULID_LEN), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Phase N.5 — workspace identity. Replaces ``branch`` as the
+    # primary user-facing label. The migration backfills this from
+    # the legacy branch column for existing rows so URLs / audit
+    # trails stay intelligible.
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     worktree_path: Mapped[str] = mapped_column(Text, nullable=False)
     sandbox_id: Mapped[str | None] = mapped_column(
         String(ULID_LEN), ForeignKey("sandboxes.id", ondelete="SET NULL")
@@ -226,16 +343,70 @@ class Workspace(Base):
 
     __table_args__ = (
         Index("ix_workspaces_project_status", "project_id", "status"),
-        # Phase C.1: one *active* workspace per (project, branch).
+        # Phase N.5: one *active* workspace per (project, name).
         # Partial index — archived rows can pile up freely so the audit
-        # value is preserved, and re-creating a workspace for a branch
-        # whose prior row was archived still works.
+        # value is preserved, and re-creating a workspace named X after
+        # its prior row was archived still works.
         Index(
-            "ix_workspaces_project_branch_active",
+            "ix_workspaces_project_name_active",
             "project_id",
-            "branch",
+            "name",
             unique=True,
             postgresql_where=text("status != 'archived'"),
+        ),
+    )
+
+
+# ─────────────────────────────────────────────── workspace_repositories ──
+
+
+class WorkspaceRepository(Base):
+    """Phase N.5 — per-workspace repo selection + branch.
+
+    Workspace creation now takes a list of these: "clone repo R at
+    branch B into the workspace's worktree." This decouples branch
+    selection from workspace identity (workspace ≠ branch any more)
+    and lets one workspace hold (say) repo A on ``main`` next to
+    repo B on ``feature/x`` — the VS Code multi-root case.
+
+    Rows are immutable for the workspace's lifetime: edits to which
+    repos are linked require recreating the workspace (operator can
+    delete + create fresh from the GitPanel). Archived workspaces
+    leave their rows behind for audit value; the FK uses
+    ``ondelete='CASCADE'`` so dropping the workspace cleans them up.
+    """
+
+    __tablename__ = "workspace_repositories"
+
+    id: Mapped[str] = _pk()
+    workspace_id: Mapped[str] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Which of the project's repos is included. FK so a deleted /
+    # archived ProjectRepository row doesn't dangle here — the
+    # workspace's view of that selection becomes ``NULL`` and the
+    # GitPanel skips the entry.
+    project_repository_id: Mapped[str | None] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("project_repositories.id", ondelete="SET NULL"),
+    )
+    # The branch the workspace clones this repo at. Distinct from
+    # ``ProjectRepository.default_branch`` so each workspace can pin
+    # its own. Empty string is reserved for the "empty repo / git
+    # init candidate" case where no clone happens.
+    branch: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "project_repository_id",
+            name="uq_workspace_repositories_pair",
+        ),
+        Index(
+            "ix_workspace_repositories_workspace",
+            "workspace_id",
         ),
     )
 

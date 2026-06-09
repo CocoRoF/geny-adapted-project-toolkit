@@ -14,6 +14,16 @@ export interface ProjectResponse {
   compose_profile_prod: string | null;
   created_at: string;
   archived_at: string | null;
+  /** Phase N.4 — count of active ProjectRepository rows. 0 = empty
+   *  project (no git, scratch worktree), 1 = legacy single-repo,
+   *  2+ = VS Code-style multi-root project. */
+  repository_count: number;
+  /** Primary repo URL — null only for empty projects. Same as
+   *  `git_remote_url` for legacy single-repo projects. */
+  primary_repository_url: string | null;
+  /** Primary repo subpath. Empty string for legacy single-repo
+   *  (the repo IS the worktree root). */
+  primary_repository_subpath: string;
 }
 
 export interface CreateProjectInput {
@@ -46,10 +56,13 @@ export interface RemoteBranchesResponse {
 
 export const getRemoteBranches = (
   projectId: string,
-  opts: { refresh?: boolean } = {},
+  opts: { refresh?: boolean; repoId?: string | null } = {},
 ): Promise<RemoteBranchesResponse> => {
-  const query = opts.refresh ? "?refresh=true" : "";
+  const params = new URLSearchParams();
+  if (opts.refresh) params.set("refresh", "true");
+  if (opts.repoId) params.set("repo_id", opts.repoId);
+  const query = params.toString();
   return apiGet<RemoteBranchesResponse>(
-    `/_gapt/api/projects/${projectId}/remote-branches${query}`,
+    `/_gapt/api/projects/${projectId}/remote-branches${query ? `?${query}` : ""}`,
   );
 };

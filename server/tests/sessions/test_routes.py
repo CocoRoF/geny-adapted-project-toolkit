@@ -118,7 +118,7 @@ async def _create_project_with_workspace(client: AsyncClient) -> tuple[str, str]
 
     wks = await client.post(
         f"/_gapt/api/projects/{project_id}/workspaces",
-        json={"branch": "main"},
+        json={"name": "main"},
     )
     assert wks.status_code == 201, wks.text
     return project_id, wks.json()["id"]
@@ -537,7 +537,7 @@ async def test_list_sessions_workspace_filter(fx: _Fx) -> None:
         # Second workspace in the same project.
         ws_b_resp = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "other"},
+            json={"name": "other"},
         )
         ws_b = ws_b_resp.json()["id"]
 

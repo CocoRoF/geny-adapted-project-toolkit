@@ -115,7 +115,7 @@ async def _create_workspace(client: AsyncClient) -> str:
 
     wks = await client.post(
         f"/_gapt/api/projects/{project_id}/workspaces",
-        json={"branch": "main"},
+        json={"name": "main"},
     )
     return wks.json()["id"]
 

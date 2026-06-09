@@ -71,7 +71,11 @@ router = APIRouter(prefix="/_gapt/api/projects", tags=["projects"])
 class CreateProjectRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=120, pattern=_SLUG_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
-    git_remote_url: str = Field(min_length=4, max_length=2048)
+    # Phase N.4 — empty string lets the operator create an empty
+    # project (no repos, scratch worktree). Validation only enforces
+    # an upper bound; the service layer treats empty as "no primary
+    # repo, skip the auto ProjectRepository insert".
+    git_remote_url: str = Field(default="", max_length=2048)
     git_provider: enums.GitProvider = enums.GitProvider.GITHUB
     default_compose_paths: list[str] = Field(default_factory=list)
     compose_profile_dev: str | None = None
@@ -97,6 +101,14 @@ class ProjectResponse(BaseModel):
     compose_profile_prod: str | None
     created_at: datetime
     archived_at: datetime | None
+    # Phase N.4 — active repository count + primary repo URL/name.
+    # Populated by the list/get endpoints. Defaults to 1 + the
+    # legacy `git_remote_url` for backwards compatibility so any
+    # old caller (or freshly seeded admin DB) still renders. Empty
+    # projects come back as 0.
+    repository_count: int = 1
+    primary_repository_url: str | None = None
+    primary_repository_subpath: str = ""
 
     @classmethod
     def from_view(cls, v: ProjectView) -> ProjectResponse:
@@ -199,6 +211,26 @@ async def create_project(
     return ProjectResponse.from_view(view)
 
 
+async def _enrich_with_repos(
+    db: AsyncSession, resp: ProjectResponse
+) -> ProjectResponse:
+    """Phase N.4 — fill ``repository_count`` + primary fields. Done
+    here rather than at view-construction time because the domain
+    layer doesn't see ProjectResponse — the repos service is a
+    router-only concern. Tiny per-project query; for the listing
+    endpoint we accept the N+1 cost (single-admin, dev-scale
+    workloads — operators rarely have more than a handful of
+    projects)."""
+    from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+    rows = await _repo_svc.list_for_project(db, project_id=resp.id)
+    resp.repository_count = len(rows)
+    primary = rows[0] if rows else None
+    resp.primary_repository_url = primary.git_remote_url if primary else None
+    resp.primary_repository_subpath = primary.subpath if primary else ""
+    return resp
+
+
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
     include_archived: bool = False,
@@ -209,7 +241,8 @@ async def list_projects(
     views = await svc.list_for_user(
         db, actor=user, include_archived=include_archived
     )
-    return [ProjectResponse.from_view(v) for v in views]
+    resps = [ProjectResponse.from_view(v) for v in views]
+    return [await _enrich_with_repos(db, r) for r in resps]
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -223,7 +256,7 @@ async def get_project(
         view = await svc.get(db, actor=user, project_id=project_id)
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
-    return ProjectResponse.from_view(view)
+    return await _enrich_with_repos(db, ProjectResponse.from_view(view))
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
@@ -470,19 +503,27 @@ class RemoteBranchesResponse(BaseModel):
 async def get_remote_branches(
     project_id: str,
     refresh: bool = False,
+    repo_id: str | None = None,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     vault: SecretVault = Depends(get_vault),  # noqa: B008
     container: AppContainer = Depends(get_container),  # noqa: B008
 ) -> RemoteBranchesResponse:
-    """List the branches advertised by `project.git_remote_url`.
+    """List the branches advertised by a project's git remote.
 
-    Cached for ~60s per project so close-and-reopen of the workspace
-    modal doesn't re-hit the network. `?refresh=true` busts the cache
-    — useful when a branch was just pushed and isn't showing up yet.
+    Phase N.5 — ``repo_id`` picks one of the project's
+    ``project_repositories`` rows to ls-remote (multi-repo case).
+    Omitted falls back to the legacy ``project.git_remote_url``
+    (single-repo path; pre-N.4 projects). The frontend's
+    NewWorkspaceModal calls this per-repo so each per-repo branch
+    picker shows the branches of the right remote.
+
+    Cached for ~60s per (project, repo) so close-and-reopen of the
+    workspace modal doesn't re-hit the network. ``?refresh=true``
+    busts the cache — useful when a branch was just pushed.
 
     Errors map to:
-      - 404 if the project doesn't exist or the user can't see it
+      - 404 if the project (or repo) doesn't exist or the user can't see it
       - 502 if the remote rejects auth / DNS fails / hangs
     The frontend treats 502 as "fall back to free-text input".
     """
@@ -503,14 +544,40 @@ async def get_remote_branches(
             detail={"code": "project.not_found", "reason": project_id},
         )
 
+    # Phase N.5 — when repo_id is supplied, take the remote URL and
+    # the per-repo auth ref from that ProjectRepository row instead
+    # of the legacy project columns. Empty-string remote = "no
+    # remote configured" (git-init candidate) — return an empty list
+    # so the modal degrades gracefully.
+    remote_url: str | None = project.git_remote_url
+    auth_secret_ref: str | None = project.git_auth_secret_ref
+    cache_key = project_id
+    if repo_id is not None:
+        repo_row = await db.get(models.ProjectRepository, repo_id)
+        if (
+            repo_row is None
+            or repo_row.project_id != project_id
+            or repo_row.archived_at is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "repository.not_found", "reason": repo_id},
+            )
+        remote_url = repo_row.git_remote_url
+        auth_secret_ref = repo_row.git_auth_secret_ref or auth_secret_ref
+        cache_key = f"{project_id}:{repo_id}"
+    if not remote_url:
+        # Empty/candidate repo — no remote, no branches to advertise.
+        return RemoteBranchesResponse(branches=[], head=None)
+
     # Token resolution mirrors `routers.git._read_github_token`:
-    # project vault secret → host fallback → anon.
+    # repo / project vault secret → host fallback → anon.
     github_token: str | None = None
-    if project.git_auth_secret_ref:
+    if auth_secret_ref:
         try:
             github_token = await vault.read(
                 db,
-                secret_id=project.git_auth_secret_ref,
+                secret_id=auth_secret_ref,
                 purpose="workspace.git",
                 actor_id=user.id,
             )
@@ -520,12 +587,12 @@ async def get_remote_branches(
         github_token = container.host_github_token
 
     if refresh:
-        invalidate_remote_branches(project_id)
+        invalidate_remote_branches(cache_key)
 
     try:
         result = await list_remote_branches(
-            project_id=project_id,
-            git_remote_url=project.git_remote_url,
+            project_id=cache_key,
+            git_remote_url=remote_url,
             github_token=github_token,
         )
     except RemoteBranchesError as exc:
@@ -611,3 +678,174 @@ async def list_environments(
         # exactly like FastAPI's normal response pipeline would.
         out.append(resp.model_dump(mode="json"))
     return out
+
+
+# ─── Phase N.4 — project repositories ────────────────────────────────
+
+
+class RepositoryResponse(BaseModel):
+    """Wire shape for a project_repositories row. The IDE's source
+    control tree + the project listing card both consume this; the
+    same shape doubles as the create response so the UI can append
+    the freshly-added repo without a re-fetch."""
+
+    id: str
+    project_id: str
+    subpath: str
+    display_name: str
+    git_remote_url: str | None
+    git_provider: enums.GitProvider | None
+    default_compose_paths: list[str]
+    compose_profile_dev: str | None
+    compose_profile_prod: str | None
+    default_branch: str | None
+    sort_order: int
+
+    @classmethod
+    def from_row(cls, row: models.ProjectRepository) -> "RepositoryResponse":
+        return cls(
+            id=row.id,
+            project_id=row.project_id,
+            subpath=row.subpath,
+            display_name=row.display_name,
+            git_remote_url=row.git_remote_url,
+            git_provider=row.git_provider,
+            default_compose_paths=list(row.default_compose_paths or []),
+            compose_profile_dev=row.compose_profile_dev,
+            compose_profile_prod=row.compose_profile_prod,
+            default_branch=row.default_branch,
+            sort_order=row.sort_order,
+        )
+
+
+class CreateRepositoryRequest(BaseModel):
+    """Multi-git ``+ Add repository`` payload from the ProjectDetail
+    Repositories section. ``subpath`` MUST be a single segment with
+    no slashes — the domain layer enforces this; we just pass-through.
+
+    Leaving ``git_remote_url`` blank reserves the slot for a
+    ``git init`` later (operator who wants a scratch subdir without
+    a remote). Cuts a workspace's mkdir from a forced no-op clone."""
+
+    subpath: str = Field(min_length=0, max_length=120)
+    display_name: str = Field(min_length=1, max_length=200)
+    git_remote_url: str | None = Field(default=None, max_length=2000)
+    git_provider: enums.GitProvider | None = None
+    git_auth_secret_ref: str | None = None
+    default_compose_paths: list[str] = Field(default_factory=list)
+    compose_profile_dev: str | None = None
+    compose_profile_prod: str | None = None
+    default_branch: str | None = Field(default=None, max_length=255)
+    sort_order: int = 0
+
+
+@router.get(
+    "/{project_id}/repositories", response_model=list[RepositoryResponse]
+)
+async def list_repositories(
+    project_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> list[RepositoryResponse]:
+    """Return the project's repositories (active, sort_order ascending).
+    Used by the IDE's GitPanel to populate its repo selector, by the
+    project card to render the multi-repo badge, and by the workspace
+    creation path to know what to clone."""
+    from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+    try:
+        await fetch_project_for(db, actor=user, project_id=project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    rows = await _repo_svc.list_for_project(db, project_id=project_id)
+    return [RepositoryResponse.from_row(r) for r in rows]
+
+
+@router.post(
+    "/{project_id}/repositories",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_repository(
+    project_id: str,
+    payload: CreateRepositoryRequest,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> RepositoryResponse:
+    """Add a repo to a project. Subpath uniqueness + format validation
+    raises domain ``RepositoryError`` which we map to 400/409 so the
+    UI can render a meaningful inline message instead of a generic
+    500."""
+    from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+    try:
+        await fetch_project_for(db, actor=user, project_id=project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    try:
+        row = await _repo_svc.add(
+            db,
+            project_id=project_id,
+            payload=_repo_svc.RepositoryCreate(
+                subpath=payload.subpath,
+                display_name=payload.display_name,
+                git_remote_url=payload.git_remote_url,
+                git_provider=payload.git_provider,
+                git_auth_secret_ref=payload.git_auth_secret_ref,
+                default_compose_paths=tuple(payload.default_compose_paths),
+                compose_profile_dev=payload.compose_profile_dev,
+                compose_profile_prod=payload.compose_profile_prod,
+                default_branch=payload.default_branch,
+                sort_order=payload.sort_order,
+            ),
+        )
+        await db.commit()
+    except _repo_svc.RepositoryError as exc:
+        await db.rollback()
+        code_to_status = {
+            "repository.subpath_invalid": status.HTTP_400_BAD_REQUEST,
+            "repository.subpath_conflict": status.HTTP_409_CONFLICT,
+        }
+        raise HTTPException(
+            status_code=code_to_status.get(exc.code, status.HTTP_400_BAD_REQUEST),
+            detail={"code": exc.code, "reason": str(exc)},
+        ) from exc
+    return RepositoryResponse.from_row(row)
+
+
+@router.delete(
+    "/{project_id}/repositories/{repository_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def archive_repository(
+    project_id: str,
+    repository_id: str,
+    db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
+) -> None:
+    """Soft-archive (no actual filesystem cleanup). Future workspace
+    creations skip this row; existing workspaces' worktree subdirs
+    are left in place so the operator can pull anything they staged
+    before removing the row."""
+    from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+    try:
+        await fetch_project_for(db, actor=user, project_id=project_id)
+    except ProjectError as exc:
+        raise http_from_project_error(exc) from exc
+    row = await _repo_svc.get(db, repository_id=repository_id)
+    if row is None or row.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "repository.not_found", "reason": repository_id},
+        )
+    try:
+        await _repo_svc.archive(db, repository_id=repository_id)
+        await db.commit()
+    except _repo_svc.RepositoryError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "reason": str(exc)},
+        ) from exc
+    return None

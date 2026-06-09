@@ -156,7 +156,7 @@ async def test_e1_full_admin_journey(e2e_fx: _E2EFixture) -> None:
         # `creating` to `running` once the clone settles.
         ws = await client.post(
             f"/_gapt/api/projects/{project_id}/workspaces",
-            json={"branch": "main"},
+            json={"name": "main"},
         )
         assert ws.status_code == 201, ws.text
         workspace_id = ws.json()["id"]

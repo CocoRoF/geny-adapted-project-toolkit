@@ -59,7 +59,7 @@ class ContainerSummary:
     # view groups containers by these.
     project_slug: str | None = None
     project_display_name: str | None = None
-    workspace_branch: str | None = None
+    workspace_name: str | None = None
     environment_id: str | None = None
     environment_name: str | None = None
     compose_project: str | None = None

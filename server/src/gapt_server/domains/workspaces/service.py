@@ -39,6 +39,7 @@ from sqlalchemy import select
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
 from gapt_server.domains.audit.sink import AuditAction, AuditEvent, AuditSink, NullAuditSink
+from gapt_server.domains.projects import repositories as repo_service
 from gapt_server.domains.projects.service import fetch_project_for
 from gapt_server.domains.sandbox import (
     SandboxBackend,
@@ -55,6 +56,58 @@ if TYPE_CHECKING:
 
     from gapt_server.domains.auth import AdminPrincipal
     from gapt_server.domains.workspace_sandbox import WorkspaceSandboxManager
+
+
+@dataclass(frozen=True)
+class RepoSpec:
+    """Per-repo clone instructions consumed by the multi-repo path.
+
+    Built from a ``ProjectRepository`` row. Carries everything the
+    worktree code needs to land that repo at its target subpath
+    without re-querying the DB. The empty-repo case (NULL
+    ``git_remote_url``) is represented by setting ``git_remote_url``
+    to None — the orchestrator then skips the clone and just makes
+    sure the subdir exists.
+    """
+
+    repo_id: str
+    subpath: str
+    git_remote_url: str | None
+    branch: str
+
+
+# Stable marker for the legacy single-repo layout. When the project's
+# only repository has subpath="", we preserve the historical bare
+# path (`<bare_root>/<project_slug>/`) instead of nesting it under a
+# repo-id segment. Lets pre-N.4 workspaces' .git files keep resolving
+# to the same bare even after the schema migration.
+_LEGACY_ROOT_SUBPATH = ""
+
+
+def _bare_slug_for(
+    project_slug: str, repo: RepoSpec, *, legacy_layout: bool
+) -> str:
+    """Slug passed into ``ensure_bare`` / ``add_worktree`` for one
+    repo.
+
+    Legacy single-repo projects keep the old shape
+    ``<bare_root>/<project_slug>/`` so their existing workspaces'
+    `.git` pointers stay valid. Multi-repo and explicit-subpath
+    projects nest under ``<bare_root>/<project_slug>/<repo_id>/`` so
+    multiple repos in one project don't collide.
+    """
+    if legacy_layout:
+        return project_slug
+    return f"{project_slug}/{repo.repo_id}"
+
+
+def _worktree_subdir_for(worktree: str, repo: RepoSpec) -> str:
+    """Where this repo's checkout lives on disk. Empty subpath = the
+    workspace's worktree root (legacy single-repo); non-empty subpath
+    = a folder under that root."""
+    if not repo.subpath:
+        return worktree
+    return os.path.join(worktree, repo.subpath)
 
 
 CloneRunner = Callable[[str, str, str], Awaitable[tuple[int, str, str]]]
@@ -306,28 +359,113 @@ class WorkspaceError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class WorkspaceSelectionView:
+    """Phase N.5 — one (workspace, project repo, branch) selection.
+
+    Mirrors a ``workspace_repositories`` row joined to its
+    ``project_repositories`` parent for UI rendering. ``repository_id``
+    is None if the project's repo row was archived after this
+    workspace was created (FK ondelete=SET NULL); the row stays for
+    audit, the UI shows it as orphaned."""
+
+    repository_id: str | None
+    subpath: str
+    display_name: str
+    branch: str
+    git_remote_url: str | None
+
+
+@dataclass(frozen=True)
 class WorkspaceView:
     id: str
     project_id: str
-    branch: str
+    # Phase N.5 — user-facing identity. Replaces the legacy ``branch``
+    # field; per-repo branches are surfaced via ``selections``.
+    name: str
     worktree_path: str
     sandbox_id: str | None
     status: enums.WorkspaceStatus
     last_activity_at: datetime
     created_at: datetime
+    selections: tuple[WorkspaceSelectionView, ...] = ()
 
 
-def _view(row: models.Workspace) -> WorkspaceView:
+def _view(
+    row: models.Workspace,
+    selections: list[WorkspaceSelectionView] | None = None,
+) -> WorkspaceView:
     return WorkspaceView(
         id=row.id,
         project_id=row.project_id,
-        branch=row.branch,
+        name=row.name,
         worktree_path=row.worktree_path,
         sandbox_id=row.sandbox_id,
         status=row.status,
         last_activity_at=row.last_activity_at,
         created_at=row.created_at,
+        selections=tuple(selections or ()),
     )
+
+
+@dataclass(frozen=True)
+class WorkspaceRepoSelectionInput:
+    """Phase N.5 — operator-supplied selection at create time.
+
+    ``repository_id`` MUST belong to the same project as the workspace
+    being created — the service validates this. ``branch`` is the
+    branch to clone for that repo; empty string means "the project
+    repo has no remote (git init candidate) — just make the subdir".
+    """
+
+    repository_id: str
+    branch: str
+
+
+async def _selection_views_for(
+    db: AsyncSession, *, workspace_id: str
+) -> list[WorkspaceSelectionView]:
+    """Load the per-workspace selections joined to their project repos.
+
+    Used by every read-path (`_view`, list, get) so the UI sees the
+    same shape everywhere. Orphaned join rows (the project repo was
+    archived) come back with ``repository_id=None`` and inherit only
+    the join row's stored branch — display_name + subpath come from
+    a fallback "(archived)" placeholder so the UI can still render
+    them without a separate code path."""
+    stmt = (
+        select(models.WorkspaceRepository, models.ProjectRepository)
+        .outerjoin(
+            models.ProjectRepository,
+            models.WorkspaceRepository.project_repository_id
+            == models.ProjectRepository.id,
+        )
+        .where(models.WorkspaceRepository.workspace_id == workspace_id)
+        .order_by(models.WorkspaceRepository.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    out: list[WorkspaceSelectionView] = []
+    for wr, pr in rows:
+        if pr is None:
+            out.append(
+                WorkspaceSelectionView(
+                    repository_id=None,
+                    subpath="",
+                    display_name="(archived)",
+                    branch=wr.branch,
+                    git_remote_url=None,
+                )
+            )
+        else:
+            out.append(
+                WorkspaceSelectionView(
+                    repository_id=pr.id,
+                    subpath=pr.subpath,
+                    display_name=pr.display_name,
+                    branch=wr.branch,
+                    git_remote_url=pr.git_remote_url,
+                )
+            )
+    return out
 
 
 class WorkspaceService:
@@ -384,21 +522,41 @@ class WorkspaceService:
         *,
         actor: AdminPrincipal,
         project_id: str,
-        branch: str,
+        name: str,
+        selections: list[WorkspaceRepoSelectionInput] | None = None,
         worktree_path: str | None = None,
     ) -> WorkspaceView:
+        """Phase N.5 — create a named workspace with explicit repo
+        selections. ``name`` replaces the old single-branch identity;
+        ``selections`` carries which of the project's repositories to
+        clone and at which branch each. ``None`` selections falls back
+        to "every active project repository at its default_branch" so
+        the simple case still works without an explicit list.
+
+        Idempotent on ``(project, name)``: re-creating "workspace-1"
+        twice hands back the same row instead of failing. Existing
+        selections are NOT updated on idempotent reuse — to change
+        them, archive + recreate.
+        """
         project = await fetch_project_for(db, actor=actor, project_id=project_id)
-        # Phase C.1: one *active* workspace per (project, branch). If
-        # the user asks for a branch that already has a live row, hand
-        # it back idempotently — the UI's "open branch X" action then
-        # works regardless of whether the workspace already exists.
-        # Archived rows are intentionally ignored: they don't block
-        # re-creation.
+        name = name.strip()
+        if not name:
+            raise WorkspaceError("workspace.invalid_name", "name cannot be empty")
+        if len(name) > 255:
+            raise WorkspaceError(
+                "workspace.invalid_name", "name must be ≤ 255 characters"
+            )
+
+        # Phase N.5: one *active* workspace per (project, name). If a
+        # workspace with this name is already live, hand it back
+        # idempotently so the UI's "open workspace X" action works
+        # regardless of whether it already existed. Archived rows are
+        # ignored — operator can reuse the name.
         existing_stmt = (
             select(models.Workspace)
             .where(
                 models.Workspace.project_id == project_id,
-                models.Workspace.branch == branch,
+                models.Workspace.name == name,
                 models.Workspace.status != enums.WorkspaceStatus.ARCHIVED,
             )
             .order_by(models.Workspace.created_at.desc())
@@ -408,7 +566,8 @@ class WorkspaceService:
         if existing is not None:
             existing.last_activity_at = _now()
             await db.flush()
-            return _view(existing)
+            existing_sel = await _selection_views_for(db, workspace_id=existing.id)
+            return _view(existing, existing_sel)
 
         # Phase C.2.d — cap on concurrent live workspaces. Counts only
         # rows holding an active container (CREATING + RUNNING). The
@@ -441,11 +600,55 @@ class WorkspaceService:
         row = models.Workspace(
             id=workspace_id,
             project_id=project_id,
-            branch=branch,
+            name=name,
             worktree_path=worktree,
             status=enums.WorkspaceStatus.CREATING,
         )
         db.add(row)
+        await db.flush()
+
+        # Phase N.5 — resolve the operator's selections into project
+        # repository rows + persist the join. The clone path consumes
+        # the join rows (not the input list directly) so the audit /
+        # rehydrate / list paths all see the same source of truth.
+        repo_rows_all = await repo_service.list_for_project(
+            db, project_id=project_id
+        )
+        repo_rows_by_id = {r.id: r for r in repo_rows_all}
+        if selections is None:
+            # Default: every active project repo at its default_branch
+            # (empty string means "let the multi-clone fall back to
+            # the remote's HEAD"). Mirrors the pre-N.5 behaviour for
+            # callers that don't care to pick.
+            resolved_inputs: list[WorkspaceRepoSelectionInput] = [
+                WorkspaceRepoSelectionInput(
+                    repository_id=r.id,
+                    branch=r.default_branch or "",
+                )
+                for r in repo_rows_all
+            ]
+        else:
+            resolved_inputs = list(selections)
+            for sel in resolved_inputs:
+                pr = repo_rows_by_id.get(sel.repository_id)
+                if pr is None:
+                    raise WorkspaceError(
+                        "workspace.unknown_repository",
+                        f"repository {sel.repository_id} not in project {project_id}",
+                    )
+
+        join_rows: list[models.WorkspaceRepository] = []
+        for sel in resolved_inputs:
+            join_rows.append(
+                models.WorkspaceRepository(
+                    id=new_ulid(),
+                    workspace_id=workspace_id,
+                    project_repository_id=sel.repository_id,
+                    branch=sel.branch,
+                )
+            )
+        for jr in join_rows:
+            db.add(jr)
         await db.flush()
 
         # Resolve user-scoped credentials *before* booting the sandbox
@@ -503,14 +706,38 @@ class WorkspaceService:
                 actor_id=actor.id,
                 outcome=enums.AuditOutcome.OK,
                 scope={"project_id": project_id, "workspace_id": workspace_id},
-                subject={"branch": branch, "worktree_path": worktree},
+                subject={"name": name, "worktree_path": worktree},
                 payload={
                     "sandbox_id": sandbox_ref.id,
                     "image": self._image,
                     "clone": "pending",
+                    "selections": [
+                        {"repository_id": s.repository_id, "branch": s.branch}
+                        for s in resolved_inputs
+                    ],
                 },
             )
         )
+
+        # Phase N.5 — fan-out clone driven by the join rows we just
+        # wrote. Each join row carries the user-chosen branch (not the
+        # repo's default_branch); the multi-clone orchestrator
+        # resolves subpath / remote URL by joining back to the project
+        # repository. Empty list = empty project (no clones, just a
+        # worktree dir). Single row with subpath="" = legacy single-
+        # repo (preserved bit-for-bit so existing workspaces stay
+        # bare-compatible).
+        repos: list[RepoSpec] = []
+        for sel in resolved_inputs:
+            pr = repo_rows_by_id[sel.repository_id]
+            repos.append(
+                RepoSpec(
+                    repo_id=pr.id,
+                    subpath=pr.subpath,
+                    git_remote_url=pr.git_remote_url,
+                    branch=sel.branch or (pr.default_branch or ""),
+                )
+            )
 
         if self._session_factory is not None:
             # Spawn the clone *after* this transaction commits so the
@@ -521,8 +748,7 @@ class WorkspaceService:
                     project_id=project_id,
                     actor_id=actor.id,
                     worktree=worktree,
-                    branch=branch,
-                    git_remote_url=project.git_remote_url,
+                    repos=repos,
                     credentials=credentials,
                     project_slug=project.slug,
                 ),
@@ -533,16 +759,15 @@ class WorkspaceService:
         else:
             # Synchronous path used by tests + scripts without an
             # async session factory wired. Flips the status here.
-            clone_outcome, clone_detail = await self._safe_prepare_worktree(
+            clone_outcome, clone_detail = await self._safe_prepare_worktree_multi(
                 worktree=worktree,
-                branch=branch,
-                git_remote_url=project.git_remote_url,
-                credentials=credentials,
                 project_slug=project.slug,
+                repos=repos,
+                credentials=credentials,
             )
             row.status = (
                 enums.WorkspaceStatus.RUNNING
-                if clone_outcome in ("cloned", "exists", "skipped")
+                if clone_outcome in ("cloned", "exists", "skipped", "empty")
                 else enums.WorkspaceStatus.FAILED
             )
             row.last_activity_at = _now()
@@ -561,7 +786,92 @@ class WorkspaceService:
                     payload={"clone": clone_outcome, "clone_detail": clone_detail},
                 )
             )
-        return _view(row)
+        selections_view = await _selection_views_for(db, workspace_id=workspace_id)
+        return _view(row, selections_view)
+
+    async def rehydrate(
+        self,
+        db: AsyncSession,
+        *,
+        actor: AdminPrincipal,
+        workspace_id: str,
+    ) -> tuple[WorkspaceView, str, str | None]:
+        """Phase N.4 — re-run the multi-repo clone for an existing
+        workspace so newly-added project repositories materialize in
+        its worktree. The bare-repo / worktree-checkout invariants in
+        ``_prepare_worktree_multi`` are idempotent — repos already on
+        disk return ``exists`` and are skipped; missing repos clone
+        into their subpath. Used by the GitPanel "이 레포는 아직
+        워크스페이스에 없어요" recovery action so the operator can
+        bring a stale workspace up to date without recreating it.
+
+        Returns ``(view, outcome, detail)`` mirroring create()'s
+        bookkeeping so the router can surface the clone status."""
+        row = await db.get(models.Workspace, workspace_id)
+        if row is None:
+            raise WorkspaceError("workspace.not_found", workspace_id)
+        if row.status == enums.WorkspaceStatus.ARCHIVED:
+            raise WorkspaceError("workspace.archived", workspace_id)
+
+        project = await fetch_project_for(db, actor=actor, project_id=row.project_id)
+        credentials = await self._resolve_credentials(
+            actor_id=actor.id, project_id=row.project_id
+        )
+        # Phase N.5 — drive from the workspace's join rows, NOT the
+        # project's current repo list, so a workspace pinned to
+        # specific branches stays pinned after rehydrate. Orphaned
+        # join rows (project repo was archived) are skipped.
+        join_stmt = (
+            select(models.WorkspaceRepository, models.ProjectRepository)
+            .join(
+                models.ProjectRepository,
+                models.WorkspaceRepository.project_repository_id
+                == models.ProjectRepository.id,
+            )
+            .where(
+                models.WorkspaceRepository.workspace_id == workspace_id,
+                models.ProjectRepository.archived_at.is_(None),
+            )
+        )
+        join_pairs = (await db.execute(join_stmt)).all()
+        repos: list[RepoSpec] = [
+            RepoSpec(
+                repo_id=pr.id,
+                subpath=pr.subpath,
+                git_remote_url=pr.git_remote_url,
+                branch=wr.branch or (pr.default_branch or ""),
+            )
+            for wr, pr in join_pairs
+        ]
+        outcome, detail = await self._safe_prepare_worktree_multi(
+            worktree=row.worktree_path,
+            project_slug=project.slug,
+            repos=repos,
+            credentials=credentials or {},
+        )
+        # Only flip RUNNING on success; leave the existing status alone
+        # on failure so a partial outcome (some repos cloned, one
+        # failed) doesn't downgrade an otherwise-healthy workspace.
+        if outcome in ("cloned", "exists", "skipped", "empty"):
+            row.status = enums.WorkspaceStatus.RUNNING
+            row.last_activity_at = _now()
+            await db.flush()
+        await self._audit.log(
+            AuditEvent(
+                action=AuditAction.WORKSPACE_CREATE,
+                actor_type=enums.AuditActorType.USER,
+                actor_id=actor.id,
+                outcome=(
+                    enums.AuditOutcome.OK
+                    if outcome in ("cloned", "exists", "skipped", "empty")
+                    else enums.AuditOutcome.ERROR
+                ),
+                scope={"project_id": row.project_id, "workspace_id": workspace_id},
+                payload={"rehydrate": outcome, "rehydrate_detail": detail},
+            )
+        )
+        sel_view = await _selection_views_for(db, workspace_id=workspace_id)
+        return _view(row, sel_view), outcome, detail
 
     async def _safe_prepare_worktree(
         self,
@@ -591,31 +901,36 @@ class WorkspaceService:
         project_id: str,
         actor_id: str,
         worktree: str,
-        branch: str,
-        git_remote_url: str,
+        repos: list[RepoSpec],
         credentials: dict[str, str] | None = None,
         project_slug: str | None = None,
     ) -> None:
         """Run the clone in the background + flip workspace.status when
         done. Opens a fresh DB session because the request session has
-        already closed by the time we get here."""
+        already closed by the time we get here.
+
+        Phase N.4 — the request hands us a pre-built ``repos`` list
+        (one per ProjectRepository row). Empty list = empty project,
+        single root-subpath = legacy single-repo, anything else =
+        multi-repo. The orchestrator inside ``_prepare_worktree_multi``
+        switches between those shapes; this function only owns the
+        async + status / audit bookkeeping around it."""
         logger.info(
             "workspace.clone.start",
             workspace_id=workspace_id,
             worktree=worktree,
-            remote=git_remote_url,
+            repo_count=len(repos),
             auth=("github_token" if credentials and "github_token" in credentials else "anon"),
         )
-        outcome, detail = await self._safe_prepare_worktree(
+        outcome, detail = await self._safe_prepare_worktree_multi(
             worktree=worktree,
-            branch=branch,
-            git_remote_url=git_remote_url,
+            project_slug=project_slug or "",
+            repos=repos,
             credentials=credentials or {},
-            project_slug=project_slug,
         )
         new_status = (
             enums.WorkspaceStatus.RUNNING
-            if outcome in ("cloned", "exists", "skipped")
+            if outcome in ("cloned", "exists", "skipped", "empty")
             else enums.WorkspaceStatus.FAILED
         )
         if self._session_factory is None:
@@ -799,6 +1114,168 @@ class WorkspaceService:
             )
         return ("cloned", None)
 
+    async def _prepare_worktree_multi(
+        self,
+        *,
+        worktree: str,
+        project_slug: str,
+        repos: list[RepoSpec],
+        credentials: dict[str, str],
+    ) -> tuple[str, str | None]:
+        """Multi-repo aware version of `_prepare_worktree`.
+
+        Phase N.4 — fans clone work out across the project's
+        repositories. Three shapes:
+
+        1. **Empty** (``repos`` is empty): mkdir the worktree dir,
+           don't clone anything. Workspaces for empty projects come
+           up with a blank canvas ready for ``git init`` or loose
+           files. Returns ``("empty", None)``.
+
+        2. **Legacy single-repo** (one repo, ``subpath=""``):
+           preserved exactly as pre-N.4 to keep existing workspaces'
+           bare-resolution working. Returns whatever
+           ``_prepare_via_worktree`` returns.
+
+        3. **Multi-repo or explicit subpath**: each repo is cloned
+           into ``<worktree>/<subpath>/`` via its own bare under
+           ``<bare_root>/<project_slug>/<repo_id>/``. Repos with NULL
+           git_remote_url just get an empty subdir (the "uninitialized
+           subdir" placeholder for git-init-later).
+
+        Returns ``(outcome, detail)`` where outcome is "cloned" on
+        full success, "partial" when some repos failed (detail
+        carries the slug list), "empty" for the no-repo case,
+        "error" if the whole orchestration crashed.
+        """
+        # Empty project → mkdir + return. No bare, no clone.
+        if not repos:
+            try:
+                await asyncio.to_thread(
+                    lambda: __import__("pathlib").Path(worktree).mkdir(
+                        parents=True, exist_ok=True,
+                    )
+                )
+            except Exception as exc:
+                return ("error", f"mkdir worktree failed: {exc!s}"[:400])
+            return ("empty", None)
+
+        # Single repo + root subpath = legacy layout. We keep the
+        # old code path here so pre-N.4 workspaces keep resolving
+        # against their existing bare unchanged.
+        if (
+            len(repos) == 1
+            and repos[0].subpath == _LEGACY_ROOT_SUBPATH
+            and repos[0].git_remote_url
+        ):
+            return await self._prepare_via_worktree(
+                worktree=worktree,
+                branch=repos[0].branch,
+                git_remote_url=repos[0].git_remote_url,
+                credentials=credentials,
+                project_slug=project_slug,
+            )
+
+        # New layout: each repo into its own subdir, each backed by
+        # its own bare nested under <project_slug>/<repo_id>.
+        # Resume case: an earlier crashed create may have left
+        # PARTIAL state. We do NOT short-circuit on a non-empty root
+        # worktree dir (it normally holds .gapt/ + .git markers from
+        # previous successful repos). Per-repo we check the SUBDIR.
+        try:
+            await asyncio.to_thread(
+                lambda: __import__("pathlib").Path(worktree).mkdir(
+                    parents=True, exist_ok=True,
+                )
+            )
+        except Exception as exc:
+            return ("error", f"mkdir worktree failed: {exc!s}"[:400])
+
+        github_token = credentials.get("github_token")
+        extra_config: list[str] | None = None
+        if github_token:
+            extra_config = [
+                "-c",
+                f"http.extraHeader={_github_basic_header(github_token)}",
+            ]
+
+        failed: list[str] = []
+        for repo in repos:
+            sub = _worktree_subdir_for(worktree, repo)
+            if not repo.git_remote_url:
+                # Empty placeholder — just make the dir.
+                try:
+                    await asyncio.to_thread(
+                        lambda p=sub: __import__("pathlib").Path(p).mkdir(
+                            parents=True, exist_ok=True,
+                        )
+                    )
+                except Exception as exc:
+                    failed.append(f"{repo.subpath or '(root)'}: mkdir {exc!s}"[:200])
+                continue
+
+            # Resume per-repo: if the subdir already has a `.git`,
+            # skip — earlier successful create left it.
+            already_cloned = await asyncio.to_thread(
+                lambda p=sub: os.path.exists(os.path.join(p, ".git"))
+            )
+            if already_cloned:
+                continue
+
+            slug = _bare_slug_for(project_slug, repo, legacy_layout=False)
+            bare = await worktree_mod.ensure_bare(
+                bare_root=self._bare_root,
+                project_slug=slug,
+                git_remote_url=repo.git_remote_url,
+                extra_config=extra_config,
+            )
+            if not bare.ok:
+                failed.append(
+                    f"{repo.subpath or '(root)'}: bare "
+                    + (bare.stderr.strip()[-160:] or f"exit={bare.exit_code}")
+                )
+                continue
+
+            add = await worktree_mod.add_worktree(
+                bare_root=self._bare_root,
+                project_slug=slug,
+                worktree_path=sub,
+                branch=repo.branch,
+            )
+            if not add.ok:
+                failed.append(
+                    f"{repo.subpath or '(root)'}: worktree "
+                    + (add.stderr.strip()[-160:] or f"exit={add.exit_code}")
+                )
+
+        if failed:
+            return ("partial", " | ".join(failed)[:400])
+        return ("cloned", None)
+
+    async def _safe_prepare_worktree_multi(
+        self,
+        *,
+        worktree: str,
+        project_slug: str,
+        repos: list[RepoSpec],
+        credentials: dict[str, str] | None = None,
+    ) -> tuple[str, str | None]:
+        """Crash-safe wrapper around ``_prepare_worktree_multi`` —
+        any unexpected exception is captured and reported as the
+        ``("error", ...)`` outcome rather than killing the
+        background clone task and leaving the workspace stuck in
+        CREATING forever."""
+        try:
+            return await self._prepare_worktree_multi(
+                worktree=worktree,
+                project_slug=project_slug,
+                repos=repos,
+                credentials=credentials or {},
+            )
+        except Exception as exc:
+            logger.exception("workspace.clone_multi.crashed", worktree=worktree)
+            return ("error", f"{type(exc).__name__}: {exc}"[:500])
+
     async def _do_clone(
         self,
         git_remote_url: str,
@@ -908,13 +1385,21 @@ class WorkspaceService:
             # restore-or-purge a row.
             stmt = stmt.where(models.Workspace.status != enums.WorkspaceStatus.ARCHIVED)
         rows = (await db.execute(stmt)).scalars().all()
-        return [_view(r) for r in rows]
+        # Phase N.5 — populate each view's selections so the UI can
+        # render per-repo branch chips on the workspace card without
+        # an extra round-trip.
+        views: list[WorkspaceView] = []
+        for r in rows:
+            sel = await _selection_views_for(db, workspace_id=r.id)
+            views.append(_view(r, sel))
+        return views
 
     async def get(
         self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
     ) -> WorkspaceView:
         row = await self._fetch(db, actor=actor, workspace_id=workspace_id)
-        return _view(row)
+        sel = await _selection_views_for(db, workspace_id=row.id)
+        return _view(row, sel)
 
     # ──────────────────────────────────────────────────── mutate ──
 
@@ -941,7 +1426,8 @@ class WorkspaceService:
                 scope={"project_id": row.project_id, "workspace_id": workspace_id},
             )
         )
-        return _view(row)
+        sel = await _selection_views_for(db, workspace_id=row.id)
+        return _view(row, sel)
 
     async def start(
         self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
@@ -957,7 +1443,8 @@ class WorkspaceService:
         row.status = enums.WorkspaceStatus.RUNNING
         row.last_activity_at = _now()
         await db.flush()
-        return _view(row)
+        sel = await _selection_views_for(db, workspace_id=row.id)
+        return _view(row, sel)
 
     async def delete(
         self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str
@@ -1020,7 +1507,8 @@ class WorkspaceService:
                 scope={"project_id": row.project_id, "workspace_id": workspace_id},
             )
         )
-        return _view(row)
+        sel = await _selection_views_for(db, workspace_id=row.id)
+        return _view(row, sel)
 
     # ──────────────────────────────────────────────── internals ──
 

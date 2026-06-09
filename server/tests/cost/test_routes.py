@@ -98,9 +98,13 @@ async def _seed_session(
     container = app.state.container
     async with container.session_factory() as db:
         # The session needs a workspace — make a throwaway one.
+        # Phase N.5 — name must be unique per project among active
+        # rows. Each cost row needs its own workspace, so derive a
+        # unique name from the cost value (which the caller varies
+        # per call).
         ws = models.Workspace(
             project_id=project_id,
-            branch="main",
+            name=f"main-{cost}",
             worktree_path=f"/tmp/ws-{cost}",
             status=enums.WorkspaceStatus.RUNNING,
         )

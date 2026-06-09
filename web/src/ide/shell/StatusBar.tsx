@@ -3,7 +3,9 @@ import { FileText, GitBranch, Server, TerminalSquare } from "lucide-react";
 import { cn } from "@/ui/cn";
 
 interface Props {
-  branch: string;
+  /** Phase N.5 — workspace name (was ``branch`` pre-N.5). Per-repo
+   *  branches live on the GitPanel header now. */
+  name: string;
   workspaceStatus: string;
   openFile: string | null;
   onToggleTerminal: () => void;
@@ -18,7 +20,7 @@ interface Props {
  * is workspace state (branch, sandbox), right side is per-action
  * quick toggles. Click handlers wired by the parent. */
 export function StatusBar({
-  branch,
+  name,
   workspaceStatus,
   openFile,
   onToggleTerminal,
@@ -33,7 +35,7 @@ export function StatusBar({
     >
       <span className="inline-flex items-center gap-1.5">
         <GitBranch className="h-3 w-3" strokeWidth={1.5} />
-        <span className="font-medium text-fg">{branch || "—"}</span>
+        <span className="font-medium text-fg">{name || "—"}</span>
       </span>
       <span className="inline-flex items-center gap-1.5">
         <Server

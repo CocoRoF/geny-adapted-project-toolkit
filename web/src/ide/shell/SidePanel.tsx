@@ -10,6 +10,9 @@ import { TestRunnerPanel } from "@/ide/TestRunnerPanel";
 interface Props {
   view: SideView;
   workspaceId: string;
+  /** Phase N.4 — GitPanel needs the project id so it can list the
+   *  project's repositories for the source-control repo selector. */
+  projectId: string;
   onOpenFile: (path: string) => void;
   /** Phase F — Source Control's per-file row routes its click into
    *  the editor column's diff view (VSCode parity). */
@@ -33,6 +36,7 @@ const TITLES: Record<SideView, string> = {
 export function SidePanel({
   view,
   workspaceId,
+  projectId,
   onOpenFile,
   onOpenDiff,
   onOpenPreview,
@@ -55,7 +59,11 @@ export function SidePanel({
         ) : view === "search" ? (
           <SearchPlaceholder />
         ) : view === "git" ? (
-          <GitPanel workspaceId={workspaceId} onOpenDiff={onOpenDiff} />
+          <GitPanel
+            workspaceId={workspaceId}
+            projectId={projectId}
+            onOpenDiff={onOpenDiff}
+          />
         ) : view === "tests" ? (
           <TestRunnerPanel workspaceId={workspaceId} />
         ) : view === "env" ? (

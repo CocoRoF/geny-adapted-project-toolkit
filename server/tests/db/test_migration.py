@@ -33,9 +33,18 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "deploy_runs",
         "environments",
         "projects",
+        # Phase N.4 — multi-git support. One row per repo within a
+        # project, the bundle that pre-N.4 lived on the project row.
+        "project_repositories",
+        "provider_configs",
+        "provider_migrations",
         "sandboxes",
         "secrets",
+        "session_events",
         "workspaces",
+        # Phase N.5 — per-workspace repo selection + branch. Replaces
+        # the workspace-level `branch` column with a many-to-many.
+        "workspace_repositories",
     }
 )
 

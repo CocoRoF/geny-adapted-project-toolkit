@@ -177,6 +177,11 @@ class EnvironmentPayload(BaseModel):
     secret_refs: list[str] = Field(default_factory=list)
     cost_multiplier: float = Field(default=1.0, ge=0.0, le=100.0)
     hooks: dict[str, Any] = Field(default_factory=dict)
+    # Phase N.4 — which of the project's repositories supplies the
+    # compose paths + Caddy preview slug for this env. NULL means
+    # "project default" (legacy); the UI omits it for single-repo
+    # projects so the operator never has to think about it.
+    repository_id: str | None = None
 
 
 class EnvironmentResponse(EnvironmentPayload):
@@ -202,6 +207,7 @@ class EnvironmentResponse(EnvironmentPayload):
             hooks=dict(row.hooks or {}),
             last_run=dict(row.last_run or {}),
             created_at=row.created_at,
+            repository_id=row.repository_id,
         )
 
 
@@ -332,6 +338,17 @@ async def create_environment(
     cleaned_config = _validate_or_422(
         payload.deploy_target_kind, payload.deploy_target_config
     )
+    # Phase N.4 — default the env to the project's primary repo
+    # when the caller didn't pin one. Single-repo projects always
+    # land here; multi-repo callers from the UI's environment
+    # editor get to pick.
+    repo_id = payload.repository_id
+    if repo_id is None:
+        from gapt_server.domains.projects import repositories as _repo_svc  # noqa: PLC0415
+
+        primary = await _repo_svc.primary_for_project(db, project_id=project_id)
+        if primary is not None:
+            repo_id = primary.id
     row = models.Environment(
         id=new_ulid(),
         project_id=project_id,
@@ -342,6 +359,7 @@ async def create_environment(
         secret_refs=payload.secret_refs,
         cost_multiplier=payload.cost_multiplier,
         hooks=payload.hooks,
+        repository_id=repo_id,
     )
     db.add(row)
     await db.flush()

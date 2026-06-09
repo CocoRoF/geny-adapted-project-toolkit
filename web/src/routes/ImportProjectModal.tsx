@@ -19,7 +19,7 @@ interface Props {
 }
 
 const GIT_PROVIDERS: GitProvider[] = ["github", "gitlab", "bitbucket", "other"];
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$/;
+const SLUG_PATTERN = /^[a-z0-9](?:[-a-z0-9]{0,118}[a-z0-9])?$/;
 
 /** Modal form for creating a project. Stacks fields vertically so the
  * labels never collide with inputs on small viewports. */

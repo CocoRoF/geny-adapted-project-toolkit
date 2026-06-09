@@ -11,7 +11,7 @@ export interface ContainerSummary {
   project_id: string | null;
   project_slug: string | null;
   project_display_name: string | null;
-  workspace_branch: string | null;
+  workspace_name: string | null;
   environment_id: string | null;
   environment_name: string | null;
   compose_project: string | null;
@@ -92,7 +92,10 @@ export interface WorkspaceServiceRow {
 export interface WorkspaceRow {
   id: string;
   project_id: string;
-  branch: string;
+  /** Phase N.5 — workspace identity is now ``name`` (was ``branch``
+   *  in pre-N.5). Per-repo branches aren't exposed on this row; the
+   *  full WorkspaceResponse from /workspaces/{id} carries them. */
+  name: string;
   status: string;
   services?: WorkspaceServiceRow[];
 }
