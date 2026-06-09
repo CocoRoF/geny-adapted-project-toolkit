@@ -972,14 +972,26 @@ async def test_register_short_circuits_when_subdomain_route_already_current() ->
         ],
         "terminal": True,
     }
+    catchall = {
+        "@id": "gapt-preview-zone-catchall",
+        "match": [{"host": ["*.preview.gapt.example"]}],
+        "handle": [{"handler": "static_response", "status_code": 404}],
+        "terminal": True,
+    }
+    # Ordering invariant: host route BEFORE catchall, otherwise the
+    # drift check will (correctly) flag the broken state and fall
+    # through to a full upsert.
+    routes_state = [current_route, catchall]
 
     async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
         calls.append((method, path, body))
         # The drift check hits `/id/gapt-preview-01kws` — return the
-        # already-registered route. Anything else is unexpected for a
-        # drift-free path.
+        # already-registered route. It ALSO hits the routes path to
+        # verify the catchall-ordering invariant.
         if method == "GET" and path == "/id/gapt-preview-01kws":
             return (200, current_route)
+        if method == "GET" and path.endswith("/routes"):
+            return (200, list(routes_state))
         # If _upsert is reached at all the test fails — assert below.
         return (200, None)
 
@@ -995,11 +1007,75 @@ async def test_register_short_circuits_when_subdomain_route_already_current() ->
     )
 
     assert host == "01kws.preview.gapt.example"
-    # ONE GET only — the drift check. No second GET (which _upsert
-    # would do), no DELETE, no POST.
+    # Two GETs: /id/<route> for content drift, then /...routes for
+    # ordering drift. No PATCH because both probes succeed.
     methods = [c[0] for c in calls]
-    assert methods == ["GET"], methods
+    assert methods == ["GET", "GET"], methods
     assert calls[0][1] == "/id/gapt-preview-01kws"
+    assert calls[1][1].endswith("/routes")
+
+
+@pytest.mark.asyncio
+async def test_register_does_full_upsert_when_catchall_ordering_drifted() -> None:
+    """Phase N.3 — when the live route's content matches but the
+    catchall sits AHEAD of it (the historical _upsert bug's leftover
+    state), the drift check must detect the bad ordering and fall
+    through to a full upsert so the PATCH re-positions things. This
+    is what makes the system self-healing on the next register
+    instead of silently leaving the user with a 404."""
+    calls: list[tuple[str, str, Any]] = []
+    current_route = {
+        "@id": "gapt-preview-01kws",
+        "match": [{"host": ["01kws.preview.gapt.example"]}],
+        "handle": [
+            {
+                "handler": "reverse_proxy",
+                "upstreams": [{"dial": "10.0.0.5:3000"}],
+            }
+        ],
+        "terminal": True,
+    }
+    catchall = {
+        "@id": "gapt-preview-zone-catchall",
+        "match": [{"host": ["*.preview.gapt.example"]}],
+        "handle": [{"handler": "static_response", "status_code": 404}],
+        "terminal": True,
+    }
+    # BAD ordering — catchall ahead of host route.
+    routes_state = [catchall, current_route]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET" and path == "/id/gapt-preview-01kws":
+            return (200, current_route)
+        if method == "GET" and path.endswith("/routes"):
+            return (200, list(routes_state))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="preview.gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="01KWS",
+            upstream_host="10.0.0.5",
+            upstream_port=3000,
+            mode=PreviewMode.SUBDOMAIN,
+        )
+    )
+
+    # Bad ordering detected → full upsert runs to fix.
+    methods = [c[0] for c in calls]
+    assert "PATCH" in methods, methods
+    # The PATCH body must put host route BEFORE catchall.
+    patch_body = next(c[2] for c in calls if c[0] == "PATCH")
+    idx_host = next(
+        i for i, r in enumerate(patch_body) if r.get("@id") == "gapt-preview-01kws"
+    )
+    idx_catchall = next(
+        i for i, r in enumerate(patch_body)
+        if r.get("@id") == "gapt-preview-zone-catchall"
+    )
+    assert idx_host < idx_catchall
 
 
 @pytest.mark.asyncio
@@ -1051,3 +1127,114 @@ async def test_register_does_full_upsert_when_subdomain_dial_drifted() -> None:
     proxy = next(h for h in new_route["handle"] if h.get("handler") == "reverse_proxy")
     assert proxy["upstreams"][0]["dial"] == "new-container:3000"
     assert "headers" not in proxy
+
+
+@pytest.mark.asyncio
+async def test_catchall_lands_after_pre_existing_host_routes() -> None:
+    """Phase N.3 — regression for "Preview not registered" on a live
+    prod subdomain.
+
+    Repro: after registering ``hr-test.hrletsgo.me`` (host mode) and
+    ``blog.hrletsgo.me`` (host mode), the operator exposes a
+    workspace dev service in PATH mode. The path-mode register has
+    ``host_payloads == []``. Pre-fix the catch-all was spliced at
+    index ``len(host_payloads) == 0`` — i.e. the very front of the
+    array — placing it AHEAD of the previously-registered specific
+    host routes. Caddy evaluates routes top-down and the catch-all
+    is ``terminal: true`` matching ``*.<zone>``, so every subsequent
+    request to ``hr-test.hrletsgo.me`` short-circuited to the
+    catch-all's 404 ("Preview not registered.") and the deployed
+    site became unreachable.
+
+    The fix walks the head of the array past any host-only routes
+    (new inserts + pre-existing bindings) and inserts the catch-all
+    after them, preserving the "specific routes win first" ordering
+    Caddy requires."""
+    calls: list[tuple[str, str, Any]] = []
+    # Pre-existing array: two prod subdomain host routes followed by
+    # the apex encode block. The catch-all was registered earlier
+    # but the test simulates a path-mode register on TOP of this
+    # state — without the fix, the splice would push the catch-all
+    # ahead of hr-test / blog.
+    existing = [
+        {
+            "@id": "gapt-preview-hr-test",
+            "match": [{"host": ["hr-test.hrletsgo.me"]}],
+            "handle": [
+                {
+                    "handler": "reverse_proxy",
+                    "upstreams": [{"dial": "hr-prod:3000"}],
+                }
+            ],
+            "terminal": True,
+        },
+        {
+            "@id": "gapt-preview-blog",
+            "match": [{"host": ["blog.hrletsgo.me"]}],
+            "handle": [
+                {
+                    "handler": "reverse_proxy",
+                    "upstreams": [{"dial": "blog-prod:3000"}],
+                }
+            ],
+            "terminal": True,
+        },
+        {  # leading encode (no match — not host-only)
+            "handle": [{"handler": "encode"}],
+        },
+        {  # IDE catch-all
+            "handle": [
+                {
+                    "handler": "reverse_proxy",
+                    "upstreams": [{"dial": "ide:35173"}],
+                }
+            ],
+        },
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, list(existing))
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="hrletsgo.me")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="newslug",
+            upstream_host="gapt-ws-xyz",
+            upstream_port=3000,
+            # Path mode — host_payloads == [], the exact scenario that
+            # would push catch-all to index 0 under the old logic.
+            mode=PreviewMode.PATH,
+        )
+    )
+
+    posted = calls[2][2]
+    # Index of every route relevant to the ordering invariant.
+    idx_hr = next(
+        i for i, r in enumerate(posted)
+        if r.get("@id") == "gapt-preview-hr-test"
+    )
+    idx_blog = next(
+        i for i, r in enumerate(posted)
+        if r.get("@id") == "gapt-preview-blog"
+    )
+    idx_catchall = next(
+        i for i, r in enumerate(posted)
+        if r.get("@id") == "gapt-preview-zone-catchall"
+    )
+    # The invariant: catch-all comes AFTER every specific host route
+    # already registered. Without this the wildcard host match wins
+    # in Caddy's top-down evaluation and the specific subdomain
+    # returns 404 "Preview not registered."
+    assert idx_hr < idx_catchall, (
+        f"hr-test must precede catch-all (idx_hr={idx_hr}, "
+        f"idx_catchall={idx_catchall}) — Caddy evaluates top-down "
+        f"and the wildcard would win"
+    )
+    assert idx_blog < idx_catchall, (
+        f"blog must precede catch-all (idx_blog={idx_blog}, "
+        f"idx_catchall={idx_catchall})"
+    )

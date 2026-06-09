@@ -572,7 +572,44 @@ class SubdomainManager:
         expected_dial = (
             f"{binding.upstream_host}:{int(binding.upstream_port)}"
         )
-        return upstreams[0].get("dial") == expected_dial
+        if upstreams[0].get("dial") != expected_dial:
+            return False
+
+        # Phase N.3 — also verify the catch-all ordering invariant.
+        # The /id/<id> probe above tells us the route's content is
+        # right, but Caddy evaluates the array TOP-DOWN: if the zone
+        # catch-all sits AHEAD of this specific host route, the
+        # wildcard `*.<zone>` match wins (terminal=True) and the user
+        # sees "Preview not registered." even though the route itself
+        # is configured correctly. This invariant was broken by a
+        # historical `_upsert` bug; the fix is in place but stale
+        # arrays may still carry the wrong order — without surfacing
+        # it as drift here the short-circuit would prevent the fix
+        # from ever reaching production state. Doing one extra GET
+        # is a fair price for self-healing.
+        try:
+            arr = await self.client.get(self.routes_path)
+        except CaddyAdminError:
+            return False
+        if not isinstance(arr, list):
+            return False
+        my_idx: int | None = None
+        catchall_idx: int | None = None
+        for i, r in enumerate(arr):
+            if not isinstance(r, dict):
+                continue
+            rid = r.get("@id")
+            if rid == primary_id:
+                my_idx = i
+            elif rid == ZONE_CATCHALL_ROUTE_ID:
+                catchall_idx = i
+            if my_idx is not None and catchall_idx is not None:
+                break
+        if my_idx is None or catchall_idx is None:
+            # Either route or catch-all missing → register will splice
+            # the missing one in. Not a "current" state.
+            return False
+        return my_idx < catchall_idx
 
     async def _path_routes_current(self, binding: SubdomainBinding) -> bool:
         """Path-mode counterpart of `_subdomain_route_current`. Checks
@@ -753,14 +790,39 @@ class SubdomainManager:
             ]
             for offset, payload in enumerate(host_payloads):
                 arr.insert(offset, payload)
-            # Zone-wide catch-all sits AFTER the specific host
-            # routes (so a registered slug matches its own route
-            # first) but BEFORE the path-keyed matchers. The
-            # `terminal: true` on the catch-all means visiting an
-            # unregistered subdomain returns 404 instead of falling
-            # through to the apex GAPT redirect.
+            # Zone-wide catch-all sits AFTER every host-only route
+            # currently in the array (the new ones we just inserted
+            # PLUS any host-only routes that were already there from
+            # earlier registers — e.g. `hr-test.hrletsgo.me`,
+            # `blog.hrletsgo.me`). The catch-all matches the wildcard
+            # ``*.<zone>`` with ``terminal: true``, so if it lands
+            # AHEAD of a specific host route Caddy short-circuits on
+            # the catch-all and the specific route never fires —
+            # exactly the bug behind "Preview not registered" appearing
+            # on the user's deployed subdomain URL.
+            #
+            # Pre-fix this used ``len(host_payloads)`` which only
+            # counted the NEW host payloads about to be inserted. On
+            # any subsequent register that wasn't subdomain-mode (e.g.
+            # a path-mode preview expose with no host payloads at
+            # all), catch-all dropped to index 0 and immediately
+            # broke every previously-registered prod subdomain.
+            #
+            # The walk below positions it just past the run of host-
+            # only routes at the head of the array, which is exactly
+            # where the for-loop above placed any new inserts and is
+            # also where Caddyfile-emitted apex routes (encode +
+            # path-keyed handlers) start. Robust to any mix of new vs
+            # existing host bindings.
+            catchall_index = 0
+            while (
+                catchall_index < len(arr)
+                and isinstance(arr[catchall_index], dict)
+                and _is_host_only(arr[catchall_index])
+            ):
+                catchall_index += 1
             arr.insert(
-                len(host_payloads),
+                catchall_index,
                 _zone_catchall_payload(
                     self.subdomain_zone or self.preview_domain,
                     self.gapt_apex_host,
