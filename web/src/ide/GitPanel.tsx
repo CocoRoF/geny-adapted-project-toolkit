@@ -159,9 +159,18 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       .then((rows) => {
         if (cancelled) return;
         setRepos(rows);
-        // Default to the primary (lowest sort_order) if nothing
-        // selected yet. Preserves the legacy single-repo view.
-        setSelectedRepoId((current) => current ?? rows[0]?.id ?? null);
+        // Phase N.5 — default selection prefers a repo with a remote
+        // URL over an empty/git-init candidate. Otherwise the
+        // GitPanel snaps to a 0-byte subdir and renders "not cloned"
+        // even though sibling repos in the same workspace are
+        // perfectly fine. Lowest sort_order wins as the tiebreaker
+        // among non-empty repos (matches the legacy primary
+        // semantics).
+        setSelectedRepoId((current) => {
+          if (current) return current;
+          const firstWithRemote = rows.find((r) => !!r.git_remote_url);
+          return firstWithRemote?.id ?? rows[0]?.id ?? null;
+        });
         setReposLoaded(true);
       })
       .catch(() => {
@@ -593,84 +602,21 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     return "behind" as const;
   }, [status]);
 
-  // Phase N.4 — friendly empty / not-cloned states before the main
-  // panel so the operator never sees a raw "fatal: not a git
-  // repository" or a confusing "(detached HEAD)" indicator on a
-  // workspace that just doesn't have this repo's worktree on disk.
-  if (reposLoaded && repos.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <GitBranch className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />
-        <div>
-          <p className="text-[13px] font-medium text-fg">레포지토리가 없어요</p>
-          <p className="mt-1 text-[11.5px] text-fg-muted">
-            이 프로젝트는 빈 상태입니다. 프로젝트 페이지의 "레포지토리" 섹션에서
-            <strong className="mx-1 text-fg">레포 추가</strong>로 git URL 을 등록하거나,
-            URL 없이 빈 폴더만 만들 수도 있어요.
-          </p>
-        </div>
-        <Link
-          to={`/projects/${projectId}`}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-bg-elevated px-3 text-[11.5px] font-medium text-fg hover:bg-surface-hover"
-        >
-          프로젝트 페이지로 이동 →
-        </Link>
-      </div>
-    );
-  }
-  if (notCloned) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <RefreshCw
-          className={cn(
-            "h-8 w-8 text-fg-subtle",
-            rehydrating && "animate-spin",
-          )}
-          strokeWidth={1.25}
-        />
-        <div>
-          <p className="text-[13px] font-medium text-fg">이 레포는 아직 워크스페이스에 없어요</p>
-          <p className="mt-1 text-[11.5px] text-fg-muted">
-            프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요.
-            아래 버튼으로 지금 바로 가져올 수 있습니다.
-          </p>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={onRehydrate}
-          disabled={rehydrating}
-        >
-          {rehydrating ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          {rehydrating ? "클론 중…" : "지금 클론하기"}
-        </Button>
-        <Link
-          to={`/projects/${projectId}`}
-          className="text-[11px] text-fg-subtle hover:text-accent"
-        >
-          또는 프로젝트 페이지에서 새 워크스페이스 만들기 →
-        </Link>
-        {flash ? (
-          <p
-            className={cn(
-              "px-2 text-[11px]",
-              flash.kind === "error"
-                ? "text-danger"
-                : flash.kind === "warn"
-                  ? "text-warn"
-                  : "text-accent",
-            )}
-          >
-            {flash.text}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
+  // Phase N.5 — figure out which "no source control" message (if any)
+  // to render in the body. Replaces the pre-N.5 early-return that
+  // hid the entire panel including the repo selector — which meant
+  // the operator was trapped on a single repo with no way to switch
+  // to a sibling that actually had a clone on disk.
+  const selectedRepo = repos.find((r) => r.id === selectedRepoId) ?? null;
+  const isEmptyProject = reposLoaded && repos.length === 0;
+  const isCandidateRepo =
+    selectedRepo !== null && !selectedRepo.git_remote_url;
+  // `notCloned` only meaningfully applies to repos that DO have a
+  // remote — a candidate (no remote) is "empty by design", not "not
+  // cloned yet", so we route it to a different sub-state below.
+  const showNotCloned = notCloned && !isCandidateRepo;
+  const showCandidate = isCandidateRepo;
+  const showNormalBody = !isEmptyProject && !showNotCloned && !showCandidate;
 
   return (
     <div
@@ -680,10 +626,11 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         {/* ── Header (branch · upstream · sync state all on ONE row;
                        action buttons on the row below) ── */}
         <header className="relative flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2">
-          {/* Phase N.4 — repository selector. Shown only when the
-              project has more than one repo (VS Code's
-              REPOSITORIES tree). Single-repo projects keep the
-              legacy single-line header. */}
+          {/* Phase N.5 — repository selector. Shown whenever the
+              workspace carries more than one repo, INCLUDING when
+              the panel body is in an empty/notCloned state — without
+              this the operator gets stranded on a single repo with
+              no way to switch to a sibling that's actually cloned. */}
           {repos.length > 1 ? (
             <div className="flex min-w-0 items-center gap-1.5">
               <Package className="h-3.5 w-3.5 shrink-0 text-fg-muted" strokeWidth={1.5} />
@@ -691,12 +638,13 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 value={selectedRepoId ?? ""}
                 onChange={(e) => setSelectedRepoId(e.target.value || null)}
                 className="min-w-0 flex-1 truncate rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11.5px] text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-                title="Phase N.4 — switch which repository this panel inspects"
+                title="이 패널이 들여다볼 레포지토리를 바꿉니다"
               >
                 {repos.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.display_name}
                     {r.subpath ? `  ·  ${r.subpath}/` : ""}
+                    {!r.git_remote_url ? "  (빈 폴더)" : ""}
                   </option>
                 ))}
               </select>
@@ -705,6 +653,11 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
               </Badge>
             </div>
           ) : null}
+          {/* Phase N.5 — body fallbacks live INSIDE the panel chrome
+              so the repo selector above is always reachable. The
+              actual header rows (branch switcher, sync trio, etc.)
+              are suppressed when the body is in an empty state. */}
+          {showNormalBody ? (
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
@@ -808,8 +761,109 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
               onClose={() => setBranchMenuOpen(false)}
             />
           ) : null}
+            </>
+          ) : null}
         </header>
 
+        {/* Phase N.5 — empty-state body sections. Live INSIDE the
+            panel so the repo selector above stays reachable. */}
+        {isEmptyProject ? (
+          <EmptyStateBody
+            icon={<GitBranch className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />}
+            title="레포지토리가 없어요"
+            description={
+              <>
+                이 프로젝트는 빈 상태입니다. 프로젝트 페이지의 "레포지토리" 섹션에서{" "}
+                <strong className="text-fg">레포 추가</strong>로 git URL 을 등록하거나,
+                URL 없이 빈 폴더만 만들 수도 있어요.
+              </>
+            }
+            footer={
+              <Link
+                to={`/projects/${projectId}`}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-bg-elevated px-3 text-[11.5px] font-medium text-fg hover:bg-surface-hover"
+              >
+                프로젝트 페이지로 이동 →
+              </Link>
+            }
+          />
+        ) : null}
+        {showCandidate ? (
+          <EmptyStateBody
+            icon={<Package className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />}
+            title={`'${selectedRepo?.display_name}' 은(는) 빈 폴더 레포예요`}
+            description={
+              <>
+                이 레포는 원격 URL 없이 등록돼서 git 추적이 비활성화돼 있어요.
+                터미널에서{" "}
+                <code className="rounded bg-bg-subtle px-1 py-0.5 text-[11px] text-fg-muted">
+                  cd {selectedRepo?.subpath || "."} && git init
+                </code>
+                {" "}으로 git 추적을 시작하거나, 프로젝트 페이지에서 원격 URL 을 추가하세요.
+              </>
+            }
+          />
+        ) : null}
+        {showNotCloned ? (
+          <EmptyStateBody
+            icon={
+              <RefreshCw
+                className={cn(
+                  "h-8 w-8 text-fg-subtle",
+                  rehydrating && "animate-spin",
+                )}
+                strokeWidth={1.25}
+              />
+            }
+            title="이 레포는 아직 워크스페이스에 없어요"
+            description={
+              <>
+                프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요.
+                아래 버튼으로 지금 바로 가져올 수 있습니다.
+              </>
+            }
+            footer={
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={onRehydrate}
+                  disabled={rehydrating}
+                >
+                  {rehydrating ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {rehydrating ? "클론 중…" : "지금 클론하기"}
+                </Button>
+                <Link
+                  to={`/projects/${projectId}`}
+                  className="text-[11px] text-fg-subtle hover:text-accent"
+                >
+                  또는 프로젝트 페이지에서 새 워크스페이스 만들기 →
+                </Link>
+                {flash ? (
+                  <p
+                    className={cn(
+                      "px-2 text-[11px]",
+                      flash.kind === "error"
+                        ? "text-danger"
+                        : flash.kind === "warn"
+                          ? "text-warn"
+                          : "text-accent",
+                    )}
+                  >
+                    {flash.text}
+                  </p>
+                ) : null}
+              </>
+            }
+          />
+        ) : null}
+
+        {showNormalBody ? (
+          <>
         {/* ── Commit composer (VS Code-style: lives ABOVE Changes,
             full-width primary button, dropdown for variants) ── */}
         <div className="shrink-0 space-y-1.5 border-b border-border bg-bg-elevated px-2 py-2">
@@ -1126,8 +1180,39 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
             />
           ) : null}
         </section>
-
+          </>
+        ) : null}
       </aside>
+    </div>
+  );
+}
+
+/** Phase N.5 — body fallback rendered when the panel can't show a
+ *  normal source-control view: empty project, candidate (no-remote)
+ *  repo, or a repo that hasn't been cloned into the workspace yet.
+ *
+ *  Lives INSIDE the panel chrome so the header's repo selector stays
+ *  reachable — operator can switch to a sibling repo that IS cloned
+ *  without leaving the panel. */
+function EmptyStateBody({
+  icon,
+  title,
+  description,
+  footer,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-auto px-6 py-8 text-center">
+      {icon}
+      <div className="max-w-[280px]">
+        <p className="text-[13px] font-medium text-fg">{title}</p>
+        <p className="mt-1 text-[11.5px] text-fg-muted">{description}</p>
+      </div>
+      {footer}
     </div>
   );
 }

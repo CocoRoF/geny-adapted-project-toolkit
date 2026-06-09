@@ -1,4 +1,12 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  FolderGit2,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { getRemoteBranches } from "@/api/projects";
@@ -11,9 +19,10 @@ import {
   type WorkspaceResponse,
   createWorkspace,
 } from "@/api/workspaces";
-import { useI18n } from "@/app/providers/i18n-context";
+import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Combobox } from "@/ui/Combobox";
+import { cn } from "@/ui/cn";
 import { Field, Input } from "@/ui/Input";
 import { Modal } from "@/ui/Modal";
 
@@ -42,23 +51,24 @@ interface RepoRowState {
 /** Phase N.5 — workspace creation modal.
  *
  *  Workspace identity is now a user-chosen ``name``, NOT a branch.
- *  Operator picks which of the project's repositories to include +
+ *  Operator picks which of the project's repositories to include and
  *  what branch each is cloned at. Single-repo projects collapse to
- *  one row with the branch picker — still feels like the legacy UX.
- *  Empty projects (no repos) create a bare worktree with no clones.
- */
+ *  one row; empty projects (no repos) create a bare worktree.
+ *
+ *  Layout is two-column on `≥640px` viewports: name + summary on the
+ *  left, the repo list on the right. Repo rows are full-width cards
+ *  with the branch picker sitting beneath the include checkbox so the
+ *  Combobox has room to render its dropdown without colliding with
+ *  the refresh button. */
 export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props) {
-  const { t } = useI18n();
   const [name, setName] = useState("");
   const [worktreePath, setWorktreePath] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<RepoRowState[]>([]);
   const [reposLoaded, setReposLoaded] = useState(false);
-  // Avoid re-seeding the name field after the operator has typed.
   const userTouchedName = useRef(false);
 
-  // Load repos + autopopulate name when the modal opens.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -67,6 +77,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
     setError(null);
     setReposLoaded(false);
     setRows([]);
+    setWorktreePath("");
     void listProjectRepositories(projectId)
       .then((repos) => {
         if (cancelled) return;
@@ -81,19 +92,12 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
         }));
         setRows(initial);
         setReposLoaded(true);
-        // Auto-suggest a name: short timestamp-ish slug. Operator can
-        // overtype before submit. ``ws-<HHmm>`` is short enough to fit
-        // the workspace card chip but stable enough across rapid
-        // re-creates that two siblings don't collide.
         if (!userTouchedName.current) {
           const now = new Date();
           const hh = String(now.getHours()).padStart(2, "0");
           const mm = String(now.getMinutes()).padStart(2, "0");
           setName(`ws-${hh}${mm}`);
         }
-        // Kick off branch ls-remote per included repo in parallel.
-        // Failure per row is non-fatal — that row falls back to free-
-        // text. We don't wait for these before showing the form.
         initial.forEach((row, idx) => {
           if (!row.include || !row.repo.git_remote_url) return;
           void loadBranchesFor(idx, row.repo.id, false);
@@ -127,8 +131,6 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
         setRows((prev) => {
           const next = prev.slice();
           if (!next[idx]) return prev;
-          // If the operator hasn't touched the branch field yet, seed
-          // it with the remote's HEAD on first successful fetch.
           const currentBranch = next[idx].branch;
           const shouldSeed =
             !currentBranch || currentBranch === next[idx].repo.default_branch;
@@ -169,15 +171,11 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       if (!next[idx]) return prev;
       const wasIncluded = next[idx].include;
       next[idx] = { ...next[idx], include: !wasIncluded };
-      // Lazy-load branches on first inclusion of a repo whose
-      // remote we never hit. ``branches === null`` means "never
-      // tried"; ``[]`` means "tried and got nothing".
       if (
         !wasIncluded &&
         next[idx].branches === null &&
         next[idx].repo.git_remote_url
       ) {
-        // schedule outside the setter so we don't re-enter
         queueMicrotask(() => loadBranchesFor(idx, next[idx]!.repo.id, false));
       }
       return next;
@@ -193,6 +191,23 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
     });
   }
 
+  function selectAll(included: boolean): void {
+    setRows((prev) =>
+      prev.map((r, idx) => {
+        if (r.include === included) return r;
+        const next = { ...r, include: included };
+        if (
+          included &&
+          next.branches === null &&
+          next.repo.git_remote_url
+        ) {
+          queueMicrotask(() => loadBranchesFor(idx, next.repo.id, false));
+        }
+        return next;
+      }),
+    );
+  }
+
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!name.trim()) {
@@ -205,8 +220,6 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       .filter((r) => r.include)
       .map((r) => ({
         repository_id: r.repo.id,
-        // Empty branch for empty/candidate repos — backend interprets
-        // as "skip clone, just make the subdir".
         branch: r.repo.git_remote_url ? r.branch : "",
       }));
     const payload: CreateWorkspaceInput = {
@@ -232,8 +245,9 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       onClose={() => {
         if (!submitting) onClose();
       }}
-      title="새 워크스페이스"
-      size="lg"
+      title="새 워크스페이스 만들기"
+      description="이름을 정하고, 이 워크스페이스에 함께 클론할 레포지토리 + 각각의 브랜치를 고르세요."
+      size="2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
@@ -245,139 +259,279 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
             form="new-workspace-form"
             disabled={!canSubmit}
           >
-            {submitting ? "만드는 중…" : "워크스페이스 만들기"}
+            {submitting ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                만드는 중…
+              </>
+            ) : (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+                워크스페이스 만들기
+                {includedCount > 0 ? (
+                  <span className="ml-1.5 text-[11px] opacity-75">
+                    · {includedCount}개 레포
+                  </span>
+                ) : null}
+              </>
+            )}
           </Button>
         </>
       }
     >
-      <form id="new-workspace-form" onSubmit={onSubmit} className="flex flex-col gap-3.5">
-        <Field label="워크스페이스 이름">
-          <Input
-            type="text"
-            value={name}
-            onChange={(e) => {
-              userTouchedName.current = true;
-              setName(e.currentTarget.value);
-            }}
-            required
-            maxLength={255}
-            placeholder="ws-1430"
-          />
-        </Field>
+      <form id="new-workspace-form" onSubmit={onSubmit} className="flex flex-col gap-5">
+        {/* ── Section 1: identity ────────────────────────────── */}
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1fr]">
+          <Field
+            label="워크스페이스 이름"
+            hint="이 프로젝트 안에서만 유니크하면 OK — 예: ws-1430, feature-test"
+          >
+            <Input
+              type="text"
+              value={name}
+              onChange={(e) => {
+                userTouchedName.current = true;
+                setName(e.currentTarget.value);
+              }}
+              required
+              maxLength={255}
+              placeholder="ws-1430"
+              autoFocus
+            />
+          </Field>
+          <Field
+            label="워크트리 경로 (선택)"
+            hint="비워두면 /workspace/<slug>/<id> 로 자동 생성"
+          >
+            <Input
+              type="text"
+              value={worktreePath}
+              onChange={(e) => setWorktreePath(e.currentTarget.value)}
+              maxLength={4096}
+              placeholder="/workspace/..."
+            />
+          </Field>
+        </section>
 
-        <div>
-          <div className="mb-2 flex items-baseline justify-between">
-            <label className="text-[12px] font-semibold text-fg">
-              포함할 레포지토리
-            </label>
-            <span className="text-[11px] text-fg-subtle">
-              {includedCount} / {rows.length}
-            </span>
-          </div>
-          {!reposLoaded ? (
-            <p className="px-1 text-[11.5px] text-fg-subtle">불러오는 중…</p>
-          ) : rows.length === 0 ? (
-            <p className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-[11.5px] text-fg-muted">
-              이 프로젝트에는 레포가 없어요 — 워크스페이스가 빈 폴더만 가집니다.
-              프로젝트 페이지에서 레포를 추가하면 다음 워크스페이스부터 포함할 수 있어요.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {rows.map((row, idx) => (
-                <li
-                  key={row.repo.id}
-                  className="flex flex-col gap-1.5 rounded-md border border-border bg-bg-elevated px-3 py-2"
+        {/* ── Section 2: repository selection ────────────────── */}
+        <section>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <div className="flex items-baseline gap-2">
+              <h3 className="text-[13px] font-semibold text-fg">
+                포함할 레포지토리
+              </h3>
+              {rows.length > 0 ? (
+                <Badge tone="neutral" className="text-[10px]">
+                  {includedCount} / {rows.length}
+                </Badge>
+              ) : null}
+            </div>
+            {rows.length > 1 ? (
+              <div className="flex items-center gap-1 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => selectAll(true)}
+                  className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-hover hover:text-accent"
                 >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={row.include}
-                      onChange={() => toggleInclude(idx)}
-                      id={`repo-${row.repo.id}`}
-                    />
-                    <label
-                      htmlFor={`repo-${row.repo.id}`}
-                      className="flex-1 truncate text-[12.5px] font-medium text-fg"
-                    >
-                      {row.repo.display_name}
-                      {row.repo.subpath ? (
-                        <code className="ml-1.5 text-[11px] text-fg-subtle">
-                          {row.repo.subpath}/
-                        </code>
-                      ) : null}
-                    </label>
-                    {!row.repo.git_remote_url ? (
-                      <span className="text-[10.5px] text-fg-subtle">
-                        빈 폴더 (git 없음)
-                      </span>
-                    ) : null}
-                  </div>
-                  {row.include && row.repo.git_remote_url ? (
-                    <div className="flex items-center gap-1.5 pl-6">
-                      <span className="text-[11px] text-fg-subtle shrink-0">
-                        브랜치
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        {row.branches !== null && row.branches.length > 0 ? (
-                          <Combobox
-                            value={row.branch}
-                            onChange={(v) => setRowBranch(idx, v)}
-                            options={row.branches}
-                            loading={row.branchesLoading}
-                            placeholder={row.headBranch ?? "main"}
-                            maxLength={255}
-                          />
-                        ) : (
-                          <Input
-                            type="text"
-                            value={row.branch}
-                            onChange={(e) => setRowBranch(idx, e.currentTarget.value)}
-                            maxLength={255}
-                            placeholder={row.headBranch ?? "main"}
-                          />
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => loadBranchesFor(idx, row.repo.id, true)}
-                        disabled={row.branchesLoading}
-                        className="rounded-md border border-border px-2 py-1 text-[10.5px] text-fg-muted hover:bg-surface-hover disabled:opacity-50"
-                        title="원격에서 브랜치 다시 불러오기"
-                      >
-                        ↻
-                      </button>
-                    </div>
-                  ) : null}
-                  {row.branchesError ? (
-                    <p className="pl-6 text-[10.5px] text-fg-subtle">
-                      브랜치 자동 불러오기 실패 — 직접 입력하세요. ({row.branchesError})
-                    </p>
-                  ) : null}
-                </li>
+                  전체 선택
+                </button>
+                <span className="text-fg-subtle">·</span>
+                <button
+                  type="button"
+                  onClick={() => selectAll(false)}
+                  className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-hover hover:text-accent"
+                >
+                  전체 해제
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {!reposLoaded ? (
+            <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-bg-subtle px-4 py-6 text-[12px] text-fg-muted">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              레포지토리 불러오는 중…
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-bg-subtle px-4 py-3 text-[12px] text-fg-muted">
+              <FolderGit2 className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle" />
+              <div>
+                <p className="font-medium text-fg">
+                  이 프로젝트에는 레포가 없어요
+                </p>
+                <p className="mt-0.5 text-[11.5px]">
+                  워크스페이스가 빈 폴더만 가집니다. 프로젝트 페이지에서 레포를 추가하면
+                  다음 워크스페이스부터 포함할 수 있어요.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-2.5">
+              {rows.map((row, idx) => (
+                <RepoCard
+                  key={row.repo.id}
+                  row={row}
+                  onToggle={() => toggleInclude(idx)}
+                  onBranchChange={(v) => setRowBranch(idx, v)}
+                  onRefreshBranches={() =>
+                    loadBranchesFor(idx, row.repo.id, true)
+                  }
+                />
               ))}
             </ul>
           )}
-        </div>
-
-        <Field label="워크트리 경로 (선택)">
-          <Input
-            type="text"
-            value={worktreePath}
-            onChange={(e) => setWorktreePath(e.currentTarget.value)}
-            maxLength={4096}
-            placeholder="/workspace (비워두면 자동 생성)"
-          />
-        </Field>
+        </section>
 
         {error ? (
           <p
             role="alert"
-            className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+            className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
           >
-            {error}
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{error}</span>
           </p>
         ) : null}
       </form>
     </Modal>
+  );
+}
+
+/** One repo as a roomy card.
+ *
+ *  Row 1: checkbox + repo display_name + subpath chip + optional
+ *          "빈 폴더" / "OSS" affordances on the right.
+ *  Row 2: full-width branch picker when included AND remote exists.
+ *  Row 3: status footer (loading hint, error hint).
+ *
+ *  The branch picker gets a full row of width so its Combobox dropdown
+ *  has the horizontal room it needs without clipping into the refresh
+ *  button. Excluded rows collapse to just the header for density. */
+function RepoCard({
+  row,
+  onToggle,
+  onBranchChange,
+  onRefreshBranches,
+}: {
+  row: RepoRowState;
+  onToggle: () => void;
+  onBranchChange: (v: string) => void;
+  onRefreshBranches: () => void;
+}) {
+  const hasRemote = !!row.repo.git_remote_url;
+  return (
+    <li
+      className={cn(
+        "rounded-lg border bg-bg-elevated transition-colors",
+        row.include
+          ? "border-accent/40 ring-1 ring-accent/15"
+          : "border-border opacity-75",
+      )}
+    >
+      {/* Header — clickable everywhere except the chips. */}
+      <label
+        className="flex cursor-pointer items-center gap-3 px-3.5 py-2.5"
+        htmlFor={`repo-${row.repo.id}`}
+      >
+        <input
+          id={`repo-${row.repo.id}`}
+          type="checkbox"
+          checked={row.include}
+          onChange={onToggle}
+          className="h-4 w-4 shrink-0 cursor-pointer accent-accent"
+        />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <FolderGit2 className="h-4 w-4 shrink-0 text-fg-muted" strokeWidth={1.5} />
+          <span className="truncate text-[13px] font-medium text-fg">
+            {row.repo.display_name}
+          </span>
+          {row.repo.subpath ? (
+            <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[10.5px] text-fg-muted">
+              {row.repo.subpath}/
+            </code>
+          ) : (
+            <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[10.5px] text-fg-subtle">
+              루트
+            </code>
+          )}
+        </div>
+        {!hasRemote ? (
+          <Badge tone="warn" className="text-[9.5px]">
+            빈 폴더 · git 없음
+          </Badge>
+        ) : null}
+      </label>
+
+      {/* Body — full-width branch picker, only when included + remote. */}
+      {row.include && hasRemote ? (
+        <div className="border-t border-border/60 px-3.5 py-2.5">
+          <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-wider text-fg-subtle">
+            <GitBranch className="h-3 w-3" strokeWidth={1.5} />
+            브랜치
+            {row.branchesLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin text-fg-subtle" />
+            ) : null}
+          </div>
+          <div className="flex items-stretch gap-2">
+            <div className="min-w-0 flex-1">
+              {row.branches !== null && row.branches.length > 0 ? (
+                <Combobox
+                  value={row.branch}
+                  onChange={onBranchChange}
+                  options={row.branches}
+                  loading={row.branchesLoading}
+                  placeholder={row.headBranch ?? "main"}
+                  maxLength={255}
+                />
+              ) : (
+                <Input
+                  type="text"
+                  value={row.branch}
+                  onChange={(e) => onBranchChange(e.currentTarget.value)}
+                  maxLength={255}
+                  placeholder={row.headBranch ?? "main"}
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onRefreshBranches}
+              disabled={row.branchesLoading}
+              title="원격에서 브랜치 목록 다시 불러오기"
+              className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-border bg-bg text-fg-muted hover:bg-surface-hover hover:text-accent disabled:opacity-50"
+            >
+              <RefreshCw
+                className={cn(
+                  "h-3.5 w-3.5",
+                  row.branchesLoading && "animate-spin",
+                )}
+                strokeWidth={1.5}
+              />
+            </button>
+          </div>
+          {row.branchesError ? (
+            <p className="mt-1.5 flex items-start gap-1.5 text-[10.5px] text-fg-subtle">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warn" />
+              <span>
+                브랜치 자동 불러오기 실패 — 직접 입력하세요.
+                <span className="ml-1 text-fg-subtle/70">({row.branchesError})</span>
+              </span>
+            </p>
+          ) : row.headBranch ? (
+            <p className="mt-1.5 text-[10.5px] text-fg-subtle">
+              원격 기본 브랜치: <code className="text-fg-muted">{row.headBranch}</code>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Body — empty/candidate repo state. */}
+      {row.include && !hasRemote ? (
+        <div className="border-t border-border/60 px-3.5 py-2.5 text-[11px] text-fg-subtle">
+          이 레포는 원격 URL이 없어서 클론하지 않고 빈 폴더만 만듭니다.
+          워크스페이스 안 터미널에서 <code className="text-fg-muted">git init</code>
+          으로 시작할 수 있어요.
+        </div>
+      ) : null}
+    </li>
   );
 }
