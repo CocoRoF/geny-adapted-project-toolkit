@@ -107,6 +107,26 @@ class CaddyAdminClient:
                 f"POST {path} -> {status}",
             )
 
+    async def patch(self, path: str, body: Any) -> None:
+        """Phase N.3 — atomic in-place update.
+
+        Caddy's PATCH with a full replacement body on the routes
+        array applies as one operation: routes whose content is
+        byte-identical to the previous state keep their handler
+        chains (and the live connections those chains serve), while
+        only the routes that actually changed get rebuilt. Used by
+        ``SubdomainManager._upsert`` to replace the brittle
+        DELETE-then-POST cycle that left the array briefly empty +
+        nuked every keep-alive connection through Caddy (vite HMR
+        ws, chat SSE, ...) on every preview register / expose /
+        deploy."""
+        status, _ = await self.transport("PATCH", path, body)
+        if status >= 400:
+            raise CaddyAdminError(
+                "caddy.admin.patch_failed",
+                f"PATCH {path} -> {status}",
+            )
+
     async def delete(self, path: str) -> None:
         status, _ = await self.transport("DELETE", path, None)
         if status >= 400 and status != 404:

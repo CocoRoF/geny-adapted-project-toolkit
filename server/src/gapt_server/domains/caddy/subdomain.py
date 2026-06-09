@@ -799,14 +799,31 @@ class SubdomainManager:
                     break
             for offset, payload in enumerate(referer_payloads):
                 arr.insert(referer_anchor + offset, payload)
-            # DELETE then POST — see method docstring.
-            try:
-                await self.client.delete(self.routes_path)
-            except CaddyAdminError:
-                # If the path was already empty, the GET above returned
-                # None and the DELETE 404s; either way safe to proceed.
-                pass
-            await self.client.post(self.routes_path, arr)
+            # Phase N.3 — atomic in-place update via PATCH.
+            #
+            # Pre-fix this point did a DELETE followed by a POST on
+            # the same routes path. Between the two calls Caddy held
+            # an empty routes array for a few hundred ms — long
+            # enough that every persistent connection passing through
+            # Caddy (vite HMR websocket, chat SSE streams, polling
+            # fetches) got reset. The IDE treated the HMR drop as
+            # "force-reload the page", so EVERY expose / unexpose /
+            # deploy / reroute action triggered a visible flash +
+            # state loss in the operator's browser.
+            #
+            # PATCH on the array path replaces the value atomically.
+            # Routes that are byte-identical between old and new
+            # keep their internal handler chains and existing
+            # connections never see a routing gap. Only the routes
+            # that actually changed get rebuilt — and the connections
+            # routed by THOSE specific routes are the only ones that
+            # need to reconnect (which is correct behavior).
+            #
+            # We tried PUT first — Caddy returns 409 "key already
+            # exists" on the routes path because PUT is "create-only"
+            # for existing array nodes. PATCH is the only verb that
+            # both exists and replaces atomically.
+            await self.client.patch(self.routes_path, arr)
 
     async def unregister(self, workspace_slug: str) -> None:
         """Delete the primary preview route plus all fallback

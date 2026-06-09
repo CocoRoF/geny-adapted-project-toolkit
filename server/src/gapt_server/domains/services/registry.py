@@ -99,6 +99,49 @@ def _extract_user_cmd_from_sh_wrapper(line: str) -> str:
     return line[si:ei].strip()
 
 
+def _kill_marker_pgid_script(marker: str, signal: str) -> str:
+    """Shell one-liner that signals every process group containing a
+    process whose cmdline matches ``marker``.
+
+    Why pgid and not ``pkill -f``: the GAPT spawn wraps the user's
+    command in ``sh -c '<inner>' <marker>``. ``pkill -f <marker>``
+    only matches that wrapping ``sh`` — the user's command (and its
+    grandchildren — ``npm run dev`` → ``node next`` → ``next-server``)
+    inherits the sh's pgrp but is invisible to that pkill. Pre-fix
+    those descendants kept running as PPID=1 orphans after stop(),
+    holding the bound port forever.
+
+    The script:
+      1. Resolves all PIDs whose cmdline contains the marker
+         (normally exactly one — the wrapping sh).
+      2. Reads field 5 of ``/proc/<pid>/stat`` for each — the pgrp id.
+      3. Sends ``kill -<signal> -<pgid>`` (negative-PID semantics
+         = "signal every process in this group").
+
+    The shell run here is the container's ``/bin/sh`` which on the
+    GAPT sandbox images is dash, not bash. dash's builtin ``kill``
+    rejects the bash-canonical ``kill -<SIG> -- -<pgid>`` form with
+    "Illegal option" — so we omit the ``--`` separator entirely and
+    use the bare ``kill -<SIG> -<pgid>`` form that dash and util-
+    linux ``kill`` both accept.
+
+    Safety: explicitly skip pgid 0 / 1 so we never signal init even
+    if a marker process were mis-attributed. The trailing ``true``
+    keeps the exit code at 0 — the caller already wraps this in
+    ``contextlib.suppress`` but a clean exit avoids noisy error logs
+    when there's simply nothing left to kill (normal idempotent
+    second pass).
+    """
+    quoted = shlex.quote(marker)
+    return (
+        "for pid in $(pgrep -f " + quoted + " 2>/dev/null); do "
+        'pgid=$(awk "{print \\$5}" /proc/$pid/stat 2>/dev/null); '
+        '[ -n "$pgid" ] && [ "$pgid" -gt 1 ] && '
+        "kill -" + signal + " -$pgid 2>/dev/null; "
+        "done; true"
+    )
+
+
 class ServiceState(StrEnum):
     STARTING = "starting"
     RUNNING = "running"
@@ -474,8 +517,24 @@ class ServiceRegistry:
         *,
         timeout_s: float = 5.0,
     ) -> Service:
-        """SIGTERM the in-container process matching the unique marker,
-        then SIGKILL after `timeout_s`. Returns the final state."""
+        """SIGTERM the in-container process tree rooted at the marker,
+        then SIGKILL after `timeout_s`. Returns the final state.
+
+        Phase N.3 — pgid-based kill. Pre-fix this method ran
+        ``pkill -TERM -f <marker>`` which matched only the wrapping
+        ``sh`` that carries the marker as ``$0``. The user's actual
+        command (``npm run dev`` → ``node next`` → ``next-server``)
+        spawned beneath that sh inherits its pgrp but is NOT pgrep-
+        matched by the marker pattern. So killing the marker left
+        every descendant alive as PPID=1 orphans (docker-init reaps
+        them), and they kept holding the bound port — every
+        subsequent ``start`` then failed with EADDRINUSE and the user
+        was stuck.
+
+        By targeting the marker's pgid (``kill -- -<pgid>``) every
+        process that inherited the group goes down in one syscall.
+        The only escapees are processes that explicitly called
+        ``setpgid(0,0)`` to break out — uncommon for dev servers."""
         async with self._lock:
             svc = self._entries.get((workspace_id, label))
         if svc is None:
@@ -491,7 +550,7 @@ class ServiceRegistry:
         if marker:
             with contextlib.suppress(WorkspaceSandboxError):
                 await sandbox.exec(
-                    ["sh", "-c", f"pkill -TERM -f {shlex.quote(marker)} || true"],
+                    ["sh", "-c", _kill_marker_pgid_script(marker, "TERM")],
                     timeout_s=5.0,
                 )
             # Brief grace for graceful exit, then force.
@@ -506,7 +565,7 @@ class ServiceRegistry:
                 await asyncio.sleep(0.5)
             with contextlib.suppress(WorkspaceSandboxError):
                 await sandbox.exec(
-                    ["sh", "-c", f"pkill -KILL -f {shlex.quote(marker)} || true"],
+                    ["sh", "-c", _kill_marker_pgid_script(marker, "KILL")],
                     timeout_s=5.0,
                 )
 
