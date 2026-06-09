@@ -143,20 +143,14 @@ def _container_name(workspace_id: str) -> str:
     return f"gapt-ws-{workspace_id.lower()}"
 
 
-def _bare_from_worktree(worktree_path: str) -> str | None:
-    """Read `<worktree>/.git` (a file in worktree layout) and return
-    the absolute host path of the *bare* this worktree belongs to.
+def _bare_from_git_file(git_file: str) -> str | None:
+    """Read a single ``.git`` worktree pointer file and return the
+    absolute host path of the bare repo it references.
 
-    The `.git` file contains `gitdir: <abs path>/worktrees/<wid>`;
-    we strip the trailing `worktrees/<wid>` to recover the bare dir
-    so the container mount targets the right host directory without
-    needing to thread the bare root setting through every caller.
-
-    Returns None when `.git` isn't a file (legacy clone layout) or
-    when the content doesn't match the expected shape — both cases
-    skip the bare mount (the sandbox boots, git just won't work for
-    legacy clones, which is the same as pre-Phase-C.1 behaviour)."""
-    git_file = os.path.join(worktree_path, ".git")
+    The file contains ``gitdir: <abs path>/worktrees/<wid>``; we
+    strip the trailing ``worktrees/<wid>`` to recover the bare dir.
+    Returns None when the file is missing, unreadable, or doesn't
+    match the expected shape (legacy non-worktree clone layouts)."""
     if not os.path.isfile(git_file):
         return None
     try:
@@ -175,6 +169,55 @@ def _bare_from_worktree(worktree_path: str) -> str | None:
     if len(parts) < 3 or parts[-2] != "worktrees":
         return None
     return "/".join(parts[:-2])
+
+
+def _bares_for_worktree(worktree_path: str) -> list[str]:
+    """Discover every bare host path this workspace's worktree
+    references. Phase N.5 — multi-repo workspaces lay one ``.git``
+    pointer file per repo at ``<worktree>/<subpath>/.git``; pre-N.5
+    single-repo workspaces still keep one at ``<worktree>/.git``.
+
+    Strategy: check the worktree root first (legacy single-repo), then
+    one-level subdirs (multi-repo). De-dup the resulting list so two
+    repos that happen to share a bare-root prefix don't double-mount.
+    Order is preserved so ``docker run`` argv stays deterministic for
+    tests / debugging.
+
+    Returns an empty list when nothing matches — the sandbox boots
+    fine, but ``git`` inside the container won't resolve any
+    worktrees. Callers downstream emit a friendly empty state for
+    that case rather than letting the raw fatal leak to the UI."""
+    bares: list[str] = []
+    seen: set[str] = set()
+
+    def _add(p: str | None) -> None:
+        if p is None or p in seen:
+            return
+        seen.add(p)
+        bares.append(p)
+
+    _add(_bare_from_git_file(os.path.join(worktree_path, ".git")))
+    try:
+        with os.scandir(worktree_path) as it:
+            for entry in it:
+                # Symlinks would let an operator escape the worktree
+                # mount; ignore them. We only look one level deep —
+                # the multi-repo layout pins each repo at a single
+                # subpath segment.
+                if entry.is_dir(follow_symlinks=False):
+                    _add(_bare_from_git_file(os.path.join(entry.path, ".git")))
+    except OSError:
+        # Worktree dir doesn't exist yet (sandbox boot racing the
+        # clone) — return whatever we did find at the root.
+        pass
+    return bares
+
+
+def _bare_from_worktree(worktree_path: str) -> str | None:
+    """Legacy single-bare helper kept for callers that only care about
+    the root-level ``.git`` pointer. Phase N.5 multi-repo callers use
+    ``_bares_for_worktree`` instead."""
+    return _bare_from_git_file(os.path.join(worktree_path, ".git"))
 
 
 _GPU_INDEX_RE = re.compile(r"^\d+(,\d+)*$")
@@ -351,17 +394,20 @@ class WorkspaceSandbox:
         # inside the container — otherwise every `git` command fails
         # with `fatal: not a git repository: …/worktrees/<wid>`.
         #
-        # We read the `.git` file and mount the bare at the *same
-        # absolute host path* inside the container. As of 2026-05-29
-        # the bare lives at `<workspace_bare_root>/<slug>/` outside
-        # `/workspace`, so the mount doesn't overlap with the worktree
-        # mount (the earlier "test/ shows up as untracked" bug).
-        # Mount rw so commits land new objects in `<bare>/objects/`
-        # and update `<bare>/worktrees/<wid>/HEAD`; `--user` already
+        # Phase N.5 — multi-repo workspaces have ONE pointer per repo
+        # at ``<worktree>/<subpath>/.git`` (e.g. ``geny/.git`` +
+        # ``frontend/.git``), each potentially pointing at a different
+        # bare under ``<workspace_bare_root>/<slug>/<repo_id>/``. We
+        # discover all of them via a one-level scan and mount each at
+        # the same absolute path inside the container. Pre-N.5 single-
+        # repo workspaces still resolve via the root-level ``.git``,
+        # so the mount set collapses to one entry as before.
+        # Mount rw so commits land new objects in ``<bare>/objects/``
+        # and update ``<bare>/worktrees/<wid>/HEAD``; ``--user`` already
         # matches the host owner so permissions just work.
-        bare_dir = _bare_from_worktree(self.worktree_path)
-        if bare_dir is not None and os.path.isdir(bare_dir):
-            argv += ["-v", f"{bare_dir}:{bare_dir}:rw"]
+        for bare_dir in _bares_for_worktree(self.worktree_path):
+            if os.path.isdir(bare_dir):
+                argv += ["-v", f"{bare_dir}:{bare_dir}:rw"]
         if self.host_claude_dir:
             # rw — the CLI refreshes OAuth tokens in place.
             argv += ["-v", f"{self.host_claude_dir}:/home/ubuntu/.claude:rw"]
