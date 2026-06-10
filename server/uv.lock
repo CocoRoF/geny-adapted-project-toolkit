@@ -693,7 +693,7 @@ dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20260518" }]
 
 [[package]]
 name = "geny-executor"
-version = "2.2.1"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -710,9 +710,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/b4/d975707204e72b3e2902440f0e70c59b31f52b12a1b1daffa3a929951dcf/geny_executor-2.2.1.tar.gz", hash = "sha256:6d43c0c18ed95d26f30c4332304fda68ea35d48c8cb242a797987b534513aff2", size = 1067512, upload-time = "2026-06-10T09:50:06.764Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/98/539b030444488a27d3ce735c44ae6e7d7bb82ccd1f3e659fc041567916d7/geny_executor-2.3.0.tar.gz", hash = "sha256:6cd97a3c591ed41004f22048235c58eaedd68cc7501d768c79b2316719c4cdaf", size = 1080938, upload-time = "2026-06-10T12:57:01.087Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/70/15f32f8d8ee186de4fb4449b92e1efcdef02c34f9faa1bb0def7a4051b41/geny_executor-2.2.1-py3-none-any.whl", hash = "sha256:40610a400e738095fdc3e941290a44ebda541dc2da211638ffeb52eadf4936b1", size = 864282, upload-time = "2026-06-10T09:50:04.924Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/3d/f64b3b79c0a97979e7d91780f99cfad30956cda8d4bf35c958c1391fac5d/geny_executor-2.3.0-py3-none-any.whl", hash = "sha256:bb0251fd4694b360dad315eed3d17a84814c9651080e6a3da9ce9bd5a52fd04c", size = 874960, upload-time = "2026-06-10T12:56:59.368Z" },
 ]
 
 [[package]]
