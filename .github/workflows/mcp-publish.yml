@@ -1,0 +1,49 @@
+# Publish gapt-mcp to npm. Manual trigger only — bump mcp/package.json
+# version first, then run this workflow. Needs the NPM_TOKEN repo
+# secret (npm automation token with publish rights).
+name: mcp-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: "npm dist-tag"
+        required: false
+        default: "latest"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke (tools/list — no live instance)
+        run: |
+          GAPT_BASE_URL=http://localhost:1 \
+          GAPT_LOGIN_ID=x GAPT_LOGIN_PW=x \
+          npm run smoke
+
+      - name: Publish
+        run: npm publish --access public --tag "${{ github.event.inputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
