@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDownToLine,
@@ -138,8 +138,24 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   // (`flex-1`), Stash and History have explicit user-controllable
   // heights with a SplitHandle above them. Defaults chosen so the
   // first-open state shows a few entries without dominating Changes.
-  const [stashHeight, setStashHeight] = useState(140);
-  const [historyHeight, setHistoryHeight] = useState(200);
+  // Persisted per-browser so a layout the operator dialled in
+  // survives page reloads (mirrors IdeShell's layout persistence).
+  const [stashHeight, setStashHeight] = useState(
+    () => readStoredHeight("gapt.git.stashHeight", 140),
+  );
+  const [historyHeight, setHistoryHeight] = useState(
+    () => readStoredHeight("gapt.git.historyHeight", 200),
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem("gapt.git.stashHeight", String(stashHeight));
+    } catch { /* private mode — keep in-memory only */ }
+  }, [stashHeight]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("gapt.git.historyHeight", String(historyHeight));
+    } catch { /* private mode — keep in-memory only */ }
+  }, [historyHeight]);
 
   // Phase N.4 — fetch the repo list once per project. The selector
   // hides itself when there's only one row (legacy UX), surfaces a
@@ -184,11 +200,24 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     };
   }, [projectId]);
 
+  // Monotonic sequence guard for refresh(). The git endpoints can be
+  // SLOW on first hit (the backend `ensure()`s the workspace docker
+  // container — a cold boot takes seconds). Without this guard, the
+  // mount-time refresh and the post-repo-load refresh race: the
+  // earlier (wrong-repo) request can resolve LAST and clobber the
+  // good state with a stale 412 — the "panel stuck on 클론하기 until
+  // you click away and back" bug.
+  const refreshSeq = useRef(0);
+
   const refresh = useCallback(async () => {
-    // Phase N.4 — empty project: no repos to query. Bail out before
-    // hitting the backend so the operator doesn't see a raw "fatal:
-    // not a git repository" surfaced from `git status`.
-    if (reposLoaded && repos.length === 0) {
+    // Phase N.5 — never fire a git call before the repo list is in.
+    // Pre-fix this fired immediately at mount with repo_id=null,
+    // which the backend resolves to the PRIMARY repo (lowest
+    // sort_order) — possibly an empty/candidate folder — and the
+    // slow stale 412 from that call then overwrote the real repo's
+    // successful response.
+    if (!reposLoaded) return;
+    if (repos.length === 0) {
       setStatus(null);
       setBranchesResp(null);
       setStash(null);
@@ -196,6 +225,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       setNotCloned(false);
       return;
     }
+    const seq = ++refreshSeq.current;
     setLoading(true);
     setNotCloned(false);
     try {
@@ -205,6 +235,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         getGitStashList(workspaceId, selectedRepoId),
         getGitLog(workspaceId, { limit: 50, all_branches: true }, selectedRepoId),
       ]);
+      if (seq !== refreshSeq.current) return; // stale response — drop
       setStatus(s);
       setBranchesResp(b);
       setStash(st);
@@ -213,6 +244,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         prev.size === 0 ? new Set(s.entries.map((e) => e.path)) : prev,
       );
     } catch (e) {
+      if (seq !== refreshSeq.current) return; // stale failure — drop
       // Phase N.4 — backend translates "fatal: not a git repository"
       // into structured 412 ``git.repo_not_cloned`` so all 4 parallel
       // git calls fail with the same code instead of fanning out raw
@@ -221,10 +253,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       //
       // Defensive fallback: a backend that hasn't been redeployed yet
       // still returns 500 with the raw stderr in ``reason``. Match
-      // that string too so the panel degrades gracefully — without
-      // this, the operator sees the raw "fatal: not a git repository"
-      // text as a flash even though the new structured code is in
-      // the client.
+      // that string too so the panel degrades gracefully.
       const msg = errText(e);
       const isStructured =
         e instanceof ApiError && e.code === "git.repo_not_cloned";
@@ -235,7 +264,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setFlash({ kind: "error", text: msg });
       }
     } finally {
-      setLoading(false);
+      if (seq === refreshSeq.current) setLoading(false);
     }
   }, [workspaceId, selectedRepoId, reposLoaded, repos.length]);
 
@@ -1043,14 +1072,15 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
           </div>
         </section>
 
-        {/* ── Stash (resizable when open) ── */}
+        {/* ── Stash (resizable when open; double-click resets) ── */}
         {openSections.stash ? (
           <SplitHandle
             axis="vertical"
             value={stashHeight}
             onChange={setStashHeight}
             min={80}
-            max={400}
+            max={500}
+            resetTo={140}
             invert
           />
         ) : null}
@@ -1149,7 +1179,8 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
             value={historyHeight}
             onChange={setHistoryHeight}
             min={80}
-            max={500}
+            max={700}
+            resetTo={200}
             invert
           />
         ) : null}
@@ -1643,6 +1674,20 @@ function errText(e: unknown): string {
   if (e instanceof ApiError) return e.reason;
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+/** Read a persisted section height. Clamped to a sane window so a
+ * corrupted / ancient value can't wedge a section off-screen. */
+function readStoredHeight(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(700, Math.max(80, n));
+  } catch {
+    return fallback;
+  }
 }
 
 /** Compress a raw git push / fetch error into a one-line operator
