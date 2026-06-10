@@ -2,18 +2,17 @@
 
 `GaptEnvironmentService` resolves a manifest id to an
 `EnvironmentManifest`, then hands it to `Pipeline.from_manifest_async`
-along with a `CredentialBundle`. Sessions, credentials, and
-ProjectAwareSessionManager land in later cycles (2.2 / 2.8 / 2.10).
+along with a `CredentialBundle`.
+
+geny-executor 2.2.0 note: the `executor_patches.py` monkey-patch layer
+(private `_call_streaming` / `StreamJsonAccumulator.feed` /
+`CLIProcessRunner._spawn` forks) is gone — chunk forwarding and
+tool_result echoes are built into Stage 6's event stream, and docker
+sandbox routing uses the supported
+`ClaudeCodeCLIClient(runner_factory=...)` seam (see `sandbox_runner.py`).
 """
 
-# Apply executor monkey-patches before anything else imports the
-# executor's stage classes. See `executor_patches.py` for the rationale
-# (temporary shim; remove once the upstream patch ships).
-from gapt_server.agent.executor_patches import apply_executor_patches as _apply_patches
-
-_apply_patches()
-
-from gapt_server.agent.credentials import (  # noqa: E402 — must run after patch
+from gapt_server.agent.credentials import (
     SecretRefMap,
     build_claude_code_cli_creds,
     build_for_session,

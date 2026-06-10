@@ -1,6 +1,9 @@
-"""Phase L.4 — `ManifestOverrides.thinking_*` lands in the manifest's
-top-level `model` dict + the api stage config so `ModelConfig`
-sees it at run time."""
+"""Phase L.4 (updated for geny-executor 2.2.0) — `ManifestOverrides.
+thinking_*` lands in the manifest's *top-level* `model` dict, the
+single home `validate_manifest` documents. The api-stage copy is no
+longer written (it was always inert and now draws a `model.dual_home`
+warning); any pre-existing stage-config copy is hoisted into the
+top-level block so the manifest author's intent stays effective."""
 
 from __future__ import annotations
 
@@ -22,10 +25,9 @@ def _bare_manifest() -> dict:
     }
 
 
-def test_thinking_budget_writes_both_top_level_and_api_stage() -> None:
-    """ModelConfig reads top-level; legacy stages read the api stage
-    config dict. We mirror to both, same convention as `model` /
-    `max_tokens` in Phase G.4."""
+def test_thinking_budget_writes_top_level_only() -> None:
+    """2.2.0 single home: ModelConfig reads the top-level `model`
+    block; the api stage config must NOT receive a (dual-home) copy."""
     manifest = _bare_manifest()
     overrides = ManifestOverrides(thinking_budget_tokens=4096)
     patched, applied = apply_overrides(manifest, overrides)
@@ -35,10 +37,43 @@ def test_thinking_budget_writes_both_top_level_and_api_stage() -> None:
     # need to flip two switches at once.
     assert patched["model"]["thinking_enabled"] is True
     api_stage = next(s for s in patched["stages"] if s["name"] == "api")
-    assert api_stage["config"]["thinking_budget_tokens"] == 4096
-    assert api_stage["config"]["thinking_enabled"] is True
+    assert "thinking_budget_tokens" not in api_stage["config"]
+    assert "thinking_enabled" not in api_stage["config"]
     assert applied["thinking_budget_tokens"] == 4096
     assert applied["thinking_enabled"] is True
+
+
+def test_stage_config_model_is_hoisted_to_top_level() -> None:
+    """A bundled manifest carrying `model` / `max_tokens` in the api
+    stage config (the pre-2.2 GAPT shape) must come out single-homed:
+    the values move to the top-level block (where the executor reads
+    them) unless an override stomps them, and the stage-config copies
+    are removed so `validate_manifest` raises no `model.dual_home`."""
+    manifest = {
+        "model": {},
+        "stages": [
+            {
+                "name": "api",
+                "config": {
+                    "provider": "claude_code_cli",
+                    "model": "sonnet",
+                    "max_tokens": 8192,
+                },
+            },
+        ],
+    }
+    patched, applied = apply_overrides(
+        manifest, ManifestOverrides(max_tokens=30_000)
+    )
+
+    api_stage = next(s for s in patched["stages"] if s["name"] == "api")
+    assert "model" not in api_stage["config"]
+    assert "max_tokens" not in api_stage["config"]
+    # Non-overridden field keeps the manifest's bundled value …
+    assert patched["model"]["model"] == "sonnet"
+    # … and the override wins where given.
+    assert patched["model"]["max_tokens"] == 30_000
+    assert applied == {"max_tokens": 30_000}
 
 
 def test_explicit_thinking_disabled_overrides_implicit_enable() -> None:

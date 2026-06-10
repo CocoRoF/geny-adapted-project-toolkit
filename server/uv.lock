@@ -662,7 +662,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1" },
     { name = "email-validator", specifier = ">=2.2" },
     { name = "fastapi", specifier = ">=0.115,<0.120" },
-    { name = "geny-executor", specifier = ">=2.1.0,<3" },
+    { name = "geny-executor", specifier = ">=2.2.0,<3.0.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", extras = ["testing"], marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
@@ -693,7 +693,7 @@ dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20260518" }]
 
 [[package]]
 name = "geny-executor"
-version = "2.1.0"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -710,9 +710,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/2c/baddabedbbf337c3f66c8d7c275e1ea16d47402cf77576d95ccf69ea911c/geny_executor-2.1.0.tar.gz", hash = "sha256:52258a99e6deac4f6c5016d14ddeab069b7d9cdafddd4d16bab0adcf42f035a5", size = 819849, upload-time = "2026-05-21T00:55:13.762Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/d1/a170539bdac2a074f03c9cc58c45087884a8bd6cebd93cead8a4eba667b9/geny_executor-2.2.0.tar.gz", hash = "sha256:83d36399dde966922f4418934cf584fb7a75d53e9447aa8f8e214f42b804c69f", size = 1061458, upload-time = "2026-06-10T07:13:08.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/78/41aa9b6a09d1ab5d0f16690d741b1e3098973874fde9db7adf49438146b8/geny_executor-2.1.0-py3-none-any.whl", hash = "sha256:517d7d1c3e48810848b223cbfd3de285aaa5c99be289eed77e48754a0aa8862a", size = 742077, upload-time = "2026-05-21T00:55:11.366Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/7a/692d176c8c2ec34da317b12a7d972c3d3aca7d1473e4cc233bc6ad548ef8/geny_executor-2.2.0-py3-none-any.whl", hash = "sha256:8e6e319ec8d4c4d1e3745343fbd498443cd3cd5dcaa91b1a355321097537ec76", size = 861482, upload-time = "2026-06-10T07:13:06.54Z" },
 ]
 
 [[package]]

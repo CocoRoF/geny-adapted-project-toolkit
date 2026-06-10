@@ -168,8 +168,26 @@ async def test_oneshot_captures_tool_calls(fx: _Fx) -> None:
     _set_script(
         "tools",
         [
-            _StubEvent(type="tool.invoke", data={"name": "gapt_edit", "input": {"path": "a.py"}}),
-            _StubEvent(type="tool.result", data={"name": "gapt_edit", "output": "ok"}),
+            # geny-executor 2.2.0 canonical Stage-6 announcements
+            # (replaced the patch-era `tool.invoke` / `tool.result`).
+            _StubEvent(
+                type="api.tool_use",
+                data={
+                    "id": "toolu_01",
+                    "name": "gapt_edit",
+                    "input": {"path": "a.py"},
+                    "source": "cli",
+                },
+            ),
+            _StubEvent(
+                type="api.tool_result",
+                data={
+                    "tool_use_id": "toolu_01",
+                    "content": "ok",
+                    "is_error": False,
+                    "source": "cli",
+                },
+            ),
             _StubEvent(type="text", data={"text": "done editing"}),
         ],
     )

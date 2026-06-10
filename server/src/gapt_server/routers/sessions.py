@@ -36,6 +36,7 @@ from sqlalchemy import select
 
 from gapt_server.agent.hooks import ChatModeRef, build_hook_runner
 from gapt_server.agent.hooks.cost_hook import CostAccumulator
+from gapt_server.agent.sandbox_runner import attach_session_runtime
 from gapt_server.agent.session_manager import (
     ProjectAwareSessionManager,
     SessionManagerError,
@@ -408,7 +409,18 @@ def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (co
     runtime.model_name = _extract_api_model(
         container.env_service, handle.env_manifest_id
     )
-    handle.pipeline.attach_runtime(hook_runner=hook_runner)
+    # geny-executor 2.2.0 — attach the hook runner and, when a docker
+    # sandbox is bound, a `ClaudeCodeCLIClient(runner_factory=...)`
+    # that routes every CLI spawn through `docker exec <gapt-ws-…>`.
+    # Replaces the `CLIProcessRunner._spawn` monkey-patch + ContextVar
+    # plumbing; see `agent/sandbox_runner.py` for the full pattern.
+    attach_session_runtime(
+        pipeline=handle.pipeline,
+        hook_runner=hook_runner,
+        sandbox=sandbox,
+        cli_credentials=getattr(handle, "cli_credentials", None),
+        session_id=handle.session_id,
+    )
     return runtime
 
 
@@ -868,18 +880,13 @@ async def invoke_session(
             },
         )
 
-    # Phase M.2 — per-invoke model + thinking override (and revert).
-    # We mutate `pipeline._config.model.*` (NOT `state.*`) because the
-    # executor's `_init_state` calls `_config.apply_to_state(state)`
-    # on every `run_stream`, which overwrites any state-level edit
-    # before the api stage reads it. Pre-M.2 the GAPT code edited
-    # `state.model` and looked like it worked, but the executor was
-    # silently resetting it on the next turn — operators thought "I
-    # switched to opus" while the manifest model kept running.
-    #
-    # The runtime helper also handles `clear=[...]` revert sentinels,
-    # capturing a manifest baseline on the first override request so
-    # a subsequent clear can restore it without a fresh session.
+    # Phase M.2 (geny-executor 2.2.0) — per-invoke model + thinking
+    # override (and revert). The runtime records the selection and
+    # `_drive_pipeline` passes it as a sanctioned one-run
+    # `ModelOverrides` on every `run_stream` — no more
+    # `pipeline._config.model.*` mutation or baseline/revert dance.
+    # `clear=[...]` simply drops the stored selection; the next run
+    # reverts to manifest values automatically.
     runtime.apply_per_invoke_overrides(
         model=payload.model,
         thinking_enabled=payload.thinking_enabled,
@@ -1047,16 +1054,15 @@ async def patch_session_overrides(
         thinking_budget_tokens=payload.thinking_budget_tokens,
         clear=payload.clear,
     )
-    cfg = getattr(runtime.pipeline, "_config", None)
-    model_cfg = getattr(cfg, "model", None) if cfg is not None else None
-    if model_cfg is None:
-        return OverrideSnapshot(
-            model=None, thinking_enabled=None, thinking_budget_tokens=None
-        )
+    # 2.2.0 — overrides live on the runtime (translated to a per-run
+    # `ModelOverrides` at invoke time), so the snapshot reads them
+    # directly instead of poking `pipeline._config`. A `None` field
+    # means "inherit the manifest value" — the UI labels it with the
+    # bundled model the runtime carries as `model_name`.
     return OverrideSnapshot(
-        model=getattr(model_cfg, "model", None),
-        thinking_enabled=getattr(model_cfg, "thinking_enabled", None),
-        thinking_budget_tokens=getattr(model_cfg, "thinking_budget_tokens", None),
+        model=runtime.override_model or runtime.model_name,
+        thinking_enabled=runtime.override_thinking_enabled,
+        thinking_budget_tokens=runtime.override_thinking_budget_tokens,
     )
 
 
