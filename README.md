@@ -21,6 +21,63 @@
 
 ---
 
+## GAPT는 그 자체로 TOOL이다 — `gapt-mcp`
+
+GAPT는 격리 샌드박스 + 프로젝트 관리 플랫폼이므로, **그 전체가 하나의
+도구**가 될 수 있다. [`mcp/`](mcp/)의 **gapt-mcp**는 GAPT의 핵심 활동
+전부를 MCP(Model Context Protocol) 도구로 노출하는 npm 패키지다 — Claude
+Code, Claude Desktop, Cursor 등 어떤 MCP 클라이언트든 GAPT 인스턴스를
+원격 조종할 수 있다.
+
+```jsonc
+// .mcp.json — 이 세 줄이면 에이전트가 GAPT 전체를 다룬다
+{
+  "mcpServers": {
+    "gapt": {
+      "command": "npx",
+      "args": ["gapt-mcp"],
+      "env": {
+        "GAPT_BASE_URL": "https://gapt.example.com",
+        "GAPT_LOGIN_ID": "admin",
+        "GAPT_LOGIN_PW": "secret"
+      }
+    }
+  }
+}
+```
+
+```bash
+# Claude Code 한 줄 등록
+claude mcp add gapt \
+  --env GAPT_BASE_URL=https://gapt.example.com \
+  --env GAPT_LOGIN_ID=admin --env GAPT_LOGIN_PW=secret \
+  -- npx gapt-mcp
+```
+
+연결된 에이전트가 할 수 있는 일 — **41개 도구**:
+
+| 그룹 | 능력 |
+|---|---|
+| orient | `gapt_overview` 한 콜로 전체 인스턴스 파악, LLM 비용 집계 |
+| projects | 프로젝트 생성(빈 프로젝트 포함) · **멀티 git 레포** 연결 · 원격 브랜치 조회 |
+| workspaces | per-repo 브랜치 선택으로 샌드박스 생성 · start/stop/delete/rehydrate · **임의 셸 명령 실행** |
+| files | 트리/읽기/쓰기/삭제 + 단일 파일 diff |
+| git | repo별 status/log/branches/checkout/commit/sync/stash/discard/**PR 생성** |
+| services | dev server 기동 · 게이트웨이 프리뷰 URL로 **expose** |
+| agent | GAPT 내장 코딩 에이전트에 **작업 통째로 위임** (oneshot + 세션) |
+| deploy | 비동기 배포 · run 폴링 · 스택 logs/restart · **rollback** |
+
+사용법 스킬(코어 모델, 골든 워크플로, 에러 복구 규칙)이 서버
+`instructions` + `gapt://skill/usage` 리소스 + `gapt_usage_guide`
+프롬프트 3중으로 내장되어, 연결만 하면 에이전트가 GAPT를 *정확하게*
+쓴다. 상세: [`mcp/README.md`](mcp/README.md)
+
+> 이 구조의 의미: **GAPT 위의 에이전트가 GAPT를 부른다.** 외부 Claude가
+> gapt-mcp로 워크스페이스를 만들고, 그 안의 내장 에이전트에게 작업을
+> 위임하고, 결과를 PR로 만들어 배포까지 — 전 과정이 도구 호출이다.
+
+---
+
 ## 왜 만드는가
 
 2026년 5월 현재, 다음을 *동시에* 제공하는 단일 제품은 사실상 존재하지 않는다.
@@ -92,6 +149,7 @@ geny-adapted-project-toolkit/
 ├── server/                 # 컨트롤 플레인 (Python + FastAPI)
 ├── runtime/                # gapt/runtime 컨테이너 이미지 + daemon
 ├── web/                    # 프론트엔드 (Vite + React)
+├── mcp/                    # gapt-mcp — GAPT 전체를 MCP 도구로 (npm)
 ├── caddy/                  # Caddy 템플릿
 ├── poc/                    # M0 PoC artifacts
 └── scripts/                # 사용자/관리 스크립트
@@ -181,5 +239,6 @@ GAPT_TEST_POSTGRES_DSN="postgresql://gapt:gapt_dev_only@localhost:35432/gapt_tes
 
 ## 관련 프로젝트
 
+- [gapt-mcp](mcp/) — GAPT 전체를 MCP 도구로 노출하는 npm 패키지 (이 레포의 `mcp/`)
 - [geny-executor](https://github.com/CocoRoF/geny-executor) — GAPT가 의존하는 21단계 에이전트 파이프라인 (Apache-2.0)
 - [Geny](https://github.com/CocoRoF/Geny) — GAPT의 *첫 어댑트 사례* (별개 호스트)
