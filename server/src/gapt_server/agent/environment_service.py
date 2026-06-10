@@ -85,6 +85,58 @@ def _manifest_to_dict(manifest: EnvironmentManifest) -> dict[str, object]:
     return manifest.to_dict()
 
 
+#: Model-block fields whose single home is the manifest's *top-level*
+#: ``model`` dict (geny-executor 2.2.0). The bundled manifests still
+#: carry ``model`` / ``max_tokens`` inside the api stage's config for
+#: editor/UI display, but the executor treats that copy as inert and
+#: ``validate_manifest`` warns (`model.dual_home`) when both homes are
+#: populated. When we patch a manifest we therefore (a) seed the
+#: top-level block from the stage-config values so the manifest
+#: author's intent stays effective, then (b) delete the stage-config
+#: copies so the patched output is single-homed and warning-free.
+_MODEL_BLOCK_KEYS = (
+    "model",
+    "max_tokens",
+    "thinking_enabled",
+    "thinking_budget_tokens",
+)
+
+
+def _api_stage_config(manifest_dict: dict[str, object]) -> dict[str, object] | None:
+    stages = manifest_dict.get("stages")
+    if not isinstance(stages, list):
+        return None
+    for stage in stages:
+        if not isinstance(stage, dict) or stage.get("name") != "api":
+            continue
+        cfg = stage.setdefault("config", {})
+        return cfg if isinstance(cfg, dict) else None
+    return None
+
+
+def _hoist_model_block(manifest_dict: dict[str, object]) -> dict[str, object]:
+    """Return the top-level ``model`` dict, seeding it from the api
+    stage's config and removing the stage-config copies.
+
+    geny-executor 2.2.0 documents the top-level ``model`` block as the
+    single home for model/max_tokens/thinking_* — the api-stage copy
+    never reached the runtime (``APIStage.update_config`` consumes only
+    provider/base_url/stream/timeout_ms) and now draws a
+    ``model.dual_home`` warning from ``validate_manifest``. Hoisting
+    keeps the bundled declaration effective while leaving the patched
+    output single-homed."""
+    model_dict = manifest_dict.get("model")
+    if not isinstance(model_dict, dict):
+        model_dict = {}
+        manifest_dict["model"] = model_dict
+    cfg = _api_stage_config(manifest_dict)
+    if cfg is not None:
+        for key in _MODEL_BLOCK_KEYS:
+            if key in cfg:
+                model_dict.setdefault(key, cfg.pop(key))
+    return model_dict
+
+
 def apply_overrides(
     manifest_dict: dict[str, object], overrides: ManifestOverrides
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -92,12 +144,22 @@ def apply_overrides(
     applied)``. ``applied`` lists what actually changed so audit logs
     can show only the diff, not the full override struct.
 
-    Schema notes (geny-executor 2.1.0+):
+    Schema notes (geny-executor 2.2.0):
       - `max_iterations` + `cost_budget_usd` live under `pipeline.*`
         (not at the top level — top-level keys are accepted by
         `from_dict` for backwards compat but silently dropped).
-      - `model` + `max_tokens` + `timeout_s` live in the api stage's
-        `config` dict (stage[name == "api"].config).
+      - `model` + `max_tokens` + `thinking_*` live in the manifest's
+        *top-level* ``model`` dict — the documented single home
+        (2.2.0). The pre-2.2 code "patched both locations to be
+        safe"; the api-stage copy was always inert and now triggers
+        a `model.dual_home` validation warning, so we write the
+        top-level block only (and hoist any stage-config copy into
+        it — see `_hoist_model_block`).
+      - `timeout_s` has no executor home: the api stage knows
+        `timeout_ms` only and the CLI call timeout rides on
+        `ProviderCredentials.extras["timeout_s"]`. We keep recording
+        it in the api stage config for operator visibility, unchanged
+        from the previous behaviour.
     """
     applied: dict[str, object] = {}
 
@@ -113,18 +175,8 @@ def apply_overrides(
             pipeline["cost_budget_usd"] = overrides.cost_budget_usd
             applied["cost_budget_usd"] = overrides.cost_budget_usd
 
-    # `model` + `max_tokens` ride on the manifest's *top-level* `model`
-    # dict — that's what `s06_api.resolve_model_config` reads at run
-    # time (via state.model, populated by `PipelineConfig.apply_to_state`).
-    # Writing into the api stage's `config` looks plausible but is
-    # ignored by the executor's modern stage class. We patch both
-    # locations to be safe with older artifacts that still read
-    # stage.config.
     if any(v is not None for v in (overrides.model, overrides.max_tokens, overrides.timeout_s)):
-        model_dict = manifest_dict.get("model")
-        if not isinstance(model_dict, dict):
-            model_dict = {}
-            manifest_dict["model"] = model_dict
+        model_dict = _hoist_model_block(manifest_dict)
 
         if overrides.model is not None:
             model_dict["model"] = overrides.model
@@ -133,22 +185,11 @@ def apply_overrides(
             model_dict["max_tokens"] = overrides.max_tokens
             applied["max_tokens"] = overrides.max_tokens
 
-        stages = manifest_dict.get("stages")
-        if isinstance(stages, list):
-            for stage in stages:
-                if not isinstance(stage, dict) or stage.get("name") != "api":
-                    continue
-                cfg = stage.setdefault("config", {})
-                if not isinstance(cfg, dict):
-                    continue
-                if overrides.model is not None:
-                    cfg["model"] = overrides.model
-                if overrides.max_tokens is not None:
-                    cfg["max_tokens"] = overrides.max_tokens
-                if overrides.timeout_s is not None:
-                    cfg["timeout_s"] = overrides.timeout_s
-                    applied["timeout_s"] = overrides.timeout_s
-                break
+        if overrides.timeout_s is not None:
+            cfg = _api_stage_config(manifest_dict)
+            if cfg is not None:
+                cfg["timeout_s"] = overrides.timeout_s
+                applied["timeout_s"] = overrides.timeout_s
 
     # Phase L.4 — thinking config. ModelConfig reads `thinking_enabled`
     # / `thinking_budget_tokens` / `thinking_type` from the top-level
@@ -157,10 +198,7 @@ def apply_overrides(
         overrides.thinking_enabled is not None
         or overrides.thinking_budget_tokens is not None
     ):
-        model_dict = manifest_dict.get("model")
-        if not isinstance(model_dict, dict):
-            model_dict = {}
-            manifest_dict["model"] = model_dict
+        model_dict = _hoist_model_block(manifest_dict)
         # Operator convenience: a positive budget implies enabled
         # unless they explicitly said otherwise.
         effective_enabled = overrides.thinking_enabled
@@ -176,23 +214,6 @@ def apply_overrides(
                 overrides.thinking_budget_tokens
             )
             applied["thinking_budget_tokens"] = overrides.thinking_budget_tokens
-        # Mirror into the api stage config too — same back-compat
-        # reason as `model` / `max_tokens` above.
-        stages = manifest_dict.get("stages")
-        if isinstance(stages, list):
-            for stage in stages:
-                if not isinstance(stage, dict) or stage.get("name") != "api":
-                    continue
-                cfg = stage.setdefault("config", {})
-                if not isinstance(cfg, dict):
-                    continue
-                if effective_enabled is not None:
-                    cfg["thinking_enabled"] = effective_enabled
-                if overrides.thinking_budget_tokens is not None:
-                    cfg["thinking_budget_tokens"] = (
-                        overrides.thinking_budget_tokens
-                    )
-                break
 
     return manifest_dict, applied
 

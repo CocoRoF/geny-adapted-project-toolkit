@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from geny_executor.hooks import HookConfig, HookEvent, HookRunner
@@ -45,15 +44,12 @@ def build_hook_runner(
     callback. Cycle 2.10 reads `accumulator.snapshot()` on a 1-second
     debounced timer.
     """
-    # HookRunner.enabled = config.enabled AND env opt-in. The env
-    # switch was added to gate *subprocess* hooks; we register only
-    # in-process handlers here (policy / audit / cost) — but the gate
-    # still short-circuits them. Synthesise a hook-enabled env so the
-    # in-process chain runs whether or not the operator opted in for
-    # subprocess hooks (which we don't register anyway).
-    runner_env = dict(os.environ)
-    runner_env["GENY_ALLOW_HOOKS"] = "1"
-    runner = HookRunner(HookConfig(enabled=True), env=runner_env)
+    # geny-executor 2.2.0: in-process handlers fire on
+    # ``HookConfig.enabled`` alone (``HookRunner.in_process_enabled``
+    # ignores the env opt-in). The ``GENY_ALLOW_HOOKS=1`` forge the
+    # pre-2.2.0 code synthesised here is gone — that env var now
+    # gates *subprocess* hooks only, which GAPT never registers.
+    runner = HookRunner(HookConfig(enabled=True))
 
     policy_handler = build_policy_hook(
         engine=engine,

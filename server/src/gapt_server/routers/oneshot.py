@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from gapt_server.agent.hooks import build_hook_runner
 from gapt_server.agent.hooks.cost_hook import CostAccumulator
+from gapt_server.agent.sandbox_runner import attach_session_runtime
 from gapt_server.agent.session_manager import (
     ProjectAwareSessionManager,
     SessionManagerError,
@@ -134,8 +135,8 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
     #    interactive endpoint.
     placeholder = CostAccumulator(session_id=handle.session_id)
     # Bind the workspace sandbox so the agent CLI runs inside
-    # `gapt-ws-<wid>` via the patched `_spawn`. Same logic as the
-    # interactive path.
+    # `gapt-ws-<wid>` via the 2.2.0 `runner_factory` seam (see
+    # `agent/sandbox_runner.py`). Same logic as the interactive path.
     sandbox = None
     if handle.worktree_path:
         sandbox = container.workspace_sandbox.get(
@@ -189,7 +190,13 @@ async def oneshot_session(  # noqa: PLR0915 — sequential setup + drain loop re
         on_cost_update=_on_cost_update,
     )
     runtime.accumulator = accumulator
-    handle.pipeline.attach_runtime(hook_runner=hook_runner)
+    attach_session_runtime(
+        pipeline=handle.pipeline,
+        hook_runner=hook_runner,
+        sandbox=sandbox,
+        cli_credentials=getattr(handle, "cli_credentials", None),
+        session_id=handle.session_id,
+    )
     await registry.register(runtime)
 
     # 3) Subscribe BEFORE invoke so we don't miss the first frame.

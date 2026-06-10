@@ -48,7 +48,7 @@ from gapt_server.domains.projects.service import fetch_project_for
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from geny_executor import Pipeline
+    from geny_executor import Pipeline, ProviderCredentials
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from gapt_server.domains.auth import AdminPrincipal
@@ -94,6 +94,16 @@ class AgentSessionHandle:
     initial_output_tokens: int = 0
     initial_cache_write_tokens: int = 0
     initial_cache_read_tokens: int = 0
+    # geny-executor 2.2.0 — the `claude_code_cli` ProviderCredentials
+    # from the session's CredentialBundle. The session bootstrap
+    # (`routers/sessions._build_runtime_from_handle` / oneshot) uses
+    # them to construct a `ClaudeCodeCLIClient(runner_factory=...)`
+    # when a workspace sandbox is bound, because `runner_factory` (a
+    # callable) cannot ride through `ProviderCredentials.extras` —
+    # the executor's `_creds_to_client_kwargs` doesn't map it. The
+    # plaintext exposure is no wider than before: the pipeline's own
+    # resolved client holds the same key for the session's lifetime.
+    cli_credentials: ProviderCredentials | None = None
 
 
 @dataclass
@@ -243,6 +253,7 @@ class ProjectAwareSessionManager:
             worktree_path=ws.worktree_path,
             status=enums.AgentSessionStatus.ACTIVE,
             cost_budget_usd=effective_budget,
+            cli_credentials=bundle.by_provider.get("claude_code_cli"),
         )
 
     # ───────────────────────────────────────────── rehydrate ──
@@ -338,6 +349,7 @@ class ProjectAwareSessionManager:
             initial_output_tokens=int(row.output_tokens or 0),
             initial_cache_write_tokens=int(row.cache_write_tokens or 0),
             initial_cache_read_tokens=int(row.cache_read_tokens or 0),
+            cli_credentials=bundle.by_provider.get("claude_code_cli"),
         )
 
     # ───────────────────────────────────────────── archive ──

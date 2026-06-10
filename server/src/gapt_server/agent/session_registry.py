@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import structlog
+from geny_executor import EventTypes
 
 from gapt_server.agent.streaming import (
     SessionEvent,
@@ -34,7 +35,7 @@ from gapt_server.agent.streaming import (
 )
 
 if TYPE_CHECKING:
-    from geny_executor import Pipeline
+    from geny_executor import ModelOverrides, Pipeline
     from geny_executor.core.state import PipelineState
 
     from gapt_server.agent.hooks.cost_hook import CostAccumulator
@@ -71,8 +72,11 @@ class SessionRuntime:
     accumulator: CostAccumulator
     bus: SessionEventBus = field(default_factory=SessionEventBus)
     # The workspace's docker sandbox — bound by the router when the
-    # runtime is built. None for tests / paths that haven't been
-    # migrated yet; the invoke runner falls back to host execution.
+    # runtime is built. None for tests / paths without a worktree.
+    # Since geny-executor 2.2.0 the actual CLI routing lives on the
+    # pipeline's attached `ClaudeCodeCLIClient(runner_factory=...)`
+    # (see `agent/sandbox_runner.py`); this reference is kept for
+    # observability / future per-session container ops.
     sandbox: WorkspaceSandbox | None = None
     # Phase D.1 — per-session Plan/Act mode reference shared with
     # the policy hook. `invoke(mode=...)` mutates it before kicking
@@ -122,16 +126,23 @@ class SessionRuntime:
     # the Settings default — runtimes built without a container (test
     # paths) keep the same ceiling so unit tests exercise the trim.
     max_state_messages: int = 50
-    # Phase M.2 — baseline snapshot of the pipeline's per-session
-    # manifest-derived model + thinking config, captured the first
-    # time a per-invoke override fires. The invoke handler mutates
-    # `pipeline._config.model.*` (NOT `state.*` — that gets wiped by
-    # `_init_state` on every `run_stream`), so reverting an override
-    # means restoring from this baseline. `None` while uncaptured.
+    # Phase M.2 (re-based on geny-executor 2.2.0 `ModelOverrides`) —
+    # the session's *sticky* override selection. The pre-2.2 code
+    # mutated `pipeline._config.model.*` with a hand-rolled baseline
+    # capture/revert dance; 2.2.0's per-run `overrides=` kwarg makes
+    # that obsolete: `_drive_pipeline` passes these fields as a
+    # `ModelOverrides` on every `run_stream`, the executor applies
+    # them for exactly that run, and "clear" is simply setting the
+    # field back to None (the next run reverts to manifest values
+    # automatically — no revert bookkeeping).
+    override_model: str | None = None
+    override_thinking_enabled: bool | None = None
+    override_thinking_budget_tokens: int | None = None
+    # The manifest's bundled api-stage model — used as the pricing-
+    # fallback key when an override model is cleared, and surfaced by
+    # the chat panel's "inherit (uses X)" pill. Set at runtime
+    # construction by `_build_runtime_from_handle`.
     _baseline_model: str | None = None
-    _baseline_thinking_enabled: bool | None = None
-    _baseline_thinking_budget_tokens: int | None = None
-    _baseline_captured: bool = False
     _task: asyncio.Task[None] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -139,39 +150,6 @@ class SessionRuntime:
         """Reset the idle clock — called on every meaningful access
         (`SessionRegistry.get` / `register`)."""
         self.last_active_at = time.monotonic()
-
-    def _capture_baseline(self) -> None:
-        """Snapshot the pipeline's manifest-derived model + thinking
-        defaults so a future ``clear`` request can restore them.
-        Lazy + idempotent — invoked the first time an override request
-        lands. Silently no-ops when the pipeline lacks the expected
-        executor shape (test stubs); the override path then degrades
-        to "no baseline available" and `clear` is a no-op.
-
-        Phase M.2 — when the runtime was constructed with an explicit
-        ``_baseline_model`` (the manifest's bundled api stage model),
-        we keep that value and only capture thinking_* from the live
-        pipeline. The bundled value matches what the chat panel's
-        "inherit (uses X)" label promises, regardless of admin prefs.
-        """
-        if self._baseline_captured:
-            return
-        cfg = getattr(self.pipeline, "_config", None)
-        model_cfg = getattr(cfg, "model", None) if cfg is not None else None
-        if model_cfg is not None:
-            # Preserve a pre-set bundled-model baseline; only fall back
-            # to the live `_config.model.model` when we have nothing
-            # better. (Pre-set happens at runtime construction in
-            # `_build_runtime_from_handle` via the env_service.)
-            if self._baseline_model is None:
-                self._baseline_model = getattr(model_cfg, "model", None)
-            self._baseline_thinking_enabled = getattr(
-                model_cfg, "thinking_enabled", None
-            )
-            self._baseline_thinking_budget_tokens = getattr(
-                model_cfg, "thinking_budget_tokens", None
-            )
-        self._baseline_captured = True
 
     def apply_per_invoke_overrides(
         self,
@@ -181,11 +159,13 @@ class SessionRuntime:
         thinking_budget_tokens: int | None,
         clear: list[str] | None,
     ) -> None:
-        """Mutate the pipeline's `_config.model.*` so the next
-        `run_stream` picks up the override (state-level mutation is
-        wiped by `_init_state`'s `apply_to_state` call). Values land
-        on the per-session pipeline and persist across invokes until
-        another override or a `clear` request resets them.
+        """Record the session's override selection. Nothing on the
+        pipeline is mutated — `_drive_pipeline` translates the stored
+        fields into a one-run `geny_executor.ModelOverrides` per
+        `run_stream` call, so values persist across invokes until
+        another override or a `clear` request resets them (the UX the
+        chat panel promises) while the executor sees only sanctioned
+        per-run overrides.
 
         `clear` lists override names ("model", "thinking_enabled",
         "thinking_budget_tokens", or "thinking" as a shortcut for the
@@ -201,25 +181,6 @@ class SessionRuntime:
         )
         if not any_override:
             return
-        self._capture_baseline()
-        cfg = getattr(self.pipeline, "_config", None)
-        model_cfg = getattr(cfg, "model", None) if cfg is not None else None
-        if model_cfg is None:
-            logger.warning(
-                "session.override.no_config",
-                session_id=self.session_id,
-                requested_model=model,
-                requested_clear=clear,
-                pipeline_type=type(self.pipeline).__name__,
-            )
-            # Test stub or unexpected pipeline shape — fall through to
-            # the legacy `state.model` mutation path so existing tests
-            # that assert on state continue to pass. Real pipelines
-            # always carry `_config.model`.
-            return
-        before_model = getattr(model_cfg, "model", None)
-        before_thinking = getattr(model_cfg, "thinking_enabled", None)
-        before_budget = getattr(model_cfg, "thinking_budget_tokens", None)
         clear_set = {c.strip().lower() for c in (clear or []) if isinstance(c, str)}
         # "thinking" is a UX shortcut — most chat surfaces present
         # thinking as a single toggle + slider pair, not two independent
@@ -228,24 +189,22 @@ class SessionRuntime:
             clear_set.update({"thinking_enabled", "thinking_budget_tokens"})
 
         if "model" in clear_set:
+            self.override_model = None
             if self._baseline_model is not None:
-                model_cfg.model = self._baseline_model
                 self.model_name = self._baseline_model
         elif model is not None:
-            model_cfg.model = model
+            self.override_model = model
             self.model_name = model
 
         if "thinking_enabled" in clear_set:
-            if self._baseline_thinking_enabled is not None:
-                model_cfg.thinking_enabled = self._baseline_thinking_enabled
+            self.override_thinking_enabled = None
         elif thinking_enabled is not None:
-            model_cfg.thinking_enabled = thinking_enabled
+            self.override_thinking_enabled = thinking_enabled
 
         if "thinking_budget_tokens" in clear_set:
-            if self._baseline_thinking_budget_tokens is not None:
-                model_cfg.thinking_budget_tokens = self._baseline_thinking_budget_tokens
+            self.override_thinking_budget_tokens = None
         elif thinking_budget_tokens is not None:
-            model_cfg.thinking_budget_tokens = thinking_budget_tokens
+            self.override_thinking_budget_tokens = thinking_budget_tokens
             # Operator convenience: budget > 0 + no explicit enable
             # flips thinking on. Same heuristic the manifest-time
             # `apply_overrides` uses.
@@ -254,7 +213,7 @@ class SessionRuntime:
                 and "thinking_enabled" not in clear_set
                 and thinking_budget_tokens > 0
             ):
-                model_cfg.thinking_enabled = True
+                self.override_thinking_enabled = True
 
         logger.info(
             "session.override.applied",
@@ -263,13 +222,29 @@ class SessionRuntime:
             request_thinking_enabled=thinking_enabled,
             request_thinking_budget_tokens=thinking_budget_tokens,
             request_clear=list(clear_set) if clear_set else None,
-            before_model=before_model,
-            after_model=getattr(model_cfg, "model", None),
-            before_thinking_enabled=before_thinking,
-            after_thinking_enabled=getattr(model_cfg, "thinking_enabled", None),
-            before_thinking_budget=before_budget,
-            after_thinking_budget=getattr(model_cfg, "thinking_budget_tokens", None),
+            effective_model=self.override_model,
+            effective_thinking_enabled=self.override_thinking_enabled,
+            effective_thinking_budget=self.override_thinking_budget_tokens,
             baseline_model=self._baseline_model,
+        )
+
+    def pending_model_overrides(self) -> ModelOverrides | None:
+        """Translate the stored override selection into the executor's
+        per-run `ModelOverrides`, or None when nothing is overridden
+        (saves the executor a no-op apply + `config.override_applied`
+        event spam)."""
+        if (
+            self.override_model is None
+            and self.override_thinking_enabled is None
+            and self.override_thinking_budget_tokens is None
+        ):
+            return None
+        from geny_executor import ModelOverrides  # noqa: PLC0415 — keep test paths import-light
+
+        return ModelOverrides(
+            model=self.override_model,
+            thinking_enabled=self.override_thinking_enabled,
+            thinking_budget_tokens=self.override_thinking_budget_tokens,
         )
 
     @property
@@ -342,6 +317,20 @@ class SessionRuntime:
         await self.interrupt()
         await self.wait_done()
         await self.bus.close()
+        # geny-executor 2.2.0 — teardown is owed by the host: aclose()
+        # cancels pending HITL futures, closes events() taps,
+        # disconnects MCP servers (reaping stdio children), and shuts
+        # down tool providers. Without this, every LRU/idle eviction
+        # leaked an MCP child process per session. Guarded because
+        # test runtimes carry stub pipelines without the method.
+        pipeline_aclose = getattr(self.pipeline, "aclose", None)
+        if pipeline_aclose is not None:
+            try:
+                await pipeline_aclose()
+            except Exception:  # teardown is best-effort
+                logger.exception(
+                    "session.pipeline_aclose_failed", session_id=self.session_id
+                )
 
 
 async def _run_with_lifecycle(
@@ -386,58 +375,49 @@ async def _run_with_lifecycle(
 
 
 async def _default_invoke_runner(runtime: SessionRuntime, message: str) -> None:
-    # Bind the workspace sandbox to this task's ContextVar so the
-    # patched `CLIProcessRunner._spawn` (see `executor_patches.py`)
-    # re-routes every claude CLI invocation through `docker exec
-    # <gapt-ws-…>`. The token-reset in the finally restores the
-    # outer value so concurrent sessions can't bleed sandbox state
-    # into one another.
-    from gapt_server.agent import (
-        executor_patches,
-    )
-
-    token = executor_patches.set_current_sandbox(runtime.sandbox)
-    try:
-        await _drive_pipeline(runtime, message)
-    finally:
-        executor_patches.reset_current_sandbox(token)
+    # Sandbox routing no longer needs a ContextVar dance: the runtime's
+    # pipeline carries a `ClaudeCodeCLIClient(runner_factory=...)`
+    # attached at construction time (see `agent/sandbox_runner.py` +
+    # `routers/sessions._build_runtime_from_handle`), so every CLI
+    # spawn for this session already targets the right container.
+    await _drive_pipeline(runtime, message)
 
 
 async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
     """Drives `Pipeline.run_stream(message)` and maps each
     `PipelineEvent` onto a SessionEvent.
 
-    The executor's actual event taxonomy (as of geny-executor 2.1.0,
-    empirically captured against the M0-P3 PoC):
+    Event names come from geny-executor 2.2.0's owned `EventTypes`
+    catalogue (events.md) — no more empirically-derived strings. The
+    streaming chunk set Stage 6 forwards since 2.2.0 (previously only
+    text deltas; the rest died inside the stage and GAPT monkey-patched
+    `_call_streaming` to see them):
 
-      pipeline.start            — input snapshot
-      stage.{enter,exit,bypass} — per-stage frames (suppressed)
-      input.normalized          — text length only
-      context.built             — message_count / tokens
-      guard.check               — pass/fail
-      api.request               — model, provider, etc. (no text)
-      text.delta                — `{"text": "<chunk>"}` *** chat text ***
-      api.response              — usage + lengths (no text)
-      token.tracked             — tokens + cost_usd (real $) *** cost ***
-      parse.complete            — text_length + tool_calls count
-      tool.{call,invoke,result,…} — tool stage fine-grained events
-      evaluate.* / loop.*       — iteration control
-      yield.complete            — final text_length
-      pipeline.complete         — `{"result": "<full text>", ...}`
-      pipeline.error            — error envelope
+      text.delta              — `{"text"}` *** chat text ***
+      thinking.delta          — `{"text"}` extended-thinking beats
+      api.tool_use            — `{id, name, input, source: cli|api}`
+      api.cli_tool_call       — narrow companion (source == cli only)
+      api.input_json_delta    — partial tool-input JSON fragments
+      api.content_block_stop  — block boundary marker
+      api.tool_result         — `{tool_use_id, content, is_error, source}`
+      api.error               — `{code, category, provider, message}`
 
-    The previous mapping only matched `text` / `*.chunk` patterns —
-    neither name is in the executor's vocabulary — so every text token
-    was silently dropped. Same for cost: the cost_hook only fires on
-    POST_TOOL_USE, so chat-without-tools sessions reported $0 forever.
+    plus the long-standing lifecycle set (pipeline.* / stage.* /
+    token.tracked / parse.complete / evaluate.* / loop.* / ...).
 
     Phase L.1 — pass `runtime.conversation_state` into `run_stream` so
-    the executor preserves prior turns' messages. Without this the
-    pipeline rebuilt `state.messages = []` every invoke and the agent
-    couldn't see what the user said two turns ago. The state object
-    is mutated in place by stage 1 (input append-user) and stage 6
-    (api append-assistant); we keep the same reference on the runtime
-    so the next invoke sees the accumulated history.
+    the executor preserves prior turns' messages (officially supported
+    in 2.2.0: `begin_turn()` resets per-turn fields — iteration,
+    loop_decision, in-flight tool work, per-turn `total_cost_usd` —
+    when a reused state re-enters the run). The state object is
+    mutated in place by stage 1 (input append-user) and stage 6 (api
+    append-assistant); we keep the same reference on the runtime so
+    the next invoke sees the accumulated history.
+
+    Phase M.2 (2.2.0) — the session's sticky model/thinking override
+    selection is handed to the executor as a sanctioned one-run
+    `ModelOverrides` (`overrides=` kwarg) instead of mutating
+    `pipeline._config.model.*` behind its back.
     """
     if runtime.conversation_state is None:
         # Lazy-import the executor's state class so test paths that
@@ -466,10 +446,19 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
             kept=len(state.messages),
         )
 
-    async for ev in runtime.pipeline.run_stream(
-        message, state=runtime.conversation_state
-    ):
-        event_type = getattr(ev, "type", "")
+    overrides = runtime.pending_model_overrides()
+    if overrides is not None:
+        stream = runtime.pipeline.run_stream(
+            message, state=runtime.conversation_state, overrides=overrides
+        )
+    else:
+        # No-override calls skip the kwarg entirely so legacy test
+        # stubs with a bare `run_stream(message, state=None)` signature
+        # keep working.
+        stream = runtime.pipeline.run_stream(message, state=runtime.conversation_state)
+
+    async for ev in stream:
+        event_type = str(getattr(ev, "type", ""))
         stage_name = getattr(ev, "stage", "") or ""
         data: dict[str, object] = dict(getattr(ev, "data", {}) or {})
 
@@ -486,7 +475,7 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         # Pre-I.1 the DB write only ran via the POST_TOOL_USE hook, so
         # tool-less chat sessions stayed at $0.0000 forever even though
         # the in-memory accumulator had the right numbers.
-        if event_type == "token.tracked":
+        if event_type == EventTypes.TOKEN_TRACKED:
             _update_accumulator(runtime, data)
             if runtime.cost_callback is not None:
                 await runtime.cost_callback(runtime.accumulator)
@@ -507,33 +496,50 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         if step_payload is not None:
             await runtime.bus.publish(SessionEventKind.STEP, step_payload)
 
-        # CLI-side tool invocations (Bash / Read / Edit / ...) come
-        # through the `tool.invoke` event our executor_patches shim
-        # adds. Forward each one as a TOOL_CALL frame too so the
-        # ToolCallCard renders inline in the chat.
-        if event_type == "tool.invoke":
+        # Tool invocations — `api.tool_use` (2.2.0 built-in chunk
+        # forwarding; pre-2.2 this required GAPT's `_call_streaming`
+        # fork). Fires for BOTH CLI-executed tools (source == "cli":
+        # Bash / Read / Edit the claude CLI ran itself) and API-side
+        # tool requests (source == "api": Stage 10 will dispatch).
+        # Forwarded as a TOOL_CALL frame so the ToolCallCard renders
+        # inline in the chat — the gap the old patch docstring called
+        # out ("the GAPT chat trace has no idea any tool ran").
+        if event_type == EventTypes.API_TOOL_USE:
             await runtime.bus.publish(
                 SessionEventKind.TOOL_CALL,
                 {
                     "tool": data.get("name"),
                     "tool_name": data.get("name"),
-                    "tool_use_id": data.get("tool_use_id"),
+                    "tool_use_id": data.get("id"),
                     "input": data.get("input"),
+                    "source": data.get("source"),
                 },
             )
             continue
-        # Tool result (paired with tool.invoke by tool_use_id) — also
-        # synthesised by the executor_patches shim from `user` lines
-        # carrying tool_result blocks. Without this the ToolCallCard
-        # stays in "running" forever.
-        if event_type == "tool.result":
+        # `api.cli_tool_call` duplicates `api.tool_use` for narrow
+        # subscribers; we consume the broad event above, so drop the
+        # companion (it would double-render every ToolCallCard) —
+        # likewise the raw streaming bookkeeping frames.
+        if event_type in (
+            EventTypes.API_CLI_TOOL_CALL,
+            EventTypes.API_INPUT_JSON_DELTA,
+            EventTypes.API_CONTENT_BLOCK_STOP,
+        ):
+            continue
+        # Tool result (paired with api.tool_use by tool_use_id) —
+        # canonical since 2.2.0 (the CLI translator now surfaces the
+        # synthetic user-role tool_result echoes the old
+        # `StreamJsonAccumulator.feed` patch reverse-engineered).
+        # Without this the ToolCallCard stays in "running" forever.
+        if event_type == EventTypes.API_TOOL_RESULT:
+            content = _flatten_tool_result_content(data.get("content"))
             await runtime.bus.publish(
                 SessionEventKind.TOOL_RESULT,
                 {
                     "tool_use_id": data.get("tool_use_id"),
                     "is_error": data.get("is_error", False),
-                    "output": data.get("content", ""),
-                    "content": data.get("content", ""),
+                    "output": content,
+                    "content": content,
                 },
             )
             continue
@@ -544,6 +550,24 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         await runtime.bus.publish(kind, payload)
 
 
+def _flatten_tool_result_content(raw: object) -> str:
+    """`api.tool_result.content` arrives "as the backend reported it" —
+    a string, or a list of text/image blocks (Anthropic shape). Flatten
+    to a single string so the UI renders it in one row (same behaviour
+    the old feed-patch implemented)."""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for c in raw:
+            if isinstance(c, dict) and c.get("type") == "text":
+                parts.append(str(c.get("text", "")))
+            elif isinstance(c, str):
+                parts.append(c)
+        return "".join(parts)
+    return ""
+
+
 # Stage events to forward as `step` frames. Whitelisted so we don't
 # spam the UI with internal-only chatter; each entry maps an event
 # type → human-readable phase + which interesting payload field to
@@ -552,30 +576,34 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
 # loop,yield}) to bucket / colour. Missing keys leave the payload
 # minimal.
 _STEP_EVENT_MAP: dict[str, str] = {
-    "stage.enter": "stage_enter",
-    "stage.exit": "stage_exit",
-    "stage.bypass": "stage_bypass",
-    "api.request": "api_request",
-    "api.response": "api_response",
-    "parse.complete": "parse",
-    "evaluate.start": "evaluate_start",
-    "evaluate.complete": "evaluate_complete",
-    "loop.complete": "loop",
-    "yield.complete": "yield",
-    "guard.check": "guard",
-    "context.built": "context",
-    "system.built": "system",
-    "memory.updated": "memory",
-    "task_registry.synced": "task_registry",
-    "input.normalized": "input",
-    # `tool.invoke` / `tool.result` are added by our executor_patches
-    # shim. They fire whenever the CLI runs a tool internally
-    # (Bash / Read / Edit / ...) — gives the user agentic-flow
-    # visibility AND lets the ToolCallCard flip from "running" to
-    # "complete" once the tool returns.
-    "tool.invoke": "tool_invoke",
-    "tool.result": "tool_result",
-    "thinking.delta": "thinking",
+    EventTypes.STAGE_ENTER: "stage_enter",
+    EventTypes.STAGE_EXIT: "stage_exit",
+    EventTypes.STAGE_BYPASS: "stage_bypass",
+    EventTypes.API_REQUEST: "api_request",
+    EventTypes.API_RESPONSE: "api_response",
+    EventTypes.PARSE_COMPLETE: "parse",
+    EventTypes.EVALUATE_START: "evaluate_start",
+    EventTypes.EVALUATE_COMPLETE: "evaluate_complete",
+    EventTypes.LOOP_COMPLETE: "loop",
+    EventTypes.YIELD_COMPLETE: "yield",
+    EventTypes.GUARD_CHECK: "guard",
+    EventTypes.CONTEXT_BUILT: "context",
+    EventTypes.SYSTEM_BUILT: "system",
+    EventTypes.MEMORY_UPDATED: "memory",
+    EventTypes.TASK_REGISTRY_SYNCED: "task_registry",
+    EventTypes.INPUT_NORMALIZED: "input",
+    # 2.2.0 built-in chunk forwarding — fires whenever the CLI runs a
+    # tool internally (Bash / Read / Edit / ...) or the API requests
+    # one. Gives the user agentic-flow visibility AND lets the
+    # ToolCallCard flip from "running" to "complete" once the tool
+    # returns. (Phase names kept stable for the web UI's buckets.)
+    EventTypes.API_TOOL_USE: "tool_invoke",
+    EventTypes.API_TOOL_RESULT: "tool_result",
+    EventTypes.THINKING_DELTA: "thinking",
+    # Per-attempt API error envelope ({code, category, provider,
+    # message}) — terminal failures still arrive as pipeline.error;
+    # this row surfaces retried/raw errors in the trace.
+    EventTypes.API_ERROR: "api_error",
 }
 
 
@@ -594,29 +622,34 @@ def _maybe_step_payload(
     if phase is None:
         return None
     summary = ""
-    if event_type == "api.request":
+    if event_type == EventTypes.API_REQUEST:
         model = data.get("model")
         provider = data.get("provider")
         summary = f"{provider} / {model}" if model else ""
-    elif event_type == "api.response":
+    elif event_type == EventTypes.API_RESPONSE:
         in_t = data.get("input_tokens")
         out_t = data.get("output_tokens")
         if in_t is not None or out_t is not None:
             summary = f"in={in_t} out={out_t}"
-    elif event_type == "parse.complete":
+    elif event_type == EventTypes.PARSE_COMPLETE:
         tc = data.get("tool_calls", 0)
         tl = data.get("text_length", 0)
         summary = f"text={tl}, tools={tc}"
-    elif event_type == "guard.check":
+    elif event_type == EventTypes.GUARD_CHECK:
         if data.get("passed") is False:
             summary = f"FAIL: {data.get('message', '')}"
-    elif event_type == "yield.complete":
+    elif event_type == EventTypes.YIELD_COMPLETE:
         summary = f"iters={data.get('iterations', 0)}"
-    elif event_type == "loop.complete":
+    elif event_type == EventTypes.LOOP_COMPLETE:
         summary = f"iter={data.get('iteration', 0)}"
-    elif event_type == "context.built":
+    elif event_type == EventTypes.CONTEXT_BUILT:
         summary = f"msgs={data.get('message_count', 0)}"
-    elif event_type == "tool.invoke":
+    elif event_type == EventTypes.API_ERROR:
+        code = data.get("code", "")
+        message = str(data.get("message", ""))
+        msg_short = message if len(message) <= 80 else message[:77] + "…"
+        summary = f"{code} {msg_short}".strip()
+    elif event_type == EventTypes.API_TOOL_USE:
         name = data.get("name", "tool")
         # The first input arg gives the most useful hint at a glance —
         # `Bash {command: "ls -la"}` becomes "Bash · ls -la".
@@ -637,7 +670,7 @@ def _maybe_step_payload(
             summary = f"{name} · {hint_short}"
         else:
             summary = str(name)
-    elif event_type == "thinking.delta":
+    elif event_type == EventTypes.THINKING_DELTA:
         # No summary; the presence of the row is the signal.
         summary = ""
 
@@ -655,7 +688,14 @@ def _update_accumulator(runtime: SessionRuntime, data: dict[str, object]) -> Non
     Executor payload shape: `{"input_tokens", "output_tokens",
     "cache_write", "cache_read", "cost_usd", "total_cost_usd"}`. We
     treat each `token.tracked` as a delta (the executor emits one per
-    API call) so cumulative totals are the sum of deltas.
+    API call) so cumulative totals are the sum of deltas. NOTE
+    (2.2.0): the payload's `total_cost_usd` is a *per-turn*
+    accumulator now (`begin_turn()` resets it; the session-cumulative
+    figure moved to `state.session_cost_usd`). GAPT never reads
+    either — only the per-call `cost_usd` delta — so the 2.2.0
+    semantics change is a no-op here; the session-cumulative source
+    of truth stays GAPT's own `CostAccumulator` (DB-seeded across
+    restarts).
 
     Phase I.3 — when the payload's own `cost_usd` is 0 but tokens are
     positive (the model-alias gap: manifest says `"model":"sonnet"`,
@@ -723,13 +763,18 @@ def _map_pipeline_event(  # noqa: PLR0911 — 7-way taxonomy reads cleaner as st
     """Map a `geny_executor.PipelineEvent` → (kind, payload). Unknown
     event types map to `None` so the stream stays compact."""
     # Suppressed envelopes — wrapper handles the lifecycle.
-    if event_type in {"pipeline.start", "stage.enter", "stage.exit", "stage.bypass"}:
+    if event_type in {
+        EventTypes.PIPELINE_START,
+        EventTypes.STAGE_ENTER,
+        EventTypes.STAGE_EXIT,
+        EventTypes.STAGE_BYPASS,
+    }:
         return None, {}
-    if event_type == "pipeline.complete":
+    if event_type == EventTypes.PIPELINE_COMPLETE:
         # Final text already streamed via `text.delta`; the wrapper
         # emits DONE with the accumulator snapshot afterwards.
         return None, {}
-    if event_type == "pipeline.error":
+    if event_type == EventTypes.PIPELINE_ERROR:
         return SessionEventKind.ERROR, data
 
     # Chat text — `text.delta` carries `{"text": "<chunk>"}` straight
@@ -738,15 +783,18 @@ def _map_pipeline_event(  # noqa: PLR0911 — 7-way taxonomy reads cleaner as st
     # patterns stay matched so test stubs and other providers that
     # use the older event names still surface.
     if (
-        event_type == "text.delta"
+        event_type == EventTypes.TEXT_DELTA
         or event_type == "text"
         or event_type.endswith(".chunk")
     ):
         return SessionEventKind.TEXT, {"text": data.get("text", "")}
 
-    # Tool stage — the executor uses `tool.call` / `tool.invoke` /
-    # `tool.result` / `tool.error`. Map both halves so ToolCallCard
-    # can render the request-response pair.
+    # Stage 10 dispatch — `tool.execute_start` / `tool.execute_complete`
+    # (plus host/test stubs still using `tool.call` / `tool.error`
+    # shapes). Map both halves so ToolCallCard can render the
+    # request-response pair. The Stage 6 streaming announcements
+    # (`api.tool_use` / `api.tool_result`) are handled explicitly in
+    # `_drive_pipeline` before this fallback runs.
     if "tool" in event_type and ("result" in event_type or "complete" in event_type or "error" in event_type):
         return SessionEventKind.TOOL_RESULT, data
     if "tool" in event_type and ("call" in event_type or "invoke" in event_type or "start" in event_type):

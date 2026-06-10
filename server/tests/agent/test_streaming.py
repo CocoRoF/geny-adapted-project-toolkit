@@ -446,60 +446,32 @@ async def test_drive_pipeline_trims_state_messages_to_cap() -> None:
     assert kept == ["old-3", "old-4", "recent-5", "recent-6"]
 
 
-# ──────────────────────────────────── per-invoke overrides + revert ──
-# Phase M.2 — the prior implementation mutated `state.model` which the
-# executor's `_init_state` resets on every `run_stream`, so "switch to
-# opus for one follow-up" never took effect. The new path mutates
-# `pipeline._config.model.*` and snapshots a baseline so `clear=[...]`
-# restores it.
+# ──────────────────────────────────── per-invoke overrides (2.2.0) ──
+# Phase M.2, re-based on geny-executor 2.2.0 — the runtime records the
+# sticky override selection and `_drive_pipeline` hands it to
+# `run_stream(..., overrides=ModelOverrides(...))` each turn. Nothing
+# on the pipeline is mutated, so there is no baseline capture/revert
+# machinery left to test; "clear" just drops the stored field.
 
 
-class _FakeModelCfg:
-    """Stand-in for `geny_executor.core.config.ModelConfig` — only the
-    attributes the override helper touches."""
-
-    def __init__(self, *, model: str, thinking_enabled: bool, thinking_budget_tokens: int) -> None:
-        self.model = model
-        self.thinking_enabled = thinking_enabled
-        self.thinking_budget_tokens = thinking_budget_tokens
-
-
-class _FakePipelineConfig:
-    def __init__(self, model_cfg: _FakeModelCfg) -> None:
-        self.model = model_cfg
-
-
-class _FakePipeline:
-    """Carries `_config` with the same shape `Pipeline` exposes so the
-    runtime helper can poke at it without instantiating the executor."""
-
-    def __init__(self, *, model: str = "claude-sonnet-4-6", thinking_enabled: bool = False, thinking_budget_tokens: int = 10000) -> None:
-        self._config = _FakePipelineConfig(
-            _FakeModelCfg(
-                model=model,
-                thinking_enabled=thinking_enabled,
-                thinking_budget_tokens=thinking_budget_tokens,
-            )
-        )
-
-
-def _override_runtime(pipeline: _FakePipeline) -> SessionRuntime:
+def _override_runtime(**kwargs) -> SessionRuntime:
     return SessionRuntime(
         session_id="ov",
         project_id="p",
         workspace_id="w",
         user_id="u",
-        pipeline=pipeline,  # type: ignore[arg-type]
+        pipeline=_StubPipeline(),  # type: ignore[arg-type]
         accumulator=CostAccumulator(session_id="ov"),
+        **kwargs,
     )
 
 
-def test_apply_per_invoke_overrides_mutates_pipeline_config_not_state() -> None:
-    """`state.model` would be wiped by `_init_state` — the override has
-    to land on `pipeline._config.model.*` to survive. Asserts the new
-    write path."""
-    pipeline = _FakePipeline(model="claude-sonnet-4-6")
-    rt = _override_runtime(pipeline)
+def test_apply_per_invoke_overrides_records_selection_without_touching_pipeline() -> None:
+    """The override must land on the runtime's `override_*` fields —
+    NOT on `pipeline._config` (2.2.0's `ModelOverrides` is the
+    sanctioned channel; the stub pipeline has no `_config` at all,
+    which doubles as proof nothing reaches inside)."""
+    rt = _override_runtime()
 
     rt.apply_per_invoke_overrides(
         model="claude-opus-4-7",
@@ -508,17 +480,16 @@ def test_apply_per_invoke_overrides_mutates_pipeline_config_not_state() -> None:
         clear=None,
     )
 
-    assert pipeline._config.model.model == "claude-opus-4-7"
+    assert rt.override_model == "claude-opus-4-7"
     assert rt.model_name == "claude-opus-4-7"
-    # Baseline was snapshotted so a later `clear` can restore it.
-    assert rt._baseline_model == "claude-sonnet-4-6"
+    overrides = rt.pending_model_overrides()
+    assert overrides is not None
+    assert overrides.model == "claude-opus-4-7"
+    assert overrides.thinking_enabled is None
 
 
-def test_apply_per_invoke_overrides_clear_restores_baseline() -> None:
-    pipeline = _FakePipeline(
-        model="claude-sonnet-4-6", thinking_enabled=False, thinking_budget_tokens=10000
-    )
-    rt = _override_runtime(pipeline)
+def test_apply_per_invoke_overrides_clear_drops_selection() -> None:
+    rt = _override_runtime(_baseline_model="claude-sonnet-4-6")
 
     # First invoke: override everything.
     rt.apply_per_invoke_overrides(
@@ -527,9 +498,9 @@ def test_apply_per_invoke_overrides_clear_restores_baseline() -> None:
         thinking_budget_tokens=20000,
         clear=None,
     )
-    assert pipeline._config.model.model == "claude-opus-4-7"
-    assert pipeline._config.model.thinking_enabled is True
-    assert pipeline._config.model.thinking_budget_tokens == 20000
+    assert rt.override_model == "claude-opus-4-7"
+    assert rt.override_thinking_enabled is True
+    assert rt.override_thinking_budget_tokens == 20000
 
     # Second invoke: clear the model + the thinking pair via the alias.
     rt.apply_per_invoke_overrides(
@@ -538,11 +509,14 @@ def test_apply_per_invoke_overrides_clear_restores_baseline() -> None:
         thinking_budget_tokens=None,
         clear=["model", "thinking"],
     )
-    assert pipeline._config.model.model == "claude-sonnet-4-6"
-    assert pipeline._config.model.thinking_enabled is False
-    assert pipeline._config.model.thinking_budget_tokens == 10000
-    # And `model_name` followed the model field so the pricing fallback
-    # resolves against the manifest value again.
+    assert rt.override_model is None
+    assert rt.override_thinking_enabled is None
+    assert rt.override_thinking_budget_tokens is None
+    # Nothing left to override → no ModelOverrides object is built and
+    # the next run_stream reverts to manifest values automatically.
+    assert rt.pending_model_overrides() is None
+    # And `model_name` reverted to the bundled baseline so the pricing
+    # fallback resolves against the manifest value again.
     assert rt.model_name == "claude-sonnet-4-6"
 
 
@@ -550,9 +524,7 @@ def test_apply_per_invoke_overrides_clear_wins_over_set_in_same_request() -> Non
     """When both `model` and `clear=["model"]` are passed in one
     request, clear wins. The UI's reset button shouldn't have to also
     blank the input field."""
-    pipeline = _FakePipeline(model="claude-sonnet-4-6")
-    rt = _override_runtime(pipeline)
-    # Set first so baseline is captured.
+    rt = _override_runtime()
     rt.apply_per_invoke_overrides(
         model="claude-opus-4-7", thinking_enabled=None, thinking_budget_tokens=None, clear=None
     )
@@ -563,64 +535,105 @@ def test_apply_per_invoke_overrides_clear_wins_over_set_in_same_request() -> Non
         thinking_budget_tokens=None,
         clear=["model"],
     )
-    assert pipeline._config.model.model == "claude-sonnet-4-6"
+    assert rt.override_model is None
+    assert rt.pending_model_overrides() is None
 
 
 def test_apply_per_invoke_overrides_budget_implies_thinking_enabled() -> None:
     """Budget > 0 without an explicit `thinking_enabled` flips thinking
     on — mirrors the manifest-time `apply_overrides` heuristic."""
-    pipeline = _FakePipeline(thinking_enabled=False, thinking_budget_tokens=10000)
-    rt = _override_runtime(pipeline)
+    rt = _override_runtime()
     rt.apply_per_invoke_overrides(
         model=None,
         thinking_enabled=None,
         thinking_budget_tokens=15000,
         clear=None,
     )
-    assert pipeline._config.model.thinking_enabled is True
-    assert pipeline._config.model.thinking_budget_tokens == 15000
+    assert rt.override_thinking_enabled is True
+    assert rt.override_thinking_budget_tokens == 15000
+    overrides = rt.pending_model_overrides()
+    assert overrides is not None
+    assert overrides.thinking_enabled is True
+    assert overrides.thinking_budget_tokens == 15000
 
 
-def test_apply_per_invoke_overrides_noop_without_baseline_capture() -> None:
-    """No override + no clear → baseline stays uncaptured so we don't
-    waste a snapshot on every invoke that doesn't change anything."""
-    pipeline = _FakePipeline()
-    rt = _override_runtime(pipeline)
+def test_apply_per_invoke_overrides_noop_leaves_no_pending_overrides() -> None:
+    """No override + no clear → nothing recorded, and `run_stream`
+    receives no `overrides=` kwarg (saves the executor a no-op apply
+    + `config.override_applied` event spam)."""
+    rt = _override_runtime()
     rt.apply_per_invoke_overrides(
         model=None, thinking_enabled=None, thinking_budget_tokens=None, clear=None
     )
-    assert rt._baseline_captured is False
+    assert rt.pending_model_overrides() is None
 
 
-def test_clear_reverts_to_preset_bundled_baseline_not_live_config() -> None:
-    """Phase M.2 — when the runtime was constructed with an explicit
+def test_clear_restores_bundled_baseline_model_name() -> None:
+    """When the runtime was constructed with an explicit
     `_baseline_model` (the manifest's bundled api model), `clear`
-    reverts to THAT, not the post-admin-pref `_config.model.model`.
-
-    Scenario: admin pref set the live pipeline to opus, but the
-    manifest's bundled api stage said sonnet. The chat panel's
-    "inherit (uses sonnet)" pill promises sonnet on revert. Pre-fix
-    the runtime captured opus as the baseline (from live config) and
-    `clear=["model"]` left the call on opus.
-    """
-    pipeline = _FakePipeline(model="claude-opus-4-7")  # live = opus (admin pref)
+    points the pricing-fallback `model_name` back at THAT — matching
+    the chat panel's "inherit (uses sonnet)" pill. The executor side
+    needs no revert at all: with the selection dropped, the next run
+    simply uses the manifest config."""
     rt = SessionRuntime(
         session_id="bundled",
         project_id="p",
         workspace_id="w",
         user_id="u",
-        pipeline=pipeline,  # type: ignore[arg-type]
+        pipeline=_StubPipeline(),  # type: ignore[arg-type]
         accumulator=CostAccumulator(session_id="bundled"),
         _baseline_model="claude-sonnet-4-6",  # bundled manifest default
     )
+    rt.apply_per_invoke_overrides(
+        model="claude-opus-4-7", thinking_enabled=None,
+        thinking_budget_tokens=None, clear=None,
+    )
+    assert rt.model_name == "claude-opus-4-7"
 
     rt.apply_per_invoke_overrides(
         model=None, thinking_enabled=None, thinking_budget_tokens=None,
         clear=["model"],
     )
 
-    assert pipeline._config.model.model == "claude-sonnet-4-6"
+    assert rt.override_model is None
     assert rt.model_name == "claude-sonnet-4-6"
-    # Even though the live config was opus, the pre-set bundled
-    # baseline wins — the lazy capture preserves it.
-    assert rt._baseline_model == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_drive_pipeline_passes_model_overrides_to_run_stream() -> None:
+    """The recorded selection must reach `run_stream` as a
+    `geny_executor.ModelOverrides` (the 2.2.0 per-run channel)."""
+    from gapt_server.agent.session_registry import _drive_pipeline
+
+    seen_kwargs: dict[str, object] = {}
+
+    class _CaptureOverridesPipeline:
+        async def run_stream(self, message: str, **kwargs):  # type: ignore[no-untyped-def]
+            seen_kwargs.update(kwargs)
+            if False:  # pragma: no cover — keep the async generator shape
+                yield
+
+    rt = SessionRuntime(
+        session_id="ovr",
+        project_id="p",
+        workspace_id="w",
+        user_id="u",
+        pipeline=_CaptureOverridesPipeline(),  # type: ignore[arg-type]
+        accumulator=CostAccumulator(session_id="ovr"),
+    )
+    rt.apply_per_invoke_overrides(
+        model="claude-opus-4-7", thinking_enabled=True,
+        thinking_budget_tokens=8192, clear=None,
+    )
+
+    await _drive_pipeline(rt, "hello")
+
+    from geny_executor import ModelOverrides
+
+    overrides = seen_kwargs.get("overrides")
+    assert isinstance(overrides, ModelOverrides)
+    assert overrides.model == "claude-opus-4-7"
+    assert overrides.thinking_enabled is True
+    assert overrides.thinking_budget_tokens == 8192
+    # Long-lived state still flows through.
+    assert "state" in seen_kwargs
