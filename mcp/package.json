@@ -1,0 +1,49 @@
+{
+  "name": "gapt-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for GAPT (geny-adapted-project-toolkit) — drive projects, sandboxed workspaces, git, services, agent sessions and deploys from any MCP client",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "gapt",
+    "sandbox",
+    "devops",
+    "claude"
+  ],
+  "license": "Apache-2.0",
+  "author": "CocoRoF",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CocoRoF/geny-adapted-project-toolkit.git",
+    "directory": "mcp"
+  },
+  "type": "module",
+  "bin": {
+    "gapt-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "node scripts/smoke.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
