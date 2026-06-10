@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/ui/cn";
 
@@ -23,12 +23,20 @@ interface Props {
    * left grows the panel. Default false — fits the common case of a
    * left-pinned panel with the handle on its RIGHT edge. */
   invert?: boolean;
+  /** Double-click resets to this size (VS Code's sash double-click
+   * restores the default layout). Omit to disable. */
+  resetTo?: number;
   className?: string;
 }
 
-/** Tiny custom split handle. ~50 lines of logic, no dep. The visual
- * is a 4px transparent strip that shows a 1px accent line on hover
- * and during drag — matches the VSCode resize affordance.
+/** Tiny custom split handle. No dep. VS Code-style sash:
+ *
+ * - 9px invisible grab zone (VS Code uses 8) so the user doesn't
+ *   need pixel-perfect aim on the 1px visual line.
+ * - The accent line lights up on hover AND stays lit while dragging
+ *   even when the cursor drifts off the strip — `dragging` state,
+ *   not just `:hover`.
+ * - Double-click resets to `resetTo` when provided.
  *
  * The drag is plain mouse events tracked on `window` so we never
  * lose pointer mid-drag if the cursor leaves the strip. */
@@ -39,10 +47,14 @@ export function SplitHandle({
   min = 120,
   max = 800,
   invert = false,
+  resetTo,
   className,
 }: Props) {
   const draggingRef = useRef(false);
   const originRef = useRef({ pos: 0, value: 0 });
+  // Mirror of draggingRef that triggers re-render so the accent line
+  // stays visible for the whole drag, not just while hovered.
+  const [dragging, setDragging] = useState(false);
 
   const onMove = useCallback(
     (e: MouseEvent) => {
@@ -57,7 +69,9 @@ export function SplitHandle({
   );
 
   const onUp = useCallback(() => {
+    if (!draggingRef.current) return;
     draggingRef.current = false;
+    setDragging(false);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
   }, []);
@@ -74,6 +88,7 @@ export function SplitHandle({
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
+    setDragging(true);
     originRef.current = {
       pos: axis === "horizontal" ? e.clientX : e.clientY,
       value,
@@ -82,31 +97,52 @@ export function SplitHandle({
     document.body.style.userSelect = "none";
   };
 
+  const onDoubleClick = () => {
+    if (resetTo !== undefined) onChange(Math.min(max, Math.max(min, resetTo)));
+  };
+
   return (
     <div
       role="separator"
       aria-orientation={axis === "horizontal" ? "vertical" : "horizontal"}
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={min}
+      aria-valuemax={max}
       onMouseDown={startDrag}
+      onDoubleClick={onDoubleClick}
       className={cn(
-        "group relative shrink-0 bg-transparent transition-colors",
+        "group relative shrink-0 bg-transparent",
         axis === "horizontal" ? "w-px cursor-col-resize" : "h-px cursor-row-resize",
         className,
       )}
     >
-      {/* invisible 4px hit area for easier grabbing */}
+      {/* invisible 9px hit area for easier grabbing (VS Code sash ≈8px) */}
       <div
         className={cn(
           "absolute z-10",
           axis === "horizontal"
-            ? "inset-y-0 left-[-2px] w-[5px]"
-            : "inset-x-0 top-[-2px] h-[5px]",
+            ? "inset-y-0 left-[-4px] w-[9px] cursor-col-resize"
+            : "inset-x-0 top-[-4px] h-[9px] cursor-row-resize",
         )}
       />
+      {/* visual line — 1px idle (border tone), thickens to 3px accent
+          on hover / during drag, exactly like VS Code's sash. */}
       <div
         aria-hidden
         className={cn(
-          "absolute bg-border-strong opacity-0 transition-opacity group-hover:opacity-100",
-          axis === "horizontal" ? "inset-y-0 w-px" : "inset-x-0 h-px",
+          "absolute transition-all duration-100",
+          axis === "horizontal" ? "inset-y-0" : "inset-x-0",
+          dragging
+            ? cn(
+                "bg-accent opacity-100",
+                axis === "horizontal" ? "w-[3px] left-[-1px]" : "h-[3px] top-[-1px]",
+              )
+            : cn(
+                "bg-border-strong opacity-0 group-hover:opacity-100 group-hover:bg-accent",
+                axis === "horizontal"
+                  ? "w-px group-hover:w-[3px] group-hover:left-[-1px]"
+                  : "h-px group-hover:h-[3px] group-hover:top-[-1px]",
+              ),
         )}
       />
     </div>

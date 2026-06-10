@@ -529,8 +529,8 @@ async def git_commit(
         "GIT_COMMITTER_NAME": user_name,
         "GIT_COMMITTER_EMAIL": user_email,
     }
-    rc, out, err = await _git_exec(
-        sandbox,
+    rc, out, err = await _git_exec_in(
+        sandbox, target,
         ["commit", "-m", payload.message],
         env=commit_env,
         timeout_s=30.0,
@@ -635,8 +635,8 @@ async def git_push(
     # Encode token as `username:password` for https remote — GitHub
     # accepts the PAT as the password with any non-empty username.
     cred_helper = "!f() { echo username=x-access-token; echo password=$GAPT_GITHUB_TOKEN; }; f"
-    rc, out, err = await _git_exec(
-        sandbox,
+    rc, out, err = await _git_exec_in(
+        sandbox, target,
         ["-c", f"credential.helper={cred_helper}", *push_argv],
         env={"GAPT_GITHUB_TOKEN": token},
         timeout_s=120.0,
@@ -843,7 +843,7 @@ async def git_fetch(
         return GitSyncResponse(
             ok=False, actions=["fetch"], output=output, error=output[-400:]
         )
-    ahead, behind = await _ahead_behind(sandbox)
+    ahead, behind = await _ahead_behind(sandbox, target)
     return GitSyncResponse(
         ok=True, actions=["fetch"], ahead=ahead, behind=behind, output=output
     )
@@ -881,7 +881,7 @@ async def git_pull(
         return GitSyncResponse(
             ok=False, actions=actions, output=fetch_out, error=fetch_out[-400:]
         )
-    ahead, behind = await _ahead_behind(sandbox)
+    ahead, behind = await _ahead_behind(sandbox, target)
     if behind == 0:
         return GitSyncResponse(
             ok=True,
@@ -891,8 +891,8 @@ async def git_pull(
             output=fetch_out + "\n(already up to date)",
         )
 
-    rc, pull_out, pull_err = await _git_exec(
-        sandbox,
+    rc, pull_out, pull_err = await _git_exec_in(
+        sandbox, target,
         _with_auth_prefix(["pull", "--ff-only", "--no-rebase"], token),
         timeout_s=60.0,
     )
@@ -907,7 +907,7 @@ async def git_pull(
             output=combined,
             error=(pull_err or pull_out)[-400:],
         )
-    new_ahead, new_behind = await _ahead_behind(sandbox)
+    new_ahead, new_behind = await _ahead_behind(sandbox, target)
     return GitSyncResponse(
         ok=True,
         actions=actions,
@@ -951,10 +951,10 @@ async def git_sync(
             ok=False, actions=actions, output="\n".join(log_parts), error=out[-400:]
         )
 
-    ahead, behind = await _ahead_behind(sandbox)
+    ahead, behind = await _ahead_behind(sandbox, target)
     if behind > 0:
-        rc, p_out, p_err = await _git_exec(
-            sandbox,
+        rc, p_out, p_err = await _git_exec_in(
+            sandbox, target,
             _with_auth_prefix(["pull", "--ff-only", "--no-rebase"], token),
             timeout_s=60.0,
         )
@@ -969,11 +969,11 @@ async def git_sync(
                 output="\n\n".join(log_parts),
                 error=(p_err or p_out)[-400:],
             )
-        ahead, behind = await _ahead_behind(sandbox)
+        ahead, behind = await _ahead_behind(sandbox, target)
 
     if ahead > 0:
-        rc, p_out, p_err = await _git_exec(
-            sandbox,
+        rc, p_out, p_err = await _git_exec_in(
+            sandbox, target,
             _with_auth_prefix(["push", "origin", "HEAD"], token),
             timeout_s=60.0,
         )
@@ -988,7 +988,7 @@ async def git_sync(
                 output="\n\n".join(log_parts),
                 error=(p_err or p_out)[-400:],
             )
-        ahead, _ = await _ahead_behind(sandbox)
+        ahead, _ = await _ahead_behind(sandbox, target)
 
     return GitSyncResponse(
         ok=True,
@@ -999,12 +999,16 @@ async def git_sync(
     )
 
 
-async def _ahead_behind(sandbox: WorkspaceSandbox) -> tuple[int, int]:
+async def _ahead_behind(
+    sandbox: WorkspaceSandbox, target: _RepoTarget
+) -> tuple[int, int]:
     """Re-derive ahead/behind via `git status --porcelain=v2 -b` —
     cheap, matches the same logic as `git_status` so the numbers
-    don't disagree across endpoints."""
-    rc, out, _ = await _git_exec(
-        sandbox, ["status", "--porcelain=v2", "-b"], timeout_s=10.0
+    don't disagree across endpoints. Phase N.5 — takes the resolved
+    repo target so multi-repo workspaces compute against the right
+    subpath instead of the worktree root."""
+    rc, out, _ = await _git_exec_in(
+        sandbox, target, ["status", "--porcelain=v2", "-b"], timeout_s=10.0
     )
     if rc != 0:
         return (0, 0)
@@ -1082,8 +1086,8 @@ async def git_discard(
     # file(s) known to git". Run restore first (tracked branch) then
     # `git clean -f` for whatever's left (untracked branch). Two-pass
     # keeps the user from needing to know the distinction.
-    rc, restore_out, restore_err = await _git_exec(
-        sandbox, ["restore", "--worktree", "--", *safe], timeout_s=15.0
+    rc, restore_out, restore_err = await _git_exec_in(
+        sandbox, target, ["restore", "--worktree", "--", *safe], timeout_s=15.0
     )
     discarded: list[str] = []
     still_present: list[str] = []
@@ -1102,8 +1106,8 @@ async def git_discard(
             else:
                 discarded.append(p)
     if still_present:
-        rc, clean_out, clean_err = await _git_exec(
-            sandbox, ["clean", "-f", "--", *still_present], timeout_s=15.0
+        rc, clean_out, clean_err = await _git_exec_in(
+            sandbox, target, ["clean", "-f", "--", *still_present], timeout_s=15.0
         )
         if rc == 0:
             discarded.extend(still_present)
@@ -1173,8 +1177,8 @@ async def git_branches(
             "%(contents:subject)",  # 6 last commit subject
         ]
     )
-    rc, out, err = await _git_exec(
-        sandbox,
+    rc, out, err = await _git_exec_in(
+        sandbox, target,
         [
             "for-each-ref",
             f"--format={fmt}",
@@ -1334,8 +1338,8 @@ async def git_branch_delete(
     sandbox = container.workspace_sandbox.get(workspace_id, ws.worktree_path)
     await sandbox.ensure()
     flag = "-D" if payload.force else "-d"
-    rc, out, err = await _git_exec(
-        sandbox, ["branch", flag, payload.branch], timeout_s=10.0
+    rc, out, err = await _git_exec_in(
+        sandbox, target, ["branch", flag, payload.branch], timeout_s=10.0
     )
     return GitBranchDeleteResponse(
         ok=rc == 0,
@@ -1381,8 +1385,8 @@ async def git_stash_list(
     # and the relative age. Use `\x01` separator for same reason
     # as branches above.
     fmt = "\x01".join(["%gd", "%cr", "%s"])  # gd = stash ref, cr = committer rel, s = subject
-    rc, out, _ = await _git_exec(
-        sandbox, ["stash", "list", f"--format={fmt}"], timeout_s=10.0
+    rc, out, _ = await _git_exec_in(
+        sandbox, target, ["stash", "list", f"--format={fmt}"], timeout_s=10.0
     )
     entries: list[GitStashEntry] = []
     if rc == 0:
