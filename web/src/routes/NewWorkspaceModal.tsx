@@ -237,7 +237,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
   }
 
   const includedCount = rows.filter((r) => r.include).length;
-  const canSubmit = !submitting && name.trim().length > 0;
+  const canSubmit = !submitting && name.trim().length > 0 && includedCount > 0;
 
   return (
     <Modal

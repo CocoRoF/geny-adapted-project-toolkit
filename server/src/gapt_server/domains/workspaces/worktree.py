@@ -129,9 +129,12 @@ async def ensure_bare(
     if is_bare_initialized(bare_root, project_slug):
         # Update refs — quiet but force-prune deleted upstream
         # branches so stale ones don't linger as workspace candidates.
+        # Same safe.bareRepository workaround as for clone.
         return await _run_git(
             [
                 *(extra_config or []),
+                "-c",
+                "safe.bareRepository=all",
                 "-C",
                 bare,
                 "fetch",
@@ -143,9 +146,14 @@ async def ensure_bare(
         )
     # First-time clone. We want all branches, not just HEAD, so
     # `git worktree add origin/<any-branch>` works later.
+    # Git 2.56+ requires safe.bareRepository=all for operations on bare
+    # repos (default 'explicit' blocks access). We set it globally for
+    # the operation so git treats our bare as legitimate.
     return await _run_git(
         [
             *(extra_config or []),
+            "-c",
+            "safe.bareRepository=all",
             "clone",
             "--bare",
             "--quiet",
@@ -179,19 +187,41 @@ async def add_worktree(
        `-b`. Matches the "start a feature on a fresh branch" intent.
     """
     bare = bare_dir(bare_root, project_slug)
+    cfg = ["-c", "safe.bareRepository=all"]
     local_ref = await _run_git(
-        ["-C", bare, "rev-parse", "--verify", f"refs/heads/{branch}"],
+        [*cfg, "-C", bare, "rev-parse", "--verify", f"refs/heads/{branch}"],
     )
     if local_ref.ok:
-        return await _run_git(
-            ["-C", bare, "worktree", "add", worktree_path, branch],
+        # Local branch exists. Try to use it directly; if it's already
+        # in use by another worktree, fall back to detached HEAD
+        # at the same commit so multiple workspaces can coexist.
+        result = await _run_git(
+            [*cfg, "-C", bare, "worktree", "add", worktree_path, branch],
         )
-    remote_ref = await _run_git(
-        ["-C", bare, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
-    )
-    if remote_ref.ok:
+        if result.ok or "already used by worktree" not in result.stderr:
+            return result
+        # Branch in use → create detached worktree at same commit
         return await _run_git(
             [
+                *cfg,
+                "-C",
+                bare,
+                "worktree",
+                "add",
+                "--detach",
+                worktree_path,
+                f"refs/heads/{branch}",
+            ],
+        )
+    remote_ref = await _run_git(
+        [*cfg, "-C", bare, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
+    )
+    if remote_ref.ok:
+        # Remote tracking branch exists (rare in bare repos, but handle it).
+        # Use it to materialize a local branch.
+        result = await _run_git(
+            [
+                *cfg,
                 "-C",
                 bare,
                 "worktree",
@@ -202,8 +232,25 @@ async def add_worktree(
                 f"origin/{branch}",
             ],
         )
+        if result.ok or "already used by worktree" not in result.stderr:
+            return result
+        # In use → detached at same commit
+        return await _run_git(
+            [
+                *cfg,
+                "-C",
+                bare,
+                "worktree",
+                "add",
+                "--detach",
+                worktree_path,
+                f"refs/remotes/origin/{branch}",
+            ],
+        )
+    # Neither local nor remote exists — create from HEAD
     return await _run_git(
         [
+            *cfg,
             "-C",
             bare,
             "worktree",

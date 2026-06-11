@@ -730,12 +730,16 @@ class WorkspaceService:
         repos: list[RepoSpec] = []
         for sel in resolved_inputs:
             pr = repo_rows_by_id[sel.repository_id]
+            # Branch selection: prefer sel.branch (user's pick), fall back to
+            # repo's default_branch, then "main" as ultimate default. Empty
+            # branch strings cause git errors so we always provide something.
+            branch = sel.branch or pr.default_branch or "main"
             repos.append(
                 RepoSpec(
                     repo_id=pr.id,
                     subpath=pr.subpath,
                     git_remote_url=pr.git_remote_url,
-                    branch=sel.branch or (pr.default_branch or ""),
+                    branch=branch,
                 )
             )
 
@@ -1077,6 +1081,14 @@ class WorkspaceService:
         slug = project_slug or os.path.basename(
             os.path.dirname(worktree.rstrip("/")) or "/"
         )
+        logger.info(
+            "prepare.via_worktree.start",
+            slug=slug,
+            bare_root=self._bare_root,
+            git_remote_url=git_remote_url[:80],
+            branch=branch,
+            worktree=worktree,
+        )
         # Defensive: refuse to call ensure_bare with an empty slug — the
         # bare would land directly under bare_root and collide with
         # every other project that hits the same default. Never happens
@@ -1097,10 +1109,15 @@ class WorkspaceService:
             extra_config=extra_config,
         )
         if not bare.ok:
-            return (
-                "error",
-                bare.stderr.strip()[-400:] or f"bare init exit={bare.exit_code}",
+            msg = bare.stderr.strip()[-400:] or f"bare init exit={bare.exit_code}"
+            logger.warning(
+                "prepare.via_worktree.ensure_bare.failed",
+                slug=slug,
+                exit_code=bare.exit_code,
+                stderr=msg,
             )
+            return ("error", msg)
+        logger.info("prepare.via_worktree.ensure_bare.ok", slug=slug)
         add = await worktree_mod.add_worktree(
             bare_root=self._bare_root,
             project_slug=slug,
@@ -1108,10 +1125,16 @@ class WorkspaceService:
             branch=branch,
         )
         if not add.ok:
-            return (
-                "error",
-                add.stderr.strip()[-400:] or f"worktree add exit={add.exit_code}",
+            msg = add.stderr.strip()[-400:] or f"worktree add exit={add.exit_code}"
+            logger.warning(
+                "prepare.via_worktree.add_worktree.failed",
+                slug=slug,
+                branch=branch,
+                exit_code=add.exit_code,
+                stderr=msg,
             )
+            return ("error", msg)
+        logger.info("prepare.via_worktree.ok", slug=slug, branch=branch)
         return ("cloned", None)
 
     async def _prepare_worktree_multi(

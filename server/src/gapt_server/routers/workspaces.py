@@ -248,7 +248,7 @@ async def create_workspace(
         )
 
         selections: list[WorkspaceRepoSelectionInput] | None = None
-        if payload.selections is not None:
+        if payload.selections and len(payload.selections) > 0:
             selections = [
                 WorkspaceRepoSelectionInput(
                     repository_id=s.repository_id,
