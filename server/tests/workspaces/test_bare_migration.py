@@ -23,7 +23,15 @@ from gapt_server.domains.workspaces.bare_migration import (
 
 
 def _git(*args: str, cwd: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    # safe.bareRepository=all mirrors what production `_run_git`
+    # injects — hosts hardened with `safe.bareRepository=explicit`
+    # refuse worktree ops against the fixture's bare clone otherwise.
+    subprocess.run(
+        ["git", "-c", "safe.bareRepository=all", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.fixture
@@ -48,7 +56,15 @@ def legacy_project(tmp_path: Path) -> tuple[str, str, str]:
     # Old layout: bare lives at <project_root>/.bare
     legacy_bare = project_root / ".bare"
     subprocess.run(
-        ["git", "clone", "--bare", str(src), str(legacy_bare)],
+        [
+            "git",
+            "-c",
+            "safe.bareRepository=all",
+            "clone",
+            "--bare",
+            str(src),
+            str(legacy_bare),
+        ],
         check=True,
         capture_output=True,
     )
@@ -56,7 +72,17 @@ def legacy_project(tmp_path: Path) -> tuple[str, str, str]:
     wid = "01KSPTCV36C23NZ2P0Y8RMFH4K"
     wt = project_root / wid
     subprocess.run(
-        ["git", "-C", str(legacy_bare), "worktree", "add", str(wt), "main"],
+        [
+            "git",
+            "-c",
+            "safe.bareRepository=all",
+            "-C",
+            str(legacy_bare),
+            "worktree",
+            "add",
+            str(wt),
+            "main",
+        ],
         check=True,
         capture_output=True,
     )

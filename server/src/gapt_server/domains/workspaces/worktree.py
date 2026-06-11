@@ -85,9 +85,18 @@ async def _run_git(
     args: list[str], *, cwd: str | None = None, timeout_s: float = _WORKTREE_TIMEOUT_S
 ) -> GitRunResult:
     """Run `git <args>` and capture stdout/stderr. Used by every
-    worktree primitive in this module."""
+    worktree primitive in this module.
+
+    `safe.bareRepository=all` is injected on EVERY call: hosts with
+    the hardened `safe.bareRepository=explicit` policy (git ≥2.38
+    deployments increasingly default to it) refuse any operation
+    against our bare clones otherwise — clone/fetch/worktree
+    add/remove/prune all fail with "cannot use bare repository".
+    Centralised here so no call site can forget it."""
     proc = await asyncio.create_subprocess_exec(
         _GIT_BIN,
+        "-c",
+        "safe.bareRepository=all",
         *args,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
@@ -129,12 +138,9 @@ async def ensure_bare(
     if is_bare_initialized(bare_root, project_slug):
         # Update refs — quiet but force-prune deleted upstream
         # branches so stale ones don't linger as workspace candidates.
-        # Same safe.bareRepository workaround as for clone.
         return await _run_git(
             [
                 *(extra_config or []),
-                "-c",
-                "safe.bareRepository=all",
                 "-C",
                 bare,
                 "fetch",
@@ -146,14 +152,9 @@ async def ensure_bare(
         )
     # First-time clone. We want all branches, not just HEAD, so
     # `git worktree add origin/<any-branch>` works later.
-    # Git 2.56+ requires safe.bareRepository=all for operations on bare
-    # repos (default 'explicit' blocks access). We set it globally for
-    # the operation so git treats our bare as legitimate.
     return await _run_git(
         [
             *(extra_config or []),
-            "-c",
-            "safe.bareRepository=all",
             "clone",
             "--bare",
             "--quiet",
@@ -187,23 +188,21 @@ async def add_worktree(
        `-b`. Matches the "start a feature on a fresh branch" intent.
     """
     bare = bare_dir(bare_root, project_slug)
-    cfg = ["-c", "safe.bareRepository=all"]
     local_ref = await _run_git(
-        [*cfg, "-C", bare, "rev-parse", "--verify", f"refs/heads/{branch}"],
+        ["-C", bare, "rev-parse", "--verify", f"refs/heads/{branch}"],
     )
     if local_ref.ok:
         # Local branch exists. Try to use it directly; if it's already
         # in use by another worktree, fall back to detached HEAD
         # at the same commit so multiple workspaces can coexist.
         result = await _run_git(
-            [*cfg, "-C", bare, "worktree", "add", worktree_path, branch],
+            ["-C", bare, "worktree", "add", worktree_path, branch],
         )
         if result.ok or "already used by worktree" not in result.stderr:
             return result
         # Branch in use → create detached worktree at same commit
         return await _run_git(
             [
-                *cfg,
                 "-C",
                 bare,
                 "worktree",
@@ -214,14 +213,13 @@ async def add_worktree(
             ],
         )
     remote_ref = await _run_git(
-        [*cfg, "-C", bare, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
+        ["-C", bare, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
     )
     if remote_ref.ok:
         # Remote tracking branch exists (rare in bare repos, but handle it).
         # Use it to materialize a local branch.
         result = await _run_git(
             [
-                *cfg,
                 "-C",
                 bare,
                 "worktree",
@@ -237,7 +235,6 @@ async def add_worktree(
         # In use → detached at same commit
         return await _run_git(
             [
-                *cfg,
                 "-C",
                 bare,
                 "worktree",
@@ -250,7 +247,6 @@ async def add_worktree(
     # Neither local nor remote exists — create from HEAD
     return await _run_git(
         [
-            *cfg,
             "-C",
             bare,
             "worktree",

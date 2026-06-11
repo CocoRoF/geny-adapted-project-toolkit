@@ -154,10 +154,18 @@ def _reverse_proxy_handler(binding: SubdomainBinding) -> dict[str, Any]:
 
     The optional `upstream_scheme` / `upstream_tls_insecure` /
     `upstream_host_header` knobs cover that case. Defaults stay
-    backwards-compatible (plain HTTP, no rewrite)."""
+    backwards-compatible (plain HTTP, no rewrite).
+
+    `stream_close_delay` keeps proxied WebSockets (vite HMR, SSE)
+    alive across Caddy config reloads — since Caddy 2.7 every admin-
+    API mutation force-closes active proxied streams immediately
+    unless this grace is set. Without it, ANY other workspace's
+    expose/unexpose reloads config and the preview iframe's HMR
+    socket drops → vite client reloads the page."""
     handler: dict[str, Any] = {
         "handler": "reverse_proxy",
         "upstreams": [{"dial": f"{binding.upstream_host}:{binding.upstream_port}"}],
+        "stream_close_delay": "1h",
     }
     if binding.upstream_scheme == "https":
         tls: dict[str, Any] = {}
@@ -542,14 +550,14 @@ class SubdomainManager:
         self, binding: SubdomainBinding, zone: str
     ) -> bool:
         """True when the live Caddy route for this slug already has
-        the expected host + upstream dial. Caller skips `_upsert` so
-        the DELETE-then-POST cycle never fires for drift-free state.
+        the expected host + the exact reverse_proxy handler shape.
+        Caller skips `_upsert` so a config reload never fires for
+        drift-free state.
 
-        Compares only the routing-critical fields (host match list +
-        reverse_proxy first-upstream dial). Doesn't try to compare
-        every header transform / sticky / TLS knob — those are
-        op-trivial differences that would force a rewrite even when
-        the user-visible behaviour is unchanged."""
+        The handler comparison is FULL structural equality with what
+        `_reverse_proxy_handler` would generate today — dial-only
+        comparison left handler-shape upgrades (Host header override,
+        stream_close_delay, TLS knobs) unapplied forever."""
         primary_id = _route_id(binding.workspace_slug)
         try:
             route = await self.client.get(f"/id/{primary_id}")
@@ -569,10 +577,7 @@ class SubdomainManager:
         upstreams = proxy.get("upstreams") or []
         if not upstreams:
             return False
-        expected_dial = (
-            f"{binding.upstream_host}:{int(binding.upstream_port)}"
-        )
-        if upstreams[0].get("dial") != expected_dial:
+        if proxy != _reverse_proxy_handler(binding):
             return False
 
         # Phase N.3 — also verify the catch-all ordering invariant.
@@ -645,13 +650,12 @@ class SubdomainManager:
                         break
         if proxy is None:
             return False
-        upstreams = proxy.get("upstreams") or []
-        if not upstreams:
-            return False
-        expected_dial = (
-            f"{binding.upstream_host}:{int(binding.upstream_port)}"
-        )
-        return upstreams[0].get("dial") == expected_dial
+        # Compare the FULL desired handler, not just the dial.
+        # Dial-only comparison meant any handler-shape change (Host
+        # header override, stream_close_delay, TLS knobs) was treated
+        # as "current" and silently never applied to live routes —
+        # re-exposing after a GAPT upgrade kept serving the old shape.
+        return proxy == _reverse_proxy_handler(binding)
 
     async def _upsert(
         self,
@@ -865,21 +869,23 @@ class SubdomainManager:
             #
             # Pre-fix this point did a DELETE followed by a POST on
             # the same routes path. Between the two calls Caddy held
-            # an empty routes array for a few hundred ms — long
-            # enough that every persistent connection passing through
-            # Caddy (vite HMR websocket, chat SSE streams, polling
-            # fetches) got reset. The IDE treated the HMR drop as
-            # "force-reload the page", so EVERY expose / unexpose /
-            # deploy / reroute action triggered a visible flash +
-            # state loss in the operator's browser.
+            # an empty routes array for a few hundred ms — every
+            # in-flight request through Caddy could 404 during the
+            # gap. PATCH replaces the array in one config apply, so
+            # there is never an empty-routes window.
             #
-            # PATCH on the array path replaces the value atomically.
-            # Routes that are byte-identical between old and new
-            # keep their internal handler chains and existing
-            # connections never see a routing gap. Only the routes
-            # that actually changed get rebuilt — and the connections
-            # routed by THOSE specific routes are the only ones that
-            # need to reconnect (which is correct behavior).
+            # What PATCH does NOT buy: connection survival. Any real
+            # config change makes Caddy reload the http app, and since
+            # Caddy 2.7 active proxied WebSockets/streams are closed
+            # immediately on reload UNLESS the owning reverse_proxy
+            # sets `stream_close_delay`. That grace is set (a) on every
+            # handler we generate here (`_reverse_proxy_handler`) and
+            # (b) on the static `/_gapt/app/*` + `/_gapt/api/*` blocks
+            # in the Caddyfile — together they keep the IDE's vite HMR
+            # socket and preview HMR sockets alive across route churn,
+            # which is what actually stops the "expose reloads my IDE"
+            # symptom. PATCH alone only ever fixed the no-op case
+            # (byte-identical config → Caddy skips the reload).
             #
             # We tried PUT first — Caddy returns 409 "key already
             # exists" on the routes path because PUT is "create-only"
@@ -888,22 +894,34 @@ class SubdomainManager:
             await self.client.patch(self.routes_path, arr)
 
     async def unregister(self, workspace_slug: str) -> None:
-        """Delete the primary preview route plus all fallback
-        siblings (Referer, Cookie-doc redirect, Cookie-asset).
-        Idempotent — 404 means "already gone" and is swallowed."""
+        """Remove the primary preview route plus all fallback siblings
+        (Referer, Cookie-doc redirect, Cookie-asset) in ONE atomic
+        PATCH of the routes array. Pre-fix this issued up to four
+        sequential `DELETE /id/<route_id>` calls — each one a full
+        Caddy config reload, so a single unexpose churned every
+        proxied connection four times. Idempotent: when none of the
+        ids are present we skip the PATCH entirely (zero reloads)."""
         primary = _route_id(workspace_slug)
-        for route_id in (
+        family = {
             primary,
             f"{primary}-asset",
             f"{primary}-cookie",
             f"{primary}-cookie-doc",
-        ):
+        }
+        async with self._lock:
             try:
-                await self.client.delete(f"/id/{route_id}")
-            except CaddyAdminError as exc:
-                if "404" in str(exc):
-                    continue
-                raise
+                current = await self.client.get(self.routes_path)
+            except CaddyAdminError:
+                current = None
+            arr = current if isinstance(current, list) else []
+            kept = [
+                r
+                for r in arr
+                if not (isinstance(r, dict) and r.get("@id") in family)
+            ]
+            if len(kept) == len(arr):
+                return
+            await self.client.patch(self.routes_path, kept)
 
     async def list_routes(self) -> list[dict[str, Any]]:
         body = await self.client.get(self.routes_path)

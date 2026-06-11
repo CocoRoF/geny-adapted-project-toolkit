@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 import shlex
 import time
@@ -49,8 +50,11 @@ logger = structlog.get_logger(__name__)
 # the UI at the *max* of this and the UI's own poll interval.
 _REAP_INTERVAL_S = 0.5
 
-# Auto-port: scan the first 16 KB of log output. Most dev servers
-# print their listen URL in the first 1-2 KB so this is generous.
+# Auto-port: scan the TAIL of the log output. The tail (not the head)
+# matters because `npm install && npm run dev`-style commands can push
+# the server banner past any fixed head window, and a dev server that
+# rebinds (port drift: 5173 in use → 5174) prints the *current* port
+# last.
 _PORT_SCAN_BYTES = 16 * 1024
 
 # Bog-standard dev-server messages: "ready - started server on
@@ -94,9 +98,31 @@ def _extract_user_cmd_from_sh_wrapper(line: str) -> str:
     else:
         si += len(start_marker)
     ei = line.find(end_marker, si)
-    if ei == -1:
-        return line[si:].strip()
-    return line[si:ei].strip()
+    cmd = line[si:].strip() if ei == -1 else line[si:ei].strip()
+    # The spawn wrapper groups the user cmd (`{ cmd ; }`) so the log
+    # redirect covers the whole chain — unwrap it for display/restart.
+    if cmd.startswith("{") and cmd.endswith("}"):
+        cmd = cmd[1:-1].strip()
+        if cmd.endswith(";"):
+            cmd = cmd[:-1].strip()
+    return cmd
+
+
+def _pgrep_pattern(marker: str) -> str:
+    """Non-self-matching pgrep regex for ``marker``.
+
+    The classic bracket trick: ``GAPT_SVC=…`` becomes ``[G]APT_SVC=…``.
+    The probing/killing ``sh -c`` carries the *pattern* in its own
+    cmdline — which contains the literal ``[G]APT_SVC=`` and therefore
+    does NOT match the regex — while the real service wrapper carries
+    the plain marker as ``$0`` and matches. Without this, every
+    alive-check matched the checker itself (rc always 0): the reaper
+    never flipped dead services to EXITED, stop() always burned its
+    full grace timeout, and the kill script could signal its own
+    process group."""
+    if not marker:
+        return marker
+    return f"[{marker[0]}]{marker[1:]}"
 
 
 def _kill_marker_pgid_script(marker: str, signal: str) -> str:
@@ -131,8 +157,13 @@ def _kill_marker_pgid_script(marker: str, signal: str) -> str:
     ``contextlib.suppress`` but a clean exit avoids noisy error logs
     when there's simply nothing left to kill (normal idempotent
     second pass).
+
+    The pgrep pattern is the bracketed non-self-matching form (see
+    ``_pgrep_pattern``) — otherwise this very ``sh -c`` matches its
+    own cmdline, resolves its OWN pgid and kills itself, potentially
+    before the real target is signalled.
     """
-    quoted = shlex.quote(marker)
+    quoted = shlex.quote(_pgrep_pattern(marker))
     return (
         "for pid in $(pgrep -f " + quoted + " 2>/dev/null); do "
         'pgid=$(awk "{print \\$5}" /proc/$pid/stat 2>/dev/null); '
@@ -140,6 +171,143 @@ def _kill_marker_pgid_script(marker: str, signal: str) -> str:
         "kill -" + signal + " -$pgid 2>/dev/null; "
         "done; true"
     )
+
+
+# ───────────────────────── loopback forwarder ─────────────────────
+#
+# Dev servers commonly bind loopback only (vite's default is
+# localhost; `npm run dev` users rarely know about `--host`). The
+# preview chain dials the container over the docker network
+# (`gapt-ws-<wid>:<port>`), so a loopback-bound server 502s even
+# though everything else is wired correctly. Instead of bouncing the
+# user with "edit your vite config", expose() transparently runs a
+# tiny TCP forwarder inside the container: it binds the container's
+# eth0 address on the same port (loopback binds don't conflict with a
+# specific-address bind) and pipes to 127.0.0.1/::1 where the app
+# actually listens. Pure stdlib — python3 preferred, node fallback —
+# so it works on any dev image. Lifecycle is tied to the service via
+# the GAPT_FWD marker: stop()/restart kill it alongside the app.
+
+_FORWARD_PY = """\
+import socket, sys, threading
+
+port = int(sys.argv[1])
+target = sys.argv[2]
+bind = socket.gethostbyname(socket.gethostname())
+fam = socket.AF_INET6 if ":" in target else socket.AF_INET
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind((bind, port))
+srv.listen(64)
+
+
+def pump(a, b):
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d:
+                break
+            b.sendall(d)
+    except OSError:
+        pass
+    finally:
+        for s in (a, b):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+while True:
+    c, _ = srv.accept()
+    try:
+        u = socket.socket(fam, socket.SOCK_STREAM)
+        u.connect((target, port))
+    except OSError:
+        c.close()
+        continue
+    threading.Thread(target=pump, args=(c, u), daemon=True).start()
+    threading.Thread(target=pump, args=(u, c), daemon=True).start()
+"""
+
+_FORWARD_CJS = """\
+const net = require("net");
+const os = require("os");
+
+const port = Number(process.argv[2]);
+const target = process.argv[3];
+
+let bind = "0.0.0.0";
+for (const addrs of Object.values(os.networkInterfaces())) {
+  for (const a of addrs || []) {
+    if (a.family === "IPv4" && !a.internal) bind = a.address;
+  }
+}
+
+net
+  .createServer((c) => {
+    const u = net.connect({ host: target, port });
+    u.on("error", () => c.destroy());
+    c.on("error", () => u.destroy());
+    u.on("close", () => c.destroy());
+    c.on("close", () => u.destroy());
+    c.pipe(u);
+    u.pipe(c);
+  })
+  .listen(port, bind);
+"""
+
+
+def _parse_listeners(tcp4: str, tcp6: str, port: int) -> dict[str, bool]:
+    """Classify the in-container LISTEN sockets for ``port`` from
+    `/proc/net/tcp` + `/proc/net/tcp6` content.
+
+    Returns flags: ``any`` (some listener exists), ``reachable``
+    (at least one listener accepts non-loopback traffic — wildcard or
+    a specific non-loopback address), ``lo4`` / ``lo6`` (which
+    loopback family is listening — picks the forwarder's dial
+    target)."""
+    want = f"{port:04X}"
+    flags = {"any": False, "reachable": False, "lo4": False, "lo6": False}
+
+    def _scan(text: str, v6: bool) -> None:
+        for line in text.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            local, state = parts[1], parts[3]
+            if state.upper() != "0A":  # TCP_LISTEN
+                continue
+            addr_hex, _, port_hex = local.partition(":")
+            if port_hex.upper() != want:
+                continue
+            flags["any"] = True
+            a = addr_hex.upper()
+            if v6:
+                if a == "0" * 32:
+                    flags["reachable"] = True  # [::] wildcard
+                elif a == "00000000000000000000000001000000":
+                    flags["lo6"] = True  # [::1]
+                elif a.startswith("0000000000000000FFFF0000"):
+                    # IPv4-mapped — last 8 hex chars are the v4 addr
+                    # little-endian; 0100007F = 127.0.0.1.
+                    if a.endswith("0100007F"):
+                        flags["lo4"] = True
+                    else:
+                        flags["reachable"] = True
+                else:
+                    flags["reachable"] = True
+            elif a == "00000000":
+                flags["reachable"] = True  # 0.0.0.0 wildcard
+            elif a == "0100007F":
+                flags["lo4"] = True  # 127.0.0.1
+            else:
+                flags["reachable"] = True  # eth0-specific bind
+
+    _scan(tcp4, v6=False)
+    _scan(tcp6, v6=True)
+    return flags
 
 
 class ServiceState(StrEnum):
@@ -177,6 +345,17 @@ class Service:
     bound_url: str | None = None  # set when expose() succeeds
     bound_host: str | None = None
     auto_port: int | None = None  # what the scanner found
+    # The port the USER declared at start (None = auto-detect). Kept
+    # separate from `port` because `port` gets auto-promoted from the
+    # log scanner — restart must re-run with the user's intent, not a
+    # previous run's detection (which manufactures port drift).
+    user_port: int | None = None
+    # User-supplied env from start() — restart replays it. Without
+    # this a restart silently dropped DATABASE_URL-style settings.
+    env: dict[str, str] = field(default_factory=dict)
+    # Log size at the last port scan — lets the scanner re-run only
+    # when the file has grown (cheap stat per reaper tick).
+    _scanned_size: int = -1
     # The container-side pgrep pattern we use to alive-check the
     # service. Stored at start-time because `Service.cmd` is the
     # full shell line and pgrep would match too broadly otherwise.
@@ -251,10 +430,11 @@ class ServiceRegistry:
                     [
                         "sh",
                         "-c",
-                        # `pgrep -af GAPT_SVC=` prints `<pid> <cmdline>`
-                        # — every running sh wrapper carries the marker
-                        # as $0 so this catches them all.
-                        "pgrep -af 'GAPT_SVC=' || true",
+                        # `pgrep -af` prints `<pid> <cmdline>` — every
+                        # running sh wrapper carries the marker as $0
+                        # so this catches them all. Bracketed pattern
+                        # so the probing sh doesn't match itself.
+                        "pgrep -af '[G]APT_SVC=' || true",
                     ],
                     timeout_s=5.0,
                 )
@@ -341,20 +521,22 @@ class ServiceRegistry:
                     if svc.state not in {ServiceState.STARTING, ServiceState.RUNNING}:
                         # Already exited / stopped — still try to scan
                         # port from the log in case it landed late.
-                        if svc.auto_port is None:
-                            self._scan_port(svc)
+                        self._scan_port(svc)
                         continue
                     if self._sandbox_manager is None:
                         continue
                     # pgrep against the container to see if the
                     # process is still alive. -f matches the full
-                    # cmdline so our unique marker hits.
+                    # cmdline so our unique marker hits. The bracketed
+                    # pattern keeps the probing sh from matching its
+                    # own cmdline (which would always report "alive").
                     sandbox = self._sandbox_manager.get(
                         svc.workspace_id, svc.worktree_path
                     )
+                    pattern = _pgrep_pattern(svc._pgrep_marker)
                     try:
                         rc, _, _ = await sandbox.exec(
-                            ["sh", "-c", f"pgrep -f {shlex.quote(svc._pgrep_marker)} >/dev/null"],
+                            ["sh", "-c", f"pgrep -f {shlex.quote(pattern)} >/dev/null"],
                             timeout_s=3.0,
                         )
                     except WorkspaceSandboxError:
@@ -374,29 +556,45 @@ class ServiceRegistry:
                             workspace_id=svc.workspace_id,
                             label=svc.label,
                         )
-                    if svc.auto_port is None:
-                        self._scan_port(svc)
+                    self._scan_port(svc)
             except Exception:
                 logger.exception("service.reaper_iteration_failed")
             await asyncio.sleep(_REAP_INTERVAL_S)
 
     def _scan_port(self, svc: Service) -> None:
+        """Scan the log TAIL for the most recent "listening on :PORT"
+        line. Re-runs whenever the file grows (cheap stat gate), and
+        takes the LAST match — a dev server that found its declared
+        port taken (vite: 5173 in use → 5174) prints the real port
+        after the conflict notice, and a mid-life rebind must update
+        the detection rather than being ignored forever."""
+        try:
+            size = os.path.getsize(svc.log_path)
+        except OSError:
+            return
+        if size == svc._scanned_size:
+            return
         try:
             with open(svc.log_path, "rb") as fh:
+                if size > _PORT_SCAN_BYTES:
+                    fh.seek(size - _PORT_SCAN_BYTES)
                 blob = fh.read(_PORT_SCAN_BYTES)
         except OSError:
             return
+        svc._scanned_size = size
         text = blob.decode("utf-8", errors="replace")
-        match = _PORT_PATTERN.search(text)
-        if match is None:
+        matches = list(_PORT_PATTERN.finditer(text))
+        if not matches:
             return
         try:
-            port = int(match.group(1))
+            port = int(matches[-1].group(1))
         except ValueError:
             return
-        if 1 <= port <= 65535:
+        if 1 <= port <= 65535 and port != svc.auto_port:
             svc.auto_port = port
-            if svc.port is None:
+            if svc.user_port is None:
+                # No declared port — track the detection so restart /
+                # expose follow the live value.
                 svc.port = port
             logger.info(
                 "service.port_detected",
@@ -462,6 +660,13 @@ class ServiceRegistry:
         service_env = dict(env or {})
         if port is not None and "PORT" not in service_env:
             service_env["PORT"] = str(port)
+        # Bind on all interfaces by default. The preview chain dials
+        # the container over the docker network (`gapt-ws-<wid>:<port>`)
+        # — a dev server that binds loopback only is unreachable from
+        # Caddy and 502s. CRA / Nuxt / webpack-dev-server / many
+        # uvicorn setups honour HOST; vite ignores env (the expose
+        # path covers it with a loopback forwarder instead).
+        service_env.setdefault("HOST", "0.0.0.0")
         # File-watcher polling — bind-mounted worktrees over docker's
         # overlay sometimes drop inotify events, especially on Linux
         # hosts with cgroup v2 or remote-fs storage. The frameworks
@@ -496,6 +701,8 @@ class ServiceRegistry:
             worktree_path=worktree_path,
             log_path=str(log_path_host),
             port=port,
+            user_port=port,
+            env=dict(env or {}),
             state=ServiceState.RUNNING,
             _pgrep_marker=marker,
         )
@@ -547,17 +754,22 @@ class ServiceRegistry:
         svc.state = ServiceState.STOPPING
         sandbox = self._sandbox_manager.get(svc.workspace_id, svc.worktree_path)
         marker = svc._pgrep_marker
+        still_alive = False
         if marker:
+            pattern = shlex.quote(_pgrep_pattern(marker))
             with contextlib.suppress(WorkspaceSandboxError):
                 await sandbox.exec(
                     ["sh", "-c", _kill_marker_pgid_script(marker, "TERM")],
                     timeout_s=5.0,
                 )
-            # Brief grace for graceful exit, then force.
+            # Brief grace for graceful exit, then force. `rc` defaults
+            # to 1 ("gone") each round so a sandbox exec failure can't
+            # leave it unbound (NameError) or stuck on a stale value.
             for _ in range(int(timeout_s * 2)):
+                rc = 1
                 with contextlib.suppress(WorkspaceSandboxError):
                     rc, _, _ = await sandbox.exec(
-                        ["sh", "-c", f"pgrep -f {shlex.quote(marker)} >/dev/null"],
+                        ["sh", "-c", f"pgrep -f {pattern} >/dev/null"],
                         timeout_s=2.0,
                     )
                 if rc != 0:
@@ -568,14 +780,53 @@ class ServiceRegistry:
                     ["sh", "-c", _kill_marker_pgid_script(marker, "KILL")],
                     timeout_s=5.0,
                 )
+            # Verify the tree actually died. SIGKILL is not ignorable
+            # but delivery is async — give it a beat, then re-check.
+            # A survivor means an orphan still holds the port; report
+            # FAILED instead of silently claiming EXITED, so restart /
+            # the operator can see something is wrong instead of the
+            # next start drifting to port+1.
+            await asyncio.sleep(0.2)
+            with contextlib.suppress(WorkspaceSandboxError):
+                rc2, _, _ = await sandbox.exec(
+                    ["sh", "-c", f"pgrep -f {pattern} >/dev/null"],
+                    timeout_s=2.0,
+                )
+                still_alive = rc2 == 0
+        # Take down the loopback forwarder (if expose spawned one) —
+        # it holds the same port on the container interface.
+        with contextlib.suppress(WorkspaceSandboxError):
+            await sandbox.exec(
+                [
+                    "sh",
+                    "-c",
+                    _kill_marker_pgid_script(
+                        f"GAPT_FWD={svc.workspace_id}:{svc.label}", "KILL"
+                    ),
+                ],
+                timeout_s=5.0,
+            )
 
         svc.exited_at = time.time()
-        svc.state = ServiceState.EXITED if svc.exit_code in (0, None) else ServiceState.FAILED
-        logger.info(
-            "service.stopped",
-            workspace_id=workspace_id,
-            label=label,
-        )
+        if still_alive:
+            svc.state = ServiceState.FAILED
+            logger.warning(
+                "service.stop_incomplete",
+                workspace_id=workspace_id,
+                label=label,
+                reason="process tree survived SIGKILL pass — port may stay held",
+            )
+        else:
+            svc.state = (
+                ServiceState.EXITED
+                if svc.exit_code in (0, None)
+                else ServiceState.FAILED
+            )
+            logger.info(
+                "service.stopped",
+                workspace_id=workspace_id,
+                label=label,
+            )
         return svc
 
     async def remove(self, workspace_id: str, label: str) -> None:
@@ -601,6 +852,140 @@ class ServiceRegistry:
         svc.bound_host = host
         svc.bound_url = url
         return svc
+
+    async def ensure_reachable(
+        self,
+        *,
+        workspace_id: str,
+        worktree_path: str,
+        label: str,
+        port: int,
+    ) -> str:
+        """Make ``port`` reachable from the docker network before a
+        Caddy route is pointed at it.
+
+        Looks at the container's actual LISTEN sockets:
+
+        - already reachable (wildcard / non-loopback bind) → "reachable"
+        - loopback-only (vite default!) → spawn the in-container
+          forwarder and verify it came up → "forwarded"
+        - nothing listening yet (still booting) → "unknown" — caller
+          proceeds; the warm-up request covers the race
+        - loopback-only and the forwarder can't run (no python3/node)
+          → "unreachable" — caller should surface a structured hint
+
+        Never raises: any sandbox hiccup degrades to "unknown" so an
+        expose attempt is not blocked by diagnostics."""
+        if self._sandbox_manager is None:
+            return "unknown"
+        sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
+        try:
+            _, out, _ = await sandbox.exec(
+                ["sh", "-c", "cat /proc/net/tcp 2>/dev/null; echo ---; cat /proc/net/tcp6 2>/dev/null"],
+                timeout_s=5.0,
+            )
+        except WorkspaceSandboxError:
+            return "unknown"
+        text = out.decode("utf-8", errors="replace")
+        tcp4, _, tcp6 = text.partition("---")
+        flags = _parse_listeners(tcp4, tcp6, port)
+        if flags["reachable"]:
+            return "reachable"
+        if not flags["any"]:
+            return "unknown"
+
+        # Loopback-only. Drop the forwarder sources into the worktree
+        # (bind-mounted, so writing host-side is enough) and spawn it
+        # with its own marker so stop()/restart can reap it.
+        target = "127.0.0.1" if flags["lo4"] else "::1"
+        fwd_dir = Path(worktree_path) / ".gapt"
+        try:
+            fwd_dir.mkdir(parents=True, exist_ok=True)
+            (fwd_dir / "forward.py").write_text(_FORWARD_PY, encoding="utf-8")
+            (fwd_dir / "forward.cjs").write_text(_FORWARD_CJS, encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "service.forwarder.write_failed",
+                workspace_id=workspace_id,
+                label=label,
+                error=str(exc),
+            )
+            return "unreachable"
+        marker = f"GAPT_FWD={workspace_id}:{label}"
+        # Replace any previous forwarder for this service (port may
+        # have changed across restarts).
+        with contextlib.suppress(WorkspaceSandboxError):
+            await sandbox.exec(
+                ["sh", "-c", _kill_marker_pgid_script(marker, "KILL")],
+                timeout_s=5.0,
+            )
+        runner = (
+            "if command -v python3 >/dev/null 2>&1; then "
+            f"python3 /workspace/.gapt/forward.py {port} {target}; "
+            "elif command -v node >/dev/null 2>&1; then "
+            f"node /workspace/.gapt/forward.cjs {port} {target}; "
+            "else echo 'gapt: no python3/node available for the loopback forwarder' >&2; exit 9; fi"
+        )
+        try:
+            await sandbox.spawn_background(
+                cmd=runner,
+                log_path_inside=f"/workspace/.gapt/services/{label}.fwd.log",
+                marker=marker,
+            )
+        except WorkspaceSandboxError as exc:
+            logger.warning(
+                "service.forwarder.spawn_failed",
+                workspace_id=workspace_id,
+                label=label,
+                error=str(exc),
+            )
+            return "unreachable"
+        # Verify the forwarder is actually accepting on the container
+        # address — a few quick probes (it binds within milliseconds;
+        # the retry covers slower images).
+        check = (
+            f'curl -s -o /dev/null --max-time 2 "http://$(hostname):{port}/" '
+            f'|| wget -q -T 2 -O /dev/null "http://$(hostname):{port}/"'
+        )
+        for _ in range(5):
+            await asyncio.sleep(0.3)
+            with contextlib.suppress(WorkspaceSandboxError):
+                rc, _, _ = await sandbox.exec(["sh", "-c", check], timeout_s=6.0)
+                if rc == 0:
+                    logger.info(
+                        "service.forwarder.active",
+                        workspace_id=workspace_id,
+                        label=label,
+                        port=port,
+                        target=target,
+                    )
+                    return "forwarded"
+        logger.warning(
+            "service.forwarder.unverified",
+            workspace_id=workspace_id,
+            label=label,
+            port=port,
+        )
+        # Spawned but not verified — likely missing curl/wget rather
+        # than a dead forwarder. Treat as forwarded (best-effort).
+        return "forwarded"
+
+    async def kill_forwarder(
+        self, *, workspace_id: str, worktree_path: str, label: str
+    ) -> None:
+        """Take down the loopback forwarder for a service (unexpose)."""
+        if self._sandbox_manager is None:
+            return
+        sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
+        with contextlib.suppress(WorkspaceSandboxError):
+            await sandbox.exec(
+                [
+                    "sh",
+                    "-c",
+                    _kill_marker_pgid_script(f"GAPT_FWD={workspace_id}:{label}", "KILL"),
+                ],
+                timeout_s=5.0,
+            )
 
     async def kill_all(self) -> None:
         """Best-effort cleanup at shutdown. Doesn't wait for graceful

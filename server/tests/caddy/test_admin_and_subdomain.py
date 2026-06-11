@@ -185,30 +185,58 @@ async def test_subdomain_manager_subdomain_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subdomain_manager_unregister_targets_id_path() -> None:
-    """Unregister deletes the primary route, its Referer fallback,
-    AND its cookie-pinning fallback (when cookie pinning was
-    registered). All three are idempotent — 404 on any one is
-    silently swallowed (covered separately)."""
-    seen_paths: list[str] = []
+async def test_subdomain_manager_unregister_batches_one_patch() -> None:
+    """Unregister removes the primary route AND every fallback sibling
+    (Referer / cookie / cookie-doc) in a single PATCH of the routes
+    array — one Caddy config reload instead of the four sequential
+    `DELETE /id/*` reloads the old implementation issued (each reload
+    churns every proxied connection)."""
+    calls: list[tuple[str, str, Any]] = []
+    existing = [
+        {"@id": "gapt-preview-01kws", "match": [{"path": ["/preview/01kws*"]}]},
+        {"@id": "gapt-preview-01kws-asset", "match": [{"header": {}}]},
+        {"@id": "gapt-preview-01kws-cookie", "match": [{"header": {}}]},
+        {"@id": "unrelated-route", "match": [{"path": ["/x"]}]},
+    ]
 
     async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
-        seen_paths.append(path)
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, existing)
         return (200, None)
 
     client = CaddyAdminClient(transport=transport)
     manager = SubdomainManager(client=client, preview_domain="gapt.example")
     await manager.unregister("01KWS")
-    assert seen_paths == [
-        "/id/gapt-preview-01kws",
-        "/id/gapt-preview-01kws-asset",
-        "/id/gapt-preview-01kws-cookie",
-        "/id/gapt-preview-01kws-cookie-doc",
-    ]
+    patches = [c for c in calls if c[0] == "PATCH"]
+    assert len(patches) == 1
+    kept = patches[0][2]
+    assert [r["@id"] for r in kept] == ["unrelated-route"]
 
 
 @pytest.mark.asyncio
-async def test_subdomain_manager_unregister_idempotent_on_404() -> None:
+async def test_subdomain_manager_unregister_noop_when_absent() -> None:
+    """When none of the slug's @ids exist, unregister must not PATCH
+    at all — zero admin mutations means zero Caddy reloads."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, [{"@id": "unrelated-route"}])
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.unregister("01KWS")  # must not raise
+    assert [c[0] for c in calls] == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_subdomain_manager_unregister_idempotent_on_error() -> None:
+    """A failing GET (admin hiccup) degrades to an empty array →
+    nothing to remove → no PATCH, no raise."""
+
     async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
         return (404, None)
 
@@ -968,6 +996,10 @@ async def test_register_short_circuits_when_subdomain_route_already_current() ->
             {
                 "handler": "reverse_proxy",
                 "upstreams": [{"dial": expected_dial}],
+                # Drift check compares the FULL generated handler —
+                # the live route must carry today's shape (incl. the
+                # reload-survival grace) to count as current.
+                "stream_close_delay": "1h",
             }
         ],
         "terminal": True,

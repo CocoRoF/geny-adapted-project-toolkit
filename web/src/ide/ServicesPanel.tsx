@@ -58,12 +58,21 @@ export function ServicesPanel({ workspaceId, onOpenPreview }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [tailLabel, setTailLabel] = useState<string | null>(null);
 
+  // Monotonic sequence guard: the 2s poll and post-action refreshes
+  // race — a slow GET issued before an unexpose can resolve AFTER the
+  // post-action refresh and clobber fresh state with pre-action data
+  // (bound_url flickers back). Only the latest issued request may
+  // commit.
+  const seqRef = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++seqRef.current;
     try {
       const rows = await listServices(workspaceId);
+      if (seq !== seqRef.current) return;
       setServices(rows);
       setErr(null);
     } catch (e) {
+      if (seq !== seqRef.current) return;
       setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
@@ -235,19 +244,35 @@ function ServiceRow({
   onOpenPreview?: (url: string, label: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
 
   const run = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);
+    setActionErr(null);
     try {
       await fn();
       await onChanged();
+    } catch (e) {
+      // Without this, a failed expose (e.g. Caddy admin down, or the
+      // service bound localhost-only) was an unhandled rejection with
+      // ZERO feedback — the button just un-spun.
+      setActionErr(
+        e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
+      );
     } finally {
       setBusy(false);
     }
   };
 
   const isAlive = service.state === "running" || service.state === "starting";
-  const effectivePort = service.port ?? service.auto_port;
+  // Live detection outranks the declared port: when a dev server
+  // finds its declared port taken (vite: 5173→5174) only the
+  // detected one is real.
+  const effectivePort = service.auto_port ?? service.port;
+  const portDrift =
+    service.port !== null &&
+    service.auto_port !== null &&
+    service.port !== service.auto_port;
 
   return (
     <div className="mb-1.5 rounded-md border border-border bg-bg-elevated">
@@ -258,7 +283,15 @@ function ServiceRow({
           {service.cmd}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          {effectivePort ? (
+          {portDrift ? (
+            <Badge
+              tone="warn"
+              className="text-[10px]"
+              title={`선언 포트 :${service.port}가 사용 중이라 서버가 :${service.auto_port}로 옮겨갔어요. Expose는 감지된 포트를 사용합니다.`}
+            >
+              :{service.port}→:{service.auto_port}
+            </Badge>
+          ) : effectivePort ? (
             <Badge tone="neutral" className="text-[10px]">
               :{effectivePort}
             </Badge>
@@ -352,12 +385,18 @@ function ServiceRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={run(() => exposeService(workspaceId, service.label))}
+              onClick={run(() =>
+                exposeService(
+                  workspaceId,
+                  service.label,
+                  effectivePort ? { port: effectivePort } : undefined,
+                ),
+              )}
               disabled={busy || (!service.port && !service.auto_port)}
               className="h-7 px-2 text-[11px]"
               title={
                 effectivePort
-                  ? "Bind via Caddy → preview URL"
+                  ? `Bind via Caddy → preview URL (:${effectivePort})`
                   : "Waiting for the service to print its port"
               }
             >
@@ -397,6 +436,12 @@ function ServiceRow({
           <Trash2 className="mr-1 h-3 w-3" />
         </Button>
       </div>
+
+      {actionErr ? (
+        <p className="border-t border-danger/30 bg-danger/10 px-2.5 py-1 text-[10.5px] text-danger">
+          {actionErr}
+        </p>
+      ) : null}
 
       {tailing ? (
         <ServiceLogTail workspaceId={workspaceId} logPath={service.log_path} />

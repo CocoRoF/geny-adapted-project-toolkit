@@ -33,6 +33,17 @@ def _override_bare_root_for_tests(
     """
     import os  # noqa: PLC0415 — only imported here
 
+    # Tests must not read the developer's `server/.env` (the dev
+    # server's persistent config — DSN, Caddy URLs, log format...).
+    # pydantic-settings resolves `env_file=".env"` relative to the
+    # cwd, which IS `server/` when pytest runs here, so without this
+    # the dev box's settings leak into every Settings() the suite
+    # builds (first symptom: log_format=console breaking the
+    # defaults test). Mutating model_config before any instantiation
+    # disables the file for the whole session; real env vars still
+    # apply.
+    Settings.model_config["env_file"] = None
+
     bare = tmp_path_factory.mktemp("gapt-bare", numbered=False)
     os.environ["GAPT_WORKSPACE_BARE_ROOT"] = str(bare)
     # `Settings` caches via `lru_cache` on `get_settings()`. The cache

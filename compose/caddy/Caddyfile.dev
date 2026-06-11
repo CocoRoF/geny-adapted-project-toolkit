@@ -51,8 +51,14 @@
     encode gzip zstd
 
     # ───── control plane (namespaced) ─────
+    # stream_close_delay keeps proxied SSE/WebSocket streams alive
+    # across admin-API config reloads (Caddy ≥2.7 force-closes them
+    # immediately otherwise). Every expose/unexpose reloads config —
+    # without the grace, chat SSE + file tails drop on each one.
     handle /_gapt/api/* {
-        reverse_proxy host.docker.internal:38001
+        reverse_proxy host.docker.internal:38001 {
+            stream_close_delay 1h
+        }
     }
 
     # /health stays at apex root — Prometheus / k8s liveness probes
@@ -70,8 +76,13 @@
     # the caddy service (see docker-compose.dev.yml). Vite is
     # configured with `base: "/_gapt/app/"` so asset URLs and HMR
     # client paths line up with what Caddy forwards.
+    # stream_close_delay here is what stops "expose reloads the IDE":
+    # the IDE's vite HMR websocket rides this route; when a config
+    # reload killed it, the vite client force-reloaded the whole page.
     handle /_gapt/app/* {
-        reverse_proxy host.docker.internal:35173
+        reverse_proxy host.docker.internal:35173 {
+            stream_close_delay 1h
+        }
     }
 
     # Apex root → 302 to IDE entry. Bookmarking gapt.hrletsgo.me

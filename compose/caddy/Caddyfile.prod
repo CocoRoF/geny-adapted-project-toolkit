@@ -42,8 +42,12 @@
     }
 
     # ── control plane (namespaced) ──
+    # stream_close_delay keeps proxied SSE/WebSocket streams alive
+    # across admin-API config reloads (every expose/unexpose reloads).
     handle /_gapt/api/* {
-        reverse_proxy server:8088
+        reverse_proxy server:8088 {
+            stream_close_delay 1h
+        }
     }
 
     # /health stays at apex root — k8s liveness probes / uptime
@@ -57,7 +61,9 @@
     # `/_gapt/app/*`. M1 hasn't wired StaticFiles yet — that goes
     # in the deploy hardening cycle.
     handle /_gapt/app/* {
-        reverse_proxy server:8088
+        reverse_proxy server:8088 {
+            stream_close_delay 1h
+        }
     }
 
     # Apex root → 302 to IDE entry. `header + respond` form (not

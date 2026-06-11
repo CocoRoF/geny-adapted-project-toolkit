@@ -557,9 +557,15 @@ class WorkspaceSandbox:
         # as a foreground child (no `exec`). When marker is provided
         # we pass it as $0; that puts it in the sh process's
         # /proc/PID/cmdline so `pgrep -f <marker>` matches.
+        #
+        # The user's cmd is grouped (`{ cmd ; }`) before the redirect —
+        # otherwise `>>` binds only to the LAST command of an
+        # `a && b && c` chain and everything before it (npm install
+        # output, build failures) vanishes into docker-exec's
+        # discarded pipes, leaving an empty log with zero diagnostics.
         inner = (
             f"mkdir -p $(dirname {shlex.quote(log_path_inside)}) && "
-            f"{cmd} >> {shlex.quote(log_path_inside)} 2>&1"
+            f"{{ {cmd} ; }} >> {shlex.quote(log_path_inside)} 2>&1"
         )
         exec_args = ["docker", "exec", "-d", "-w", "/workspace"]
         if env:

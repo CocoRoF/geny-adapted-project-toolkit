@@ -32,6 +32,8 @@ export interface ExposeResponse {
   host: string;
   url: string;
   port: number;
+  /** e.g. "loopback forwarder active" — informational. */
+  note?: string | null;
 }
 
 export const listServices = (workspaceId: string) =>
