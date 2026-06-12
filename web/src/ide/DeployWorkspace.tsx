@@ -72,7 +72,7 @@ export function DeployWorkspace({ projectId }: Props) {
   const [activeByEnv, setActiveByEnv] = useState<Record<string, ActiveRun | null>>({});
   // Which env's log is currently in the right pane.
   const [viewEnvId, setViewEnvId] = useState<string | null>(null);
-  const viewRunId = viewEnvId ? activeByEnv[viewEnvId]?.run_id ?? null : null;
+  const viewRunId = viewEnvId ? (activeByEnv[viewEnvId]?.run_id ?? null) : null;
   const stream = useDeployStream(viewRunId);
 
   // Per-env tab selection. The env card switches between the
@@ -87,8 +87,7 @@ export function DeployWorkspace({ projectId }: Props) {
     [tabByEnv],
   );
   const setTab = useCallback(
-    (envId: string, tab: "deploy" | "history") =>
-      setTabByEnv((m) => ({ ...m, [envId]: tab })),
+    (envId: string, tab: "deploy" | "history") => setTabByEnv((m) => ({ ...m, [envId]: tab })),
     [],
   );
   const [historyRuns, setHistoryRuns] = useState<DeployRunRow[]>([]);
@@ -100,14 +99,10 @@ export function DeployWorkspace({ projectId }: Props) {
   // live stream view) or opens a different env.
   const [detailRunId, setDetailRunId] = useState<string | null>(null);
   // Env whose settings modal is currently open. `null` = no modal.
-  const [settingsEnv, setSettingsEnv] = useState<EnvironmentResponse | null>(
-    null,
-  );
+  const [settingsEnv, setSettingsEnv] = useState<EnvironmentResponse | null>(null);
   // Pending confirmations for destructive / disruptive stack ops.
   const [confirmStopEnvId, setConfirmStopEnvId] = useState<string | null>(null);
-  const [confirmRedeployEnvId, setConfirmRedeployEnvId] = useState<string | null>(
-    null,
-  );
+  const [confirmRedeployEnvId, setConfirmRedeployEnvId] = useState<string | null>(null);
   const [stackBusyEnvId, setStackBusyEnvId] = useState<string | null>(null);
 
   const logScrollRef = useRef<HTMLPreElement | null>(null);
@@ -209,48 +204,45 @@ export function DeployWorkspace({ projectId }: Props) {
     [tabFor],
   );
 
-  const startDeploy = useCallback(
-    async (env: EnvironmentResponse) => {
-      // Always switch the right pane to this env so the user sees
-      // their click reflected. Also dismiss any historical detail
-      // view so the live stream isn't hidden behind a past run.
-      setDetailRunId(null);
-      setViewEnvId(env.id);
-      try {
-        const accepted = await triggerDeployAsync(env.id, {
+  const startDeploy = useCallback(async (env: EnvironmentResponse) => {
+    // Always switch the right pane to this env so the user sees
+    // their click reflected. Also dismiss any historical detail
+    // view so the live stream isn't hidden behind a past run.
+    setDetailRunId(null);
+    setViewEnvId(env.id);
+    try {
+      const accepted = await triggerDeployAsync(env.id, {
+        version: "latest",
+        target_options: {},
+        two_factor_code: "ui-click",
+      });
+      setActiveByEnv((cur) => ({
+        ...cur,
+        [env.id]: {
+          run_id: accepted.run_id,
+          environment_id: accepted.environment_id,
+          project_id: env.project_id,
           version: "latest",
-          target_options: {},
-          two_factor_code: "ui-click",
-        });
-        setActiveByEnv((cur) => ({
-          ...cur,
-          [env.id]: {
-            run_id: accepted.run_id,
-            environment_id: accepted.environment_id,
-            project_id: env.project_id,
-            version: "latest",
-            status: accepted.status,
-            started_at: accepted.started_at,
-            bound_url: null,
-            exec_code: null,
-            finished_at: null,
-          },
-        }));
-      } catch (e) {
-        if (e instanceof ApiError && e.code === "deploy.already_running") {
-          // Another deploy is in flight for this env — refresh the
-          // active map so we attach to it.
-          const run = await getActiveDeploy(env.id).catch(() => null);
-          if (run) {
-            setActiveByEnv((cur) => ({ ...cur, [env.id]: run }));
-            return;
-          }
+          status: accepted.status,
+          started_at: accepted.started_at,
+          bound_url: null,
+          exec_code: null,
+          finished_at: null,
+        },
+      }));
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "deploy.already_running") {
+        // Another deploy is in flight for this env — refresh the
+        // active map so we attach to it.
+        const run = await getActiveDeploy(env.id).catch(() => null);
+        if (run) {
+          setActiveByEnv((cur) => ({ ...cur, [env.id]: run }));
+          return;
         }
-        setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
       }
-    },
-    [],
-  );
+      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
+    }
+  }, []);
 
   const cancelCurrent = useCallback(async () => {
     if (!viewRunId) return;
@@ -360,9 +352,7 @@ export function DeployWorkspace({ projectId }: Props) {
                 // history — there's nothing live to surface in the
                 // deploy tab anymore.
                 const liveRunId =
-                  env.last_run?.status === "success"
-                    ? (env.last_run?.run_id ?? null)
-                    : null;
+                  env.last_run?.status === "success" ? (env.last_run?.run_id ?? null) : null;
                 const pastRuns = liveRunId
                   ? historyRuns.filter((r) => r.id !== liveRunId)
                   : historyRuns;
@@ -370,9 +360,7 @@ export function DeployWorkspace({ projectId }: Props) {
                 // render that entry with a "stopped" badge instead
                 // of its original "success" status.
                 const stoppedRunId =
-                  env.last_run?.status === "stopped"
-                    ? (env.last_run?.run_id ?? null)
-                    : null;
+                  env.last_run?.status === "stopped" ? (env.last_run?.run_id ?? null) : null;
                 return (
                   <li
                     key={env.id}
@@ -484,8 +472,7 @@ export function DeployWorkspace({ projectId }: Props) {
                             className={cn(
                               "w-full rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-left transition-colors hover:bg-success/10",
                               env.last_run?.run_id && "cursor-pointer",
-                              detailRunId === env.last_run?.run_id &&
-                                "ring-1 ring-success/40",
+                              detailRunId === env.last_run?.run_id && "ring-1 ring-success/40",
                             )}
                           >
                             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -534,8 +521,7 @@ export function DeployWorkspace({ projectId }: Props) {
                             }}
                             className={cn(
                               "w-full rounded-md border border-danger/40 bg-danger/5 px-2 py-1.5 text-left transition-colors hover:bg-danger/10",
-                              detailRunId === env.last_run?.run_id &&
-                                "ring-1 ring-danger/40",
+                              detailRunId === env.last_run?.run_id && "ring-1 ring-danger/40",
                             )}
                           >
                             <Badge tone="danger">{env.last_run.status}</Badge>
@@ -550,9 +536,7 @@ export function DeployWorkspace({ projectId }: Props) {
                           </button>
                         ) : (
                           <p className="rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-fg-subtle">
-                            {stoppedRunId
-                              ? t("deploy.idle_after_stop")
-                              : t("deploy.idle_empty")}
+                            {stoppedRunId ? t("deploy.idle_after_stop") : t("deploy.idle_empty")}
                           </p>
                         )}
                         {/* Action row — varies by state so the
@@ -564,11 +548,7 @@ export function DeployWorkspace({ projectId }: Props) {
                             AND surfaces "stop first" as the
                             primary path. */}
                         {envRunning ? (
-                          <Button
-                            variant="primary"
-                            disabled
-                            className="w-full"
-                          >
+                          <Button variant="primary" disabled className="w-full">
                             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                             {t("deploy.in_progress")}
                           </Button>
@@ -628,7 +608,7 @@ export function DeployWorkspace({ projectId }: Props) {
                           setDetailRunId(run.id);
                           setViewEnvId(null);
                         }}
-                        onRollback={(run) => rollbackToRun(env.id, run)}
+                        onRollback={(run) => void rollbackToRun(env.id, run)}
                       />
                     ) : null}
                   </li>
@@ -667,9 +647,7 @@ export function DeployWorkspace({ projectId }: Props) {
           <>
             <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
               <span className="text-[12px] font-semibold text-fg">
-                {viewEnv
-                  ? `${t("deploy.log.for")} · ${viewEnv.name}`
-                  : t("deploy.log.idle")}
+                {viewEnv ? `${t("deploy.log.for")} · ${viewEnv.name}` : t("deploy.log.idle")}
               </span>
               {viewRunId ? (
                 <Badge tone={STATUS_TONE[stream.status] ?? "neutral"}>
@@ -730,9 +708,7 @@ export function DeployWorkspace({ projectId }: Props) {
           env={settingsEnv}
           onClose={() => setSettingsEnv(null)}
           onSaved={(updated) => {
-            setEnvs((prev) =>
-              prev.map((e) => (e.id === updated.id ? updated : e)),
-            );
+            setEnvs((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
             setSettingsEnv(updated);
           }}
         />
@@ -769,7 +745,6 @@ export function DeployWorkspace({ projectId }: Props) {
   );
 }
 
-
 function HistoryPane({
   runs,
   loading,
@@ -798,11 +773,7 @@ function HistoryPane({
     );
   }
   if (runs.length === 0) {
-    return (
-      <p className="mt-2 text-[11px] text-fg-subtle">
-        {t("deploy.history.empty")}
-      </p>
-    );
+    return <p className="mt-2 text-[11px] text-fg-subtle">{t("deploy.history.empty")}</p>;
   }
   return (
     <ul className="mt-2 space-y-1 border-t border-border/40 pt-2">
@@ -872,9 +843,7 @@ function HistoryPane({
                   <span className="truncate">{r.bound_url}</span>
                 </a>
               ) : null}
-              {r.exec_code ? (
-                <div className="text-warn">{r.exec_code}</div>
-              ) : null}
+              {r.exec_code ? <div className="text-warn">{r.exec_code}</div> : null}
             </div>
             <Button
               variant="ghost"

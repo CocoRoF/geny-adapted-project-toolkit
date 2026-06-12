@@ -158,9 +158,7 @@ export function FileEditor({ workspaceId, openPath }: Props) {
             ? lastErr.message
             : String(lastErr);
       setDoc((prev) =>
-        prev && prev.path === state.path
-          ? { ...prev, status: "error", errorReason: reason }
-          : prev,
+        prev && prev.path === state.path ? { ...prev, status: "error", errorReason: reason } : prev,
       );
     },
     [workspaceId],
@@ -177,7 +175,7 @@ export function FileEditor({ workspaceId, openPath }: Props) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         setDoc((current) => {
-          if (current && current.encoding === "utf-8") flushSave({ ...current, text: next });
+          if (current && current.encoding === "utf-8") void flushSave({ ...current, text: next });
           return current;
         });
       }, AUTOSAVE_DEBOUNCE_MS);
@@ -227,6 +225,9 @@ export function FileEditor({ workspaceId, openPath }: Props) {
   // pending autosave timer so we don't issue a stale duplicate.
   const onMount: OnMount = useCallback(
     (editor, monaco) => {
+      // The monaco namespace type doesn't resolve under the lint
+      // project config (tsc -b resolves it fine via @monaco-editor/react).
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         if (saveTimerRef.current) {
           clearTimeout(saveTimerRef.current);

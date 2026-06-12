@@ -13,13 +13,7 @@ import {
 
 import { cn } from "@/ui/cn";
 
-export type SideView =
-  | "files"
-  | "search"
-  | "git"
-  | "tests"
-  | "env"
-  | "services";
+export type SideView = "files" | "search" | "git" | "tests" | "env" | "services";
 
 interface Item {
   id: SideView;
@@ -55,13 +49,7 @@ interface Props {
 /** Vertical icon column — VSCode's Activity Bar. ~48px wide. The
  * top group selects which view the SidePanel shows; the bottom
  * group is for global toggles (Chat / Settings). */
-export function ActivityBar({
-  active,
-  onSelect,
-  chatOpen,
-  onToggleChat,
-  onOpenSettings,
-}: Props) {
+export function ActivityBar({ active, onSelect, chatOpen, onToggleChat, onOpenSettings }: Props) {
   return (
     <nav
       aria-label="activity bar"
@@ -81,11 +69,7 @@ export function ActivityBar({
       </div>
 
       <div className="mt-auto flex flex-col items-center gap-0.5">
-        <ActivityIcon
-          active={chatOpen}
-          label="Chat / Agent (Ctrl+Shift+A)"
-          onClick={onToggleChat}
-        >
+        <ActivityIcon active={chatOpen} label="Chat / Agent (Ctrl+Shift+A)" onClick={onToggleChat}>
           <MessageSquare className="h-5 w-5" strokeWidth={1.5} />
         </ActivityIcon>
         <ActivityIcon active={false} label="Settings" onClick={onOpenSettings}>

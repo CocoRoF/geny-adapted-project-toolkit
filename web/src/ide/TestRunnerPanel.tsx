@@ -147,7 +147,8 @@ export function TestRunnerPanel({ workspaceId }: Props) {
         <div className="flex flex-1 items-center justify-center text-[12px] text-fg-subtle">
           {defaultCmd ? (
             <>
-              감지된 명령: <code className="ml-1 rounded bg-bg-elevated px-1 font-mono">{defaultCmd}</code>
+              감지된 명령:{" "}
+              <code className="ml-1 rounded bg-bg-elevated px-1 font-mono">{defaultCmd}</code>
               <span className="mx-1 text-fg-subtle">·</span>
               <span>실행을 누르세요</span>
             </>

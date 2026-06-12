@@ -44,7 +44,8 @@ export const en = {
   "projects.archived": "Deleted",
   "projects.archive": "Delete project",
   "projects.archive_confirm.title": "Delete project?",
-  "projects.archive_confirm.body": "Delete \"{name}\"? The project disappears from the list. (The row is kept in the audit log for traceability.)",
+  "projects.archive_confirm.body":
+    'Delete "{name}"? The project disappears from the list. (The row is kept in the audit log for traceability.)',
   "projects.archive_confirm.confirm": "Delete",
   "projects.archive_confirm.cancel": "Cancel",
   "projects.create.title": "Create project",
@@ -79,15 +80,19 @@ export const en = {
   "workspace.failed.recheck": "Re-check status",
   "workspace.failed.delete": "Delete + retry",
   "workspace.archived.title": "This workspace is archived",
-  "workspace.archived.body": "Archived workspaces are kept for the audit log only — they can't be opened. Create a fresh workspace to keep working on this project.",
+  "workspace.archived.body":
+    "Archived workspaces are kept for the audit log only — they can't be opened. Create a fresh workspace to keep working on this project.",
   "workspace.archived.back": "Back to project",
   "workspaces.loading": "Loading workspaces…",
   "workspaces.new": "New workspace",
   "workspaces.quick_open.placeholder": "Open a branch — type a branch name and press Enter",
   "workspaces.quick_open.button": "Open",
-  "workspaces.quick_open.hint": "Open the workspace for this branch — creates one if none exists, otherwise reuses the live one.",
-  "workspaces.cap.warning": "{active} of {cap} workspaces are live. Approaching the cap — stop or archive unused workspaces before spawning more.",
-  "workspaces.cap.at_cap": "Workspace cap reached ({active}/{cap}). Stop or archive an existing workspace, or raise GAPT_MAX_ACTIVE_SANDBOXES.",
+  "workspaces.quick_open.hint":
+    "Open the workspace for this branch — creates one if none exists, otherwise reuses the live one.",
+  "workspaces.cap.warning":
+    "{active} of {cap} workspaces are live. Approaching the cap — stop or archive unused workspaces before spawning more.",
+  "workspaces.cap.at_cap":
+    "Workspace cap reached ({active}/{cap}). Stop or archive an existing workspace, or raise GAPT_MAX_ACTIVE_SANDBOXES.",
   "workspaces.more": "+{n} more",
   "workspaces.branch": "Branch",
   "workspaces.open": "Open",
@@ -99,7 +104,8 @@ export const en = {
   "workspaces.create.creating": "Creating…",
   "workspaces.create.branch_loading": "Fetching branches…",
   "workspaces.create.branch_default_hint": "Default: {branch}",
-  "workspaces.create.branch_fallback_hint": "Couldn't list remote branches — type a branch name to create from.",
+  "workspaces.create.branch_fallback_hint":
+    "Couldn't list remote branches — type a branch name to create from.",
   "workspaces.create.branch_refresh": "Refresh",
   "workspaces.create.branch_no_match": "No match — press Enter to use this name anyway",
   // Phase H — unified environment editor
@@ -122,13 +128,17 @@ export const en = {
   "env_editor.section.routing": "Preview routing",
   "env_editor.section.upstream": "Upstream",
   "env_editor.section.remote_ssh": "Remote SSH",
-  "env_editor.section.remote_ssh_hint": "Phase H ships the form only; remote-ssh deploys land in a follow-up cycle.",
+  "env_editor.section.remote_ssh_hint":
+    "Phase H ships the form only; remote-ssh deploys land in a follow-up cycle.",
   "env_editor.section.webhook": "Webhook",
-  "env_editor.section.webhook_hint": "Phase H ships the form only; webhook deploys land in a follow-up cycle.",
+  "env_editor.section.webhook_hint":
+    "Phase H ships the form only; webhook deploys land in a follow-up cycle.",
   "env_editor.compose_path": "Compose path",
-  "env_editor.compose_path_hint": "Path relative to the workspace root, e.g. docker-compose.prod.yml",
+  "env_editor.compose_path_hint":
+    "Path relative to the workspace root, e.g. docker-compose.prod.yml",
   "env_editor.compose_paths": "Additional compose paths (CSV)",
-  "env_editor.compose_paths_hint": "Comma-separated. Layered configs are chained via -f a.yml -f b.yml.",
+  "env_editor.compose_paths_hint":
+    "Comma-separated. Layered configs are chained via -f a.yml -f b.yml.",
   "env_editor.preview_mode": "Preview mode",
   "env_editor.preview_slug": "Preview slug",
   "env_editor.preview_slug_hint": "DNS-safe label; empty = use the auto-generated default.",
@@ -139,10 +149,12 @@ export const en = {
   "env_editor.primary_port": "Primary port",
   "env_editor.upstream_scheme": "Upstream scheme",
   "env_editor.upstream_tls_insecure": "Skip TLS verify on upstream",
-  "env_editor.upstream_tls_insecure.on": "On (use when upstream presents a public cert behind an internal name)",
+  "env_editor.upstream_tls_insecure.on":
+    "On (use when upstream presents a public cert behind an internal name)",
   "env_editor.upstream_tls_insecure.off": "Off",
   "env_editor.upstream_host_header": "Upstream Host header override",
-  "env_editor.upstream_host_header_hint": "Empty = passthrough. Set when your stack's internal nginx routes by server_name.",
+  "env_editor.upstream_host_header_hint":
+    "Empty = passthrough. Set when your stack's internal nginx routes by server_name.",
   "env_editor.build": "Build images on deploy",
   "env_editor.build_hint": "Off = pull pre-built images only.",
   "env_editor.build.on": "On",
@@ -151,28 +163,38 @@ export const en = {
   "env_editor.port": "Port",
   "env_editor.user": "User",
   "env_editor.key_secret_ref": "SSH key (project secret)",
-  "env_editor.key_secret_ref_hint": "Project-scoped Secret holding the private key. Leave empty to use a host-agent-forwarded key.",
+  "env_editor.key_secret_ref_hint":
+    "Project-scoped Secret holding the private key. Leave empty to use a host-agent-forwarded key.",
   "env_editor.webhook_url": "URL",
   "env_editor.webhook_url_hint": "Must be a fully-qualified http:// or https:// URL.",
   "env_editor.webhook_secret_ref": "HMAC secret (project secret)",
-  "env_editor.webhook_secret_ref_hint": "The receiver uses this to verify the payload's authenticity.",
+  "env_editor.webhook_secret_ref_hint":
+    "The receiver uses this to verify the payload's authenticity.",
   "env_editor.env_keys": "Env keys to forward (CSV)",
   "env_editor.env_keys_hint": "Names of project secrets to copy into the webhook payload body.",
-  "env_editor.remote_ssh_form_only_notice": "Note: SSH-mode deploys are not yet wired — saving the form persists the config but `Deploy` will not run.",
-  "env_editor.webhook_form_only_notice": "Note: webhook-mode deploys are not yet wired — saving the form persists the config but `Deploy` will not fire the URL.",
+  "env_editor.remote_ssh_form_only_notice":
+    "Note: SSH-mode deploys are not yet wired — saving the form persists the config but `Deploy` will not run.",
+  "env_editor.webhook_form_only_notice":
+    "Note: webhook-mode deploys are not yet wired — saving the form persists the config but `Deploy` will not fire the URL.",
   "env_editor.k8s_unsupported.title": "Kubernetes is not supported in v1.",
-  "env_editor.k8s_unsupported.body": "GAPT v1 targets single-admin self-hosted Docker compose. K8s lands in M4 outside the v1 scope.",
+  "env_editor.k8s_unsupported.body":
+    "GAPT v1 targets single-admin self-hosted Docker compose. K8s lands in M4 outside the v1 scope.",
   "env_editor.preset.current": "current",
   "env_editor.preset.nextjs_dev": "Next.js dev",
-  "env_editor.preset.nextjs_dev_hint": "path mode, strip /preview, http upstream → typical `npm run dev` on :3000",
+  "env_editor.preset.nextjs_dev_hint":
+    "path mode, strip /preview, http upstream → typical `npm run dev` on :3000",
   "env_editor.preset.nextjs_prod_basepath": "Next.js prod (basePath)",
-  "env_editor.preset.nextjs_prod_basepath_hint": "path mode, keep /preview (your app respects basePath internally)",
+  "env_editor.preset.nextjs_prod_basepath_hint":
+    "path mode, keep /preview (your app respects basePath internally)",
   "env_editor.preset.tls_terminator": "TLS terminator (nginx)",
-  "env_editor.preset.tls_terminator_hint": "stack ships its own HTTPS nginx → Caddy dials https + skip-verify + rewrite Host",
+  "env_editor.preset.tls_terminator_hint":
+    "stack ships its own HTTPS nginx → Caddy dials https + skip-verify + rewrite Host",
   "env_editor.preset.subdomain": "Subdomain mode",
-  "env_editor.preset.subdomain_hint": "Each preview at <slug>.preview-domain — needs wildcard DNS + TLS",
+  "env_editor.preset.subdomain_hint":
+    "Each preview at <slug>.preview-domain — needs wildcard DNS + TLS",
   "env_editor.extras": "Extra config keys (unknown to the editor)",
-  "env_editor.extras_hint": "Legacy or operator-set keys outside the schema. Saved as-is; remove the chip to drop.",
+  "env_editor.extras_hint":
+    "Legacy or operator-set keys outside the schema. Saved as-is; remove the chip to drop.",
   "env_editor.extras_remove": "Remove",
   "env_editor.secret_none": "(none)",
   "env_editor.create.title": "New environment",
@@ -184,7 +206,8 @@ export const en = {
   "workspaces.actions.start": "Start",
   "workspaces.actions.delete": "Delete workspace",
   "workspaces.delete_confirm.title": "Delete workspace?",
-  "workspaces.delete_confirm.body": "Delete workspace \"{branch}\"? This tears down the sandbox and archives the row. The worktree files stay on disk.",
+  "workspaces.delete_confirm.body":
+    'Delete workspace "{branch}"? This tears down the sandbox and archives the row. The worktree files stay on disk.',
   "workspaces.delete_confirm.confirm": "Delete",
   "workspaces.delete_confirm.cancel": "Cancel",
   "workspaces.last_activity": "Last activity",
@@ -220,7 +243,8 @@ export const en = {
   "performance.col.mem": "Memory",
   "performance.col.io": "Network · Disk",
   "performance.empty": "No GAPT containers detected on this host yet.",
-  "performance.poll_hint": "Auto-refreshes every {n}s. Click a row for the full identity / limits / live breakdown.",
+  "performance.poll_hint":
+    "Auto-refreshes every {n}s. Click a row for the full identity / limits / live breakdown.",
   "performance.disk": "disk",
   "performance.detail.identity": "Identity",
   "performance.detail.limits": "Resource limits",
@@ -250,10 +274,12 @@ export const en = {
   "performance.env.stopped": "stopped",
   "performance.env.last_deploy": "last",
   "performance.env.last_url": "Last bound URL — may 502 if the stack is currently down.",
-  "performance.env.stopped_hint": "Stack is down. Re-deploy from this project's Environments page to bring it up.",
+  "performance.env.stopped_hint":
+    "Stack is down. Re-deploy from this project's Environments page to bring it up.",
   "performance.project.archived": "archived",
   "performance.project.archived_hint": "{n} container(s) still up — run Orphan cleanup",
-  "performance.project.archived_hint_title": "This project was archived but its containers / services / Caddy routes weren't fully cleaned up. Click Orphan cleanup at the top of the dashboard to release them.",
+  "performance.project.archived_hint_title":
+    "This project was archived but its containers / services / Caddy routes weren't fully cleaned up. Click Orphan cleanup at the top of the dashboard to release them.",
   "performance.unlimited_short": "unlim",
   "performance.of_host": "of host",
   "performance.action.logs": "Logs",
@@ -261,7 +287,8 @@ export const en = {
   "performance.action.stop": "Graceful stop (SIGTERM → SIGKILL)",
   "performance.action.kill": "Kill (SIGKILL)",
   "performance.confirm.stop": "Gracefully stop {name}?",
-  "performance.confirm.kill": "Force-kill {name}? This sends SIGKILL — running processes are not given a chance to clean up.",
+  "performance.confirm.kill":
+    "Force-kill {name}? This sends SIGKILL — running processes are not given a chance to clean up.",
   "performance.confirm.restart": "Restart {name}?",
   "performance.gpu.title": "GPUs",
   "performance.gpu.util": "Utilisation",
@@ -276,32 +303,40 @@ export const en = {
   "performance.view.other": "Other",
   "performance.view_empty": "No containers in this view.",
   "performance.orphan.header": "Orphan projects",
-  "performance.orphan.hint": "Containers whose project / workspace / environment row is no longer in the DB (archived, dropped, or never recorded). Safe to inspect & clean up.",
+  "performance.orphan.hint":
+    "Containers whose project / workspace / environment row is no longer in the DB (archived, dropped, or never recorded). Safe to inspect & clean up.",
   "performance.stream.live": "Live",
   "performance.stream.paused": "Paused (tab hidden)",
   "performance.stream.connecting": "Connecting…",
   "performance.stream.reconnecting": "Reconnecting…",
-  "performance.stream_hint": "Pushed via SSE — the server only samples while this tab is visible. Switch tabs and the connection closes; come back and it auto-resumes. Click a row for identity / limits / live breakdown.",
+  "performance.stream_hint":
+    "Pushed via SSE — the server only samples while this tab is visible. Switch tabs and the connection closes; come back and it auto-resumes. Click a row for identity / limits / live breakdown.",
   "performance.orphan.cleanup": "Clean up all",
   "performance.cleanup.title": "Clean up orphan containers",
   "performance.cleanup.loading": "Building cleanup plan…",
-  "performance.cleanup.intro": "The actions below run server-side. The orphan set is recomputed from live docker + DB state, so a workspace that comes back to life between preview and confirm will NOT be touched.",
+  "performance.cleanup.intro":
+    "The actions below run server-side. The orphan set is recomputed from live docker + DB state, so a workspace that comes back to life between preview and confirm will NOT be touched.",
   "performance.cleanup.section.containers": "Containers to stop + remove",
   "performance.cleanup.section.caddy": "Caddy preview routes to drop",
   "performance.cleanup.section.worktrees": "Host-side worktree directories",
   "performance.cleanup.section.archived_projects": "Archived projects (DB purge)",
-  "performance.cleanup.empty.archived_projects": "None — no archived project is ready to be purged.",
-  "performance.cleanup.archived_projects.hint": "These archived projects have no running containers / live routes left. Cleanup will DELETE them from the database; the FK cascade drops their workspaces, environments, and deploy_runs. Audit events survive untouched.",
-  "performance.cleanup.archived_projects.cascade": "→ cascade: {ws} workspace(s) · {env} env(s) · {run} deploy run(s)",
+  "performance.cleanup.empty.archived_projects":
+    "None — no archived project is ready to be purged.",
+  "performance.cleanup.archived_projects.hint":
+    "These archived projects have no running containers / live routes left. Cleanup will DELETE them from the database; the FK cascade drops their workspaces, environments, and deploy_runs. Audit events survive untouched.",
+  "performance.cleanup.archived_projects.cascade":
+    "→ cascade: {ws} workspace(s) · {env} env(s) · {run} deploy run(s)",
   "performance.cleanup.report.projects_purged": "Archived projects purged from DB: {n}",
   "performance.cleanup.report.project_purge_errors": "DB purge errors",
   "performance.cleanup.empty.containers": "No orphan containers — nothing to remove.",
   "performance.cleanup.empty.caddy": "No stale Caddy preview routes.",
   "performance.cleanup.empty.worktrees": "No worktree directories detected.",
   "performance.cleanup.worktrees.toggle": "Also delete the worktree directories on the host",
-  "performance.cleanup.worktrees.warning": "Destructive. `rm -rf` of each path below. Any uncommitted files inside are lost. Safe to leave OFF — most operators just want the containers gone.",
+  "performance.cleanup.worktrees.warning":
+    "Destructive. `rm -rf` of each path below. Any uncommitted files inside are lost. Safe to leave OFF — most operators just want the containers gone.",
   "performance.cleanup.no_orphans": "Nothing to clean up",
-  "performance.cleanup.no_orphans_hint": "Every running container resolves to a live project / workspace / environment row.",
+  "performance.cleanup.no_orphans_hint":
+    "Every running container resolves to a live project / workspace / environment row.",
   "performance.cleanup.escape_hint": "ESC to cancel",
   "performance.cleanup.cancel": "Cancel",
   "performance.cleanup.confirm": "Delete all",
@@ -350,23 +385,29 @@ export const en = {
   "deploy.in_progress": "In progress",
   "deploy.click_to_view_logs": "Click to view logs + stack controls",
   "deploy.idle_empty": "No deploys yet. Start one with the button below.",
-  "deploy.idle_after_stop": "Stack is stopped — the previous run moved to History. Press Deploy to bring it back.",
+  "deploy.idle_after_stop":
+    "Stack is stopped — the previous run moved to History. Press Deploy to bring it back.",
   "deploy.stopped": "Stopped",
-  "deploy.stopped_hint": "Stack was stopped. Click to view the last run's detail, or press Deploy below to bring it back.",
+  "deploy.stopped_hint":
+    "Stack was stopped. Click to view the last run's detail, or press Deploy below to bring it back.",
   "deploy.stop_stack": "Stop stack",
   "deploy.redeploy": "Redeploy",
-  "deploy.redeploy_hint": "Triggers a new deploy — replaces the currently running stack. Consider stopping first if you want a clean state.",
+  "deploy.redeploy_hint":
+    "Triggers a new deploy — replaces the currently running stack. Consider stopping first if you want a clean state.",
   "deploy.confirm_stop.title": "Stop the running stack?",
-  "deploy.confirm_stop.body": "All containers in this env's compose stack will be stopped + removed. Volumes are kept. The preview URL will stop responding until you redeploy.",
+  "deploy.confirm_stop.body":
+    "All containers in this env's compose stack will be stopped + removed. Volumes are kept. The preview URL will stop responding until you redeploy.",
   "deploy.confirm_redeploy.title": "Redeploy on top of the running stack?",
-  "deploy.confirm_redeploy.body": "The current stack will be replaced — `docker compose up` re-pulls images and re-creates containers. Short downtime is normal. If you want a clean teardown first, cancel and use Stop stack instead.",
+  "deploy.confirm_redeploy.body":
+    "The current stack will be replaced — `docker compose up` re-pulls images and re-creates containers. Short downtime is normal. If you want a clean teardown first, cancel and use Stop stack instead.",
   "deploy.confirm.cancel": "Cancel",
   "deploy.detail.live_logs": "Live stack logs",
   "deploy.detail.live_logs.streaming": "(auto-refresh every 3s)",
   "deploy.detail.live_logs.paused": "(paused)",
   "deploy.detail.live_logs.pause": "Pause",
   "deploy.detail.live_logs.resume": "Resume",
-  "deploy.detail.live_logs.empty": "No log output yet — wait for the next refresh or check that the stack is running.",
+  "deploy.detail.live_logs.empty":
+    "No log output yet — wait for the next refresh or check that the stack is running.",
   "deploy.detail.viewing": "Past run",
   "deploy.detail.back": "Back to live",
   "deploy.detail.run": "Run",
@@ -378,25 +419,34 @@ export const en = {
   "deploy.detail.log_hint": "Persisted snapshot — final ~4 KiB of stdout+stderr.",
   "deploy.detail.log_empty": "No captured output for this run.",
   "deploy.detail.stack_down.badge": "stack down",
-  "deploy.detail.stack_down.title": "This deploy succeeded historically, but the stack is NOT currently running. The URL below will 502 or 404 until the stack is brought back up — click [Deploy] to redeploy this version.",
+  "deploy.detail.stack_down.title":
+    "This deploy succeeded historically, but the stack is NOT currently running. The URL below will 502 or 404 until the stack is brought back up — click [Deploy] to redeploy this version.",
   "deploy.detail.stack_partial.badge": "stack partial {r}/{t}",
-  "deploy.detail.stack_partial.title": "Some containers from this deploy are no longer running. The URL may serve stale or broken responses.",
+  "deploy.detail.stack_partial.title":
+    "Some containers from this deploy are no longer running. The URL may serve stale or broken responses.",
   "deploy.detail.url.live": "Stack is currently running — open the preview in a new tab.",
-  "deploy.detail.url.stack_down": "Stack is currently down — this URL won't respond. Re-deploy to bring it back online.",
+  "deploy.detail.url.stack_down":
+    "Stack is currently down — this URL won't respond. Re-deploy to bring it back online.",
   "deploy.stack.title": "Stack containers",
   "deploy.stack.restart": "Restart stack",
   "deploy.stack.down": "Stop stack",
-  "deploy.stack.confirm.down": "Stop and remove every container in {name}? Containers + the implicit compose network go away; named volumes survive.",
-  "deploy.stack.confirm.restart": "Restart every container in {name}? Each service bounces in place.",
+  "deploy.stack.confirm.down":
+    "Stop and remove every container in {name}? Containers + the implicit compose network go away; named volumes survive.",
+  "deploy.stack.confirm.restart":
+    "Restart every container in {name}? Each service bounces in place.",
   "deploy.stack.failed.down": "Stack down failed:",
   "deploy.stack.failed.restart": "Stack restart failed:",
-  "deploy.stack.empty": "No containers found for this compose project. Stop was already issued, or the stack was never up.",
+  "deploy.stack.empty":
+    "No containers found for this compose project. Stop was already issued, or the stack was never up.",
   "deploy.stack.empty_after_success": "Stack appears down. Click Deploy to bring it back up.",
   "deploy.stack.reroute": "Re-route",
-  "deploy.stack.reroute.title": "Re-register the Caddy preview route against the currently-running primary container — use this when the bound URL 404s after a routing change.",
-  "deploy.stack.confirm.reroute": "Re-register the Caddy preview route for {name}? Picks the running primary container + applies the current routing policy (path / strip_prefix).",
+  "deploy.stack.reroute.title":
+    "Re-register the Caddy preview route against the currently-running primary container — use this when the bound URL 404s after a routing change.",
+  "deploy.stack.confirm.reroute":
+    "Re-register the Caddy preview route for {name}? Picks the running primary container + applies the current routing policy (path / strip_prefix).",
   "deploy.stack.failed.reroute": "Re-route failed:",
-  "deploy.stack.confirm.reroute_overrides": "Re-route {name} with the routing overrides shown below? The new values will replace the saved primary upstream / scheme / host header / TLS / strip-prefix settings on this environment.",
+  "deploy.stack.confirm.reroute_overrides":
+    "Re-route {name} with the routing overrides shown below? The new values will replace the saved primary upstream / scheme / host header / TLS / strip-prefix settings on this environment.",
   "deploy.stack.overrides.title": "Primary upstream overrides",
   "deploy.stack.overrides.primary_service": "Primary service",
   "deploy.stack.overrides.primary_port": "Primary port",
@@ -405,17 +455,24 @@ export const en = {
   "deploy.stack.overrides.tls_insecure": "TLS verification",
   "deploy.stack.overrides.strip_prefix": "Strip /preview/<slug>",
   "deploy.stack.overrides.preview_mode": "Routing strategy",
-  "deploy.stack.overrides.hint": "Leave a field blank / on \"inherit\" to keep its saved value. **Routing strategy:** path mode shares the apex with GAPT (root-relative URLs like /projects collide; mitigated by short-TTL cookie pinning + Referer fallback). Subdomain mode gives the app its own host so every URL the app emits Just Works — requires wildcard DNS on the preview domain + Caddy on-demand TLS (already wired in Caddyfile.prod). **Upstream:** use HTTPS + skip-verify + Host rewrite when your stack fronts its services with its own nginx/traefik that only listens on TLS for a public domain.",
+  "deploy.stack.overrides.hint":
+    'Leave a field blank / on "inherit" to keep its saved value. **Routing strategy:** path mode shares the apex with GAPT (root-relative URLs like /projects collide; mitigated by short-TTL cookie pinning + Referer fallback). Subdomain mode gives the app its own host so every URL the app emits Just Works — requires wildcard DNS on the preview domain + Caddy on-demand TLS (already wired in Caddyfile.prod). **Upstream:** use HTTPS + skip-verify + Host rewrite when your stack fronts its services with its own nginx/traefik that only listens on TLS for a public domain.',
   "deploy.stack.help.button_label": "Help",
-  "deploy.stack.help.button_title": "Open the full guide — what Re-route does, path vs subdomain mode, each override field, and recommended settings per scenario.",
+  "deploy.stack.help.button_title":
+    "Open the full guide — what Re-route does, path vs subdomain mode, each override field, and recommended settings per scenario.",
   "deploy.stack.help.title": "Preview routing & Re-route — full guide",
-  "deploy.stack.help.subtitle": "How the deployed stack gets bound to a public URL, what each override does, and when to use which.",
+  "deploy.stack.help.subtitle":
+    "How the deployed stack gets bound to a public URL, what each override does, and when to use which.",
   "deploy.stack.help.close": "Got it",
   "deploy.stack.mode.label": "Preview routing strategy",
-  "deploy.stack.mode.path.title": "Path mode — apex/preview/<slug>/* (shared domain, uses cookie pinning for navigation; works on any DNS setup).",
-  "deploy.stack.mode.subdomain.title": "Subdomain mode — <slug>.<preview-domain>/* (isolated host, no cookies/TTLs; requires wildcard DNS *.<preview-domain> + on-demand TLS).",
-  "deploy.stack.mode.confirm_to_subdomain": "Switch \"{name}\" to SUBDOMAIN mode? URL becomes <slug>.<preview-domain>/*. Requires wildcard DNS — if not configured, the URL will fail until DNS is added. The change is persisted to the env config.",
-  "deploy.stack.mode.confirm_to_path": "Switch \"{name}\" back to PATH mode? URL becomes apex/preview/<slug>/*. Navigation relies on a 24h cookie + Sec-Fetch-Dest=document 307 redirect — works on any DNS setup but less robust for multi-tab / shared links.",
+  "deploy.stack.mode.path.title":
+    "Path mode — apex/preview/<slug>/* (shared domain, uses cookie pinning for navigation; works on any DNS setup).",
+  "deploy.stack.mode.subdomain.title":
+    "Subdomain mode — <slug>.<preview-domain>/* (isolated host, no cookies/TTLs; requires wildcard DNS *.<preview-domain> + on-demand TLS).",
+  "deploy.stack.mode.confirm_to_subdomain":
+    'Switch "{name}" to SUBDOMAIN mode? URL becomes <slug>.<preview-domain>/*. Requires wildcard DNS — if not configured, the URL will fail until DNS is added. The change is persisted to the env config.',
+  "deploy.stack.mode.confirm_to_path":
+    'Switch "{name}" back to PATH mode? URL becomes apex/preview/<slug>/*. Navigation relies on a 24h cookie + Sec-Fetch-Dest=document 307 redirect — works on any DNS setup but less robust for multi-tab / shared links.',
   "deploy.stack.busy.down": "Stopping stack…",
   "deploy.stack.busy.restart": "Restarting stack…",
   "deploy.stack.busy.reroute": "Re-routing…",
@@ -453,7 +510,8 @@ export const en = {
   "ide.editor.saved": "Saved",
   "ide.editor.area.no_selection": "No file selected",
   "ide.editor.area.close": "Close editor (chat fills the space)",
-  "ide.editor.area.empty_hint": "Pick a file from the Explorer or a changed file from Source Control. Close this column with × to give Chat the full width.",
+  "ide.editor.area.empty_hint":
+    "Pick a file from the Explorer or a changed file from Source Control. Close this column with × to give Chat the full width.",
   "ide.file_diff.loading": "Loading diff…",
   "ide.file_diff.no_changes": "No changes for this path.",
   "ide.file_diff.refresh": "Re-fetch diff",
@@ -498,8 +556,10 @@ export const en = {
   "chat.mode.plan": "Plan",
   "chat.mode.act": "Act",
   "chat.mode.plan_hint": "Plan mode — the agent will outline before changing anything.",
-  "chat.mode.plan.tooltip": "Plan mode — server-enforced: gapt_edit, gapt_git, and gapt_pr are blocked. Read-only tools still work.",
-  "chat.mode.act.tooltip": "Act mode — all tools enabled. Switch to Plan when you want to brainstorm without risking changes.",
+  "chat.mode.plan.tooltip":
+    "Plan mode — server-enforced: gapt_edit, gapt_git, and gapt_pr are blocked. Read-only tools still work.",
+  "chat.mode.act.tooltip":
+    "Act mode — all tools enabled. Switch to Plan when you want to brainstorm without risking changes.",
   "chat.tool.running": "Running…",
   "chat.tool.ok": "OK",
   "chat.tool.error": "Failed",
@@ -689,7 +749,8 @@ export const en = {
   "git.fetch": "Fetch",
   "git.fetch.title": "git fetch origin — refresh remote refs only, no merge.",
   "git.pull": "Pull",
-  "git.pull.title": "git fetch + ff-only merge. Refuses non-fast-forward — resolve via terminal if needed.",
+  "git.pull.title":
+    "git fetch + ff-only merge. Refuses non-fast-forward — resolve via terminal if needed.",
   "git.sync": "Sync",
   "git.sync.title": "fetch + pull (ff-only) + push in one click — VS Code-style sync.",
   "git.section.changes": "Changes",
@@ -702,12 +763,13 @@ export const en = {
   "git.diff.placeholder": "Click a file to see its diff.",
   "git.diff.close": "Close diff",
   "git.discard.title": "Discard worktree changes for this file",
-  "git.discard.confirm": "Discard local changes to {path}? This cannot be undone — uncommitted edits will be lost.",
+  "git.discard.confirm":
+    "Discard local changes to {path}? This cannot be undone — uncommitted edits will be lost.",
   "git.discard.done": "Discarded.",
   "git.discard.partial": "Partial discard:",
   "git.commit": "Commit",
   "git.commit.placeholder": "Commit message (first line = subject)…",
-  "git.commit.placeholder_branch": "Message (Ctrl+Enter to commit on \"{branch}\")",
+  "git.commit.placeholder_branch": 'Message (Ctrl+Enter to commit on "{branch}")',
   "git.commit.include_on": "Include this file in the commit",
   "git.commit.include_off": "Exclude this file from the commit",
   "git.commit.need_message": "Type a commit message.",
@@ -722,7 +784,8 @@ export const en = {
   "git.push.error.auth": "Push failed — remote auth rejected. Check the project's git token.",
   "git.push.error.not_found": "Push failed — remote repository not found / access denied.",
   "git.push.error.nothing": "Everything up-to-date — nothing to send.",
-  "git.push.error.permission": "Push failed — permission denied. Your token may not have write access.",
+  "git.push.error.permission":
+    "Push failed — permission denied. Your token may not have write access.",
   "git.pr": "PR",
   "git.pr.title": "Create a GitHub pull request via gh CLI.",
   "git.pr.done": "Pull request created",
@@ -737,8 +800,10 @@ export const en = {
   "git.branch.create_title": "Create branch from current HEAD",
   "git.branch.checkout_remote_hint": "checkout",
   "git.branch.delete_title": "Delete branch",
-  "git.branch.delete_confirm": "Delete branch \"{name}\"? Refused if it has unmerged commits — you'll be asked to force.",
-  "git.branch.force_confirm": "Branch \"{name}\" has unmerged commits. Force delete (-D)? UNRECOVERABLE.",
+  "git.branch.delete_confirm":
+    'Delete branch "{name}"? Refused if it has unmerged commits — you\'ll be asked to force.',
+  "git.branch.force_confirm":
+    'Branch "{name}" has unmerged commits. Force delete (-D)? UNRECOVERABLE.',
   "git.branch.deleted": "Deleted",
   "git.branch.delete_failed": "Branch delete failed",
   "git.checkout.done": "Switched to",
@@ -760,36 +825,52 @@ export const en = {
   // ─── env settings panel (single control surface for an env's
   // deploy_target_config — routing strategy, upstream, build) ───
   "env_settings.help": "Help",
-  "env_settings.help_title": "Open the full guide — Re-route docs with 8 sections covering path/subdomain, every override field, scenario recipes, and troubleshooting.",
+  "env_settings.help_title":
+    "Open the full guide — Re-route docs with 8 sections covering path/subdomain, every override field, scenario recipes, and troubleshooting.",
   "env_settings.section.presets": "Quick-fill: pick the scenario that matches your stack",
-  "env_settings.section.presets_hint": "Each preset fills the form with a known-good combination. You can tweak individual fields after applying. Active preset is highlighted.",
+  "env_settings.section.presets_hint":
+    "Each preset fills the form with a known-good combination. You can tweak individual fields after applying. Active preset is highlighted.",
   "env_settings.preset.current": "current",
   "env_settings.preset.nextjs_dev": "Next.js dev (no basePath)",
-  "env_settings.preset.nextjs_dev_hint": "`next dev` with no basePath. Path mode + strip prefix so the app sees / at its root. Fits most local-only or test envs.",
+  "env_settings.preset.nextjs_dev_hint":
+    "`next dev` with no basePath. Path mode + strip prefix so the app sees / at its root. Fits most local-only or test envs.",
   "env_settings.preset.nextjs_prod_basepath": "Next.js prod (basePath baked)",
-  "env_settings.preset.nextjs_prod_basepath_hint": "App built with NEXT_PUBLIC_BASE_PATH=/preview/<slug>. Keep prefix; the app emits URLs under it. Asset leaks (favicon.png, etc.) are caught by the Referer fallback.",
+  "env_settings.preset.nextjs_prod_basepath_hint":
+    "App built with NEXT_PUBLIC_BASE_PATH=/preview/<slug>. Keep prefix; the app emits URLs under it. Asset leaks (favicon.png, etc.) are caught by the Referer fallback.",
   "env_settings.preset.tls_terminator": "TLS terminator nginx (Cloudflare origin cert)",
-  "env_settings.preset.tls_terminator_hint": "Your prod stack ships its own nginx that forces HTTPS on a public-domain origin cert. Sets scheme=https, skip-verify, port=443, primary=nginx — fill in the public domain in Host header.",
+  "env_settings.preset.tls_terminator_hint":
+    "Your prod stack ships its own nginx that forces HTTPS on a public-domain origin cert. Sets scheme=https, skip-verify, port=443, primary=nginx — fill in the public domain in Host header.",
   "env_settings.preset.subdomain": "Subdomain mode (production-grade)",
-  "env_settings.preset.subdomain_hint": "Each preview gets <slug>.<preview-domain>. No cookies, no TTL, URL is permanent. REQUIRES wildcard DNS *.<preview-domain> + Caddy on-demand TLS.",
+  "env_settings.preset.subdomain_hint":
+    "Each preview gets <slug>.<preview-domain>. No cookies, no TTL, URL is permanent. REQUIRES wildcard DNS *.<preview-domain> + Caddy on-demand TLS.",
   "env_settings.section.subdomain_setup": "Subdomain mode setup — required steps",
-  "env_settings.section.subdomain_setup_hint": "Three prerequisites. Without all three the URL won't resolve. Run the diagnose at the bottom to see which are missing right now.",
+  "env_settings.section.subdomain_setup_hint":
+    "Three prerequisites. Without all three the URL won't resolve. Run the diagnose at the bottom to see which are missing right now.",
   "env_settings.section.subdomain_setup_ready": "Subdomain mode setup — ready",
-  "env_settings.section.subdomain_setup_ready_hint": "Cloudflare provider is configured and the tunnel is remote-managed with the wildcard ingress in place — GAPT handles DNS + tunnel routing for every preview.",
+  "env_settings.section.subdomain_setup_ready_hint":
+    "Cloudflare provider is configured and the tunnel is remote-managed with the wildcard ingress in place — GAPT handles DNS + tunnel routing for every preview.",
   "env_settings.subdomain.ready.title": "DNS + tunnel ingress handled by Cloudflare provider",
   "env_settings.subdomain.ready.dns": "Wildcard DNS resolves via the configured zone.",
-  "env_settings.subdomain.ready.tunnel": "Tunnel is in remote-managed mode and the `*.<preview-domain>` ingress is present.",
-  "env_settings.subdomain.ready.env": "Server has `GAPT_CADDY_PREVIEW_DOMAIN` set and Caddy is reachable.",
-  "env_settings.subdomain.ready.cert_warning": "One remaining manual step: Cloudflare's Universal SSL doesn't cover wildcards. Issue an Advanced Certificate for `*.<preview-domain>` (or enable Total TLS) so HTTPS handshakes succeed.",
+  "env_settings.subdomain.ready.tunnel":
+    "Tunnel is in remote-managed mode and the `*.<preview-domain>` ingress is present.",
+  "env_settings.subdomain.ready.env":
+    "Server has `GAPT_CADDY_PREVIEW_DOMAIN` set and Caddy is reachable.",
+  "env_settings.subdomain.ready.cert_warning":
+    "One remaining manual step: Cloudflare's Universal SSL doesn't cover wildcards. Issue an Advanced Certificate for `*.<preview-domain>` (or enable Total TLS) so HTTPS handshakes succeed.",
   "env_settings.subdomain.step1.title": "Add a wildcard DNS record on Cloudflare",
-  "env_settings.subdomain.step1.body": "Cloudflare → DNS → Add record. Same target as your existing GAPT domain (CNAME to the cloudflared tunnel, or A to your edge IP). Orange-cloud proxy ON so Cloudflare's edge fronts it.",
-  "env_settings.subdomain.step2.title": "(Cloudflare Tunnel only) Add the wildcard to cloudflared ingress",
-  "env_settings.subdomain.step2.body": "Edit `~/.cloudflared/config.yml` and add a `*.<domain>` hostname entry that routes to the same local Caddy port (38080). Restart cloudflared so the new ingress takes effect.",
+  "env_settings.subdomain.step1.body":
+    "Cloudflare → DNS → Add record. Same target as your existing GAPT domain (CNAME to the cloudflared tunnel, or A to your edge IP). Orange-cloud proxy ON so Cloudflare's edge fronts it.",
+  "env_settings.subdomain.step2.title":
+    "(Cloudflare Tunnel only) Add the wildcard to cloudflared ingress",
+  "env_settings.subdomain.step2.body":
+    "Edit `~/.cloudflared/config.yml` and add a `*.<domain>` hostname entry that routes to the same local Caddy port (38080). Restart cloudflared so the new ingress takes effect.",
   "env_settings.subdomain.step3.title": "Verify GAPT server env vars",
-  "env_settings.subdomain.step3.body": "The server reads `GAPT_CADDY_PREVIEW_DOMAIN` to know which suffix to issue certs for, and `GAPT_CADDY_ADMIN_URL` to talk to Caddy. Both must be set when the server starts.",
+  "env_settings.subdomain.step3.body":
+    "The server reads `GAPT_CADDY_PREVIEW_DOMAIN` to know which suffix to issue certs for, and `GAPT_CADDY_ADMIN_URL` to talk to Caddy. Both must be set when the server starts.",
   "env_settings.subdomain.diagnose.title": "Live diagnose",
   "env_settings.subdomain.diagnose.run": "Run diagnose",
-  "env_settings.subdomain.diagnose.idle": "Click \"Run diagnose\" to test DNS + Caddy + env config and surface what's missing.",
+  "env_settings.subdomain.diagnose.idle":
+    'Click "Run diagnose" to test DNS + Caddy + env config and surface what\'s missing.',
   "env_settings.subdomain.check.env": "GAPT_CADDY_PREVIEW_DOMAIN",
   "env_settings.subdomain.check.dns": "DNS resolves {host}",
   "env_settings.subdomain.check.caddy_admin": "Caddy admin API reachable",
@@ -809,93 +890,122 @@ export const en = {
   "env_settings.subdomain.cta.configuring": "Configuring…",
   "env_settings.subdomain.cta.fix_cert": "Fix wildcard SSL cert",
   "cert_guide.title": "Wildcard SSL certificate — fix HTTPS handshake",
-  "cert_guide.intro": "Cloudflare's Universal SSL doesn't cover `*.<preview-domain>`. Without a wildcard-covering certificate the HTTPS handshake fails before any request reaches our Caddy.",
-  "cert_guide.intro_with_alt": "Your current preview domain `{preview}` is a second-level wildcard — Cloudflare requires Advanced Certificate Manager (ACM, $10/month per zone) to issue a cert for it. Two paths forward, pick whichever fits:",
+  "cert_guide.intro":
+    "Cloudflare's Universal SSL doesn't cover `*.<preview-domain>`. Without a wildcard-covering certificate the HTTPS handshake fails before any request reaches our Caddy.",
+  "cert_guide.intro_with_alt":
+    "Your current preview domain `{preview}` is a second-level wildcard — Cloudflare requires Advanced Certificate Manager (ACM, $10/month per zone) to issue a cert for it. Two paths forward, pick whichever fits:",
   "cert_guide.path_a.title": "A. Keep `{preview}` — purchase ACM",
-  "cert_guide.path_a.body": "Subscribe to Advanced Certificate Manager on the zone. Once active, either Total TLS (auto-issues per-subdomain certs) or a manually-requested Advanced Certificate covers your wildcard. URLs stay exactly as they are now.",
+  "cert_guide.path_a.body":
+    "Subscribe to Advanced Certificate Manager on the zone. Once active, either Total TLS (auto-issues per-subdomain certs) or a manually-requested Advanced Certificate covers your wildcard. URLs stay exactly as they are now.",
   "cert_guide.path_a.cost": "Cost: $10/month per zone",
   "cert_guide.path_a.button": "Subscribe to ACM in Cloudflare dashboard",
   "cert_guide.path_b.title": "B. Switch preview domain to `{alt}` — free",
-  "cert_guide.path_b.body": "Use `{alt}` (your zone apex) instead of `{preview}`. Each preview becomes `<slug>.{alt}` — already covered by your existing free `*.{alt}` Universal SSL cert. The trade-off: every existing preview URL changes, you'll need to update the server env var + re-route running envs.",
+  "cert_guide.path_b.body":
+    "Use `{alt}` (your zone apex) instead of `{preview}`. Each preview becomes `<slug>.{alt}` — already covered by your existing free `*.{alt}` Universal SSL cert. The trade-off: every existing preview URL changes, you'll need to update the server env var + re-route running envs.",
   "cert_guide.path_b.cost": "Cost: free (uses existing cert)",
   "cert_guide.path_b.button": "Apply switch instructions",
   "cert_guide.status.label": "Current state",
   "cert_guide.option0.title": "Reuse existing wildcard cert (recommended — free, no ACM)",
-  "cert_guide.option0.body": "Your zone already has an active `{apex_wildcard}` cert (free Universal SSL). Change the preview domain to `{alt}` so each preview is emitted as `<slug>.{alt}` — already covered by the existing cert. Your main GAPT app stays at its current host.",
+  "cert_guide.option0.body":
+    "Your zone already has an active `{apex_wildcard}` cert (free Universal SSL). Change the preview domain to `{alt}` so each preview is emitted as `<slug>.{alt}` — already covered by the existing cert. Your main GAPT app stays at its current host.",
   "cert_guide.option0.before": "Now (broken)",
   "cert_guide.option0.after": "After switch (works)",
   "cert_guide.option0.step1": "Set the server env var (in docker-compose / systemd unit)",
   "cert_guide.option0.step2": "Restart the GAPT server so the new domain takes effect",
   "cert_guide.option0.step3": "Re-route any existing subdomain-mode envs to pick up the new URL",
-  "cert_guide.option0.cost_note": "✓ Free — uses your existing Universal SSL cert. No ACM, no monthly fee. The current `*.gapt.hrletsgo.me` path needs ACM ($10/mo) — this one doesn't.",
+  "cert_guide.option0.cost_note":
+    "✓ Free — uses your existing Universal SSL cert. No ACM, no monthly fee. The current `*.gapt.hrletsgo.me` path needs ACM ($10/mo) — this one doesn't.",
   "cert_guide.existing_certs": "Active certs in this zone",
   "cert_guide.option1.title": "Total TLS (auto-issues per-subdomain certs)",
-  "cert_guide.option1.body": "Cloudflare-managed — once enabled, certs are issued automatically for every subdomain in the zone. Takes effect within a few minutes.",
-  "cert_guide.option1.body_needs_acm": "Cloudflare-managed — auto-issues certs for every subdomain. On Free plans this requires Advanced Certificate Manager ($10/month per zone) because the current preview domain needs a second-level wildcard. If you're on a paid plan with ACM included, this works as-is.",
-  "cert_guide.option1.acm_blocked": "Can't enable from here — your zone needs ACM for Total TLS to issue the deeper wildcard. Use the dashboard link to purchase ACM, or use Option 0 above to avoid the fee.",
+  "cert_guide.option1.body":
+    "Cloudflare-managed — once enabled, certs are issued automatically for every subdomain in the zone. Takes effect within a few minutes.",
+  "cert_guide.option1.body_needs_acm":
+    "Cloudflare-managed — auto-issues certs for every subdomain. On Free plans this requires Advanced Certificate Manager ($10/month per zone) because the current preview domain needs a second-level wildcard. If you're on a paid plan with ACM included, this works as-is.",
+  "cert_guide.option1.acm_blocked":
+    "Can't enable from here — your zone needs ACM for Total TLS to issue the deeper wildcard. Use the dashboard link to purchase ACM, or use Option 0 above to avoid the fee.",
   "cert_guide.option1.enable_button": "Enable Total TLS now",
   "cert_guide.option1.enabling": "Enabling…",
   "cert_guide.option1.dashboard_link": "Open Cloudflare dashboard",
-  "cert_guide.option1.scope_missing": "Token doesn't have Zone:SSL and Certificates:Edit scope — use the dashboard link instead, or re-issue the token with that scope added.",
+  "cert_guide.option1.scope_missing":
+    "Token doesn't have Zone:SSL and Certificates:Edit scope — use the dashboard link instead, or re-issue the token with that scope added.",
   "cert_guide.option2.title": "Advanced Certificate ($10/month per zone)",
-  "cert_guide.option2.body": "Manual one-time issuance via dashboard. Covers the exact wildcard pattern you specify. Best when you want explicit control over CA and validity.",
+  "cert_guide.option2.body":
+    "Manual one-time issuance via dashboard. Covers the exact wildcard pattern you specify. Best when you want explicit control over CA and validity.",
   "cert_guide.option2.dashboard_link": "Open SSL/TLS → Edge Certificates",
   "cert_guide.option3.title": "Custom Hostnames (Enterprise)",
-  "cert_guide.option3.body": "SaaS-style per-tenant certs. Out of scope for most setups — included here for completeness only.",
-  "cert_guide.no_zone": "Zone not selected in provider settings — pick one to surface the deep-link.",
+  "cert_guide.option3.body":
+    "SaaS-style per-tenant certs. Out of scope for most setups — included here for completeness only.",
+  "cert_guide.no_zone":
+    "Zone not selected in provider settings — pick one to surface the deep-link.",
   "cert_guide.verify.button": "Re-check certificate status",
   "cert_guide.verify.running": "Re-checking…",
   "cert_guide.verify.ok": "✓ HTTPS handshake now succeeds. You can close this dialog.",
   "env_settings.button": "Settings",
-  "env_settings.button_title": "Open environment settings — routing strategy, upstream config, build options.",
+  "env_settings.button_title":
+    "Open environment settings — routing strategy, upstream config, build options.",
   "env_settings.title": "Environment settings",
-  "env_settings.subtitle": "Every deploy knob in one place. \"Save\" persists to env config; \"Save & re-route\" also re-registers Caddy with the new values so a currently-running stack picks them up without a re-deploy.",
+  "env_settings.subtitle":
+    'Every deploy knob in one place. "Save" persists to env config; "Save & re-route" also re-registers Caddy with the new values so a currently-running stack picks them up without a re-deploy.',
   "env_settings.close": "Close",
   "env_settings.save": "Save",
   "env_settings.save_and_reroute": "Save & re-route",
-  "env_settings.save_and_reroute_title": "Persist + immediately re-register Caddy preview routes against the running stack.",
+  "env_settings.save_and_reroute_title":
+    "Persist + immediately re-register Caddy preview routes against the running stack.",
   "env_settings.saved": "Saved.",
   "env_settings.saved_and_rerouted": "Saved + re-routed.",
   "env_settings.reroute_failed": "Saved, but reroute failed:",
   "env_settings.inherit": "— inherit —",
   "env_settings.section.routing": "Routing strategy",
-  "env_settings.section.routing_hint": "How the preview URL is shaped. Path mode shares the apex domain (needs no DNS changes; relies on a 24h cookie + 307 redirect for in-app navigation). Subdomain mode gives each preview its own host (production-grade isolation; needs wildcard DNS + on-demand TLS).",
-  "env_settings.mode.path.short": "apex/preview/<slug>/* — works on any DNS setup, cookie-pinned navigation.",
-  "env_settings.mode.subdomain.short": "<slug>.<preview-domain>/* — isolated host, no cookies, requires wildcard DNS.",
-  "env_settings.mode.subdomain.dns_warning": "⚠ Subdomain mode requires wildcard DNS (*.<preview-domain>) + Caddy on-demand TLS. If DNS isn't set up, the URL won't resolve. Cookie/TTL/Sec-Fetch-Dest fallbacks are NOT used in this mode.",
+  "env_settings.section.routing_hint":
+    "How the preview URL is shaped. Path mode shares the apex domain (needs no DNS changes; relies on a 24h cookie + 307 redirect for in-app navigation). Subdomain mode gives each preview its own host (production-grade isolation; needs wildcard DNS + on-demand TLS).",
+  "env_settings.mode.path.short":
+    "apex/preview/<slug>/* — works on any DNS setup, cookie-pinned navigation.",
+  "env_settings.mode.subdomain.short":
+    "<slug>.<preview-domain>/* — isolated host, no cookies, requires wildcard DNS.",
+  "env_settings.mode.subdomain.dns_warning":
+    "⚠ Subdomain mode requires wildcard DNS (*.<preview-domain>) + Caddy on-demand TLS. If DNS isn't set up, the URL won't resolve. Cookie/TTL/Sec-Fetch-Dest fallbacks are NOT used in this mode.",
   "env_settings.strip_prefix": "Strip /preview/<slug> before forwarding",
-  "env_settings.strip_prefix_hint": "ON: app sees itself at / (for apps without baked-in basePath). OFF: app sees the prefix (for basePath-aware builds). Path mode only.",
+  "env_settings.strip_prefix_hint":
+    "ON: app sees itself at / (for apps without baked-in basePath). OFF: app sees the prefix (for basePath-aware builds). Path mode only.",
   "env_settings.section.upstream": "Upstream",
-  "env_settings.section.upstream_hint": "Which container Caddy forwards to + transport. Leave blank to let GAPT auto-detect (reverse-proxy services preferred, then frontend, then first published port).",
+  "env_settings.section.upstream_hint":
+    "Which container Caddy forwards to + transport. Leave blank to let GAPT auto-detect (reverse-proxy services preferred, then frontend, then first published port).",
   "env_settings.primary_service": "Primary service",
   "env_settings.primary_service_hint": "compose service name. Blank = auto.",
   "env_settings.primary_port": "Primary port",
   "env_settings.primary_port_hint": "Container internal port (not host port).",
   "env_settings.upstream_scheme": "Upstream scheme",
-  "env_settings.upstream_scheme_hint": "https if the upstream is a TLS terminator (e.g. own nginx with Cloudflare origin cert).",
+  "env_settings.upstream_scheme_hint":
+    "https if the upstream is a TLS terminator (e.g. own nginx with Cloudflare origin cert).",
   "env_settings.upstream_tls_insecure": "Skip TLS verify",
-  "env_settings.upstream_tls_insecure_hint": "ON for self-signed / domain-mismatched upstream certs (common when GAPT dials the docker DNS name but the cert is for the public domain).",
+  "env_settings.upstream_tls_insecure_hint":
+    "ON for self-signed / domain-mismatched upstream certs (common when GAPT dials the docker DNS name but the cert is for the public domain).",
   "env_settings.upstream_host_header": "Host header rewrite",
-  "env_settings.upstream_host_header_hint": "Set when upstream nginx routes by server_name — fill in the public domain it expects. Blank = passthrough.",
+  "env_settings.upstream_host_header_hint":
+    "Set when upstream nginx routes by server_name — fill in the public domain it expects. Blank = passthrough.",
   "env_settings.section.deploy": "Deploy behavior",
   "env_settings.section.deploy_hint": "Knobs that change how `compose up` runs.",
   "env_settings.build": "Build on deploy",
-  "env_settings.build_hint": "Pass --build to docker compose up. Required for `build: .` services that you want re-built each deploy.",
+  "env_settings.build_hint":
+    "Pass --build to docker compose up. Required for `build: .` services that you want re-built each deploy.",
   "env_settings.require_2fa": "Require 2FA",
   "env_settings.require_2fa_hint": "Deploy refuses without a valid 2FA code.",
   "env_settings.cost_multiplier": "Cost multiplier",
   "env_settings.cost_multiplier_hint": "Multiplies this env's reported cost. Usually 1.",
   "env_settings.preview_slug": "Preview slug",
-  "env_settings.preview_slug_hint": "URL slug for both modes — `/preview/<slug>/*` (path mode) and `<slug>.<preview-domain>` (subdomain). Must be lowercase a-z, 0-9, hyphen; 1-63 chars; no leading/trailing hyphen. Leave blank to auto-generate `{default}`.",
+  "env_settings.preview_slug_hint":
+    "URL slug for both modes — `/preview/<slug>/*` (path mode) and `<slug>.<preview-domain>` (subdomain). Must be lowercase a-z, 0-9, hyphen; 1-63 chars; no leading/trailing hyphen. Leave blank to auto-generate `{default}`.",
   "settings.providers.heading": "Infrastructure providers",
   "settings.gpu.heading": "Workspace GPU",
   "settings.gpu.title": "GPU policy",
-  "settings.gpu.description": "Controls whether new workspace containers (`gapt-ws-<wid>`) are launched with GPU access. Applies on the next workspace boot. Existing containers keep their original mapping until restarted.",
+  "settings.gpu.description":
+    "Controls whether new workspace containers (`gapt-ws-<wid>`) are launched with GPU access. Applies on the next workspace boot. Existing containers keep their original mapping until restarted.",
   "settings.gpu.refresh": "Re-probe GPU",
   "settings.gpu.loading": "Probing host GPUs…",
   "settings.gpu.policy.cpu_only": "CPU only",
   "settings.gpu.applied.label": "Applied policy",
-  "settings.gpu.applied.hint_on": "`docker run --gpus <value>` will be added when booting a new workspace container.",
+  "settings.gpu.applied.hint_on":
+    "`docker run --gpus <value>` will be added when booting a new workspace container.",
   "settings.gpu.applied.hint_off": "No `--gpus` flag is added. Workspaces boot CPU-only.",
   "settings.gpu.host.label": "Host GPUs",
   "settings.gpu.host.count": "{n} device(s) detected via nvidia-smi.",
@@ -904,20 +1014,24 @@ export const en = {
   "settings.gpu.change.label": "How to change",
   "settings.gpu.change.body": "Set the env var below and restart the server. Recognised forms:",
   "settings.gpu.change.unset": "(unset = CPU only)",
-  "settings.gpu.change.restart_hint": "Requires NVIDIA Container Toolkit on the host. Server restart needed for the new value to apply.",
+  "settings.gpu.change.restart_hint":
+    "Requires NVIDIA Container Toolkit on the host. Server restart needed for the new value to apply.",
   "settings.llm_backends.heading": "LLM Backends",
   "settings.llm_backends.title": "Provider health",
-  "settings.llm_backends.description": "Per-provider auth + reachability. Click a row to set or rotate its credential. Claude Code CLI opens a dedicated auth modal with four sign-in paths.",
+  "settings.llm_backends.description":
+    "Per-provider auth + reachability. Click a row to set or rotate its credential. Claude Code CLI opens a dedicated auth modal with four sign-in paths.",
   "settings.llm_backends.refresh": "Re-probe every provider",
   "settings.llm_backends.loading": "Probing providers…",
   "settings.llm_backends.row.configure": "Configure",
   "settings.llm_backends.row.set_key": "Set API key",
   "settings.llm_backends.row.update": "Rotate",
   "settings.llm_backends.editor.label": "API key",
-  "settings.llm_backends.editor.hint": "Stored encrypted in the vault. Executor exports it as `{env}` when booting a workspace.",
+  "settings.llm_backends.editor.hint":
+    "Stored encrypted in the vault. Executor exports it as `{env}` when booting a workspace.",
   "settings.llm_backends.editor.hint_no_env": "Stored encrypted in the vault.",
   "settings.llm_backends.editor.save": "Save",
-  "settings.llm_backends.editor.delete_confirm": "Remove the stored API key? Workspaces booting after this will lose this provider until you paste a new one.",
+  "settings.llm_backends.editor.delete_confirm":
+    "Remove the stored API key? Workspaces booting after this will lose this provider until you paste a new one.",
   "claude_auth.modal.title": "Claude Code (CLI) — Authentication",
   "claude_auth.modal.close": "Close",
   "claude_auth.modal.refresh": "Re-probe `claude auth status`",
@@ -929,103 +1043,146 @@ export const en = {
   "claude_auth.modal.test_hint": "Runs `claude --print ping` to verify auth.",
   "claude_auth.modal.test_ok": "Response received.",
   "claude_auth.modal.logout": "Sign out",
-  "claude_auth.modal.logout_confirm": "Sign out of Claude on the host? You'll need to authenticate again to use the CLI.",
-  "claude_auth.modal.sse_lost": "Live stream dropped. Use the polling fallback or restart the login.",
+  "claude_auth.modal.logout_confirm":
+    "Sign out of Claude on the host? You'll need to authenticate again to use the CLI.",
+  "claude_auth.modal.sse_lost":
+    "Live stream dropped. Use the polling fallback or restart the login.",
   "claude_auth.modal.mode.heading": "Authentication method",
   "claude_auth.modal.mode.host_mount.label": "Host mount (default)",
-  "claude_auth.modal.mode.host_mount.blurb": "Reuse the host's `~/.claude` — GAPT bind-mounts it into workspace containers. No further action when the host has an active subscription.",
+  "claude_auth.modal.mode.host_mount.blurb":
+    "Reuse the host's `~/.claude` — GAPT bind-mounts it into workspace containers. No further action when the host has an active subscription.",
   "claude_auth.modal.mode.device_login.label": "Sign in from this modal",
-  "claude_auth.modal.mode.device_login.blurb": "Run `claude auth login` in the backend container. The device-code URL is shown below; paste the auth code back in here.",
+  "claude_auth.modal.mode.device_login.blurb":
+    "Run `claude auth login` in the backend container. The device-code URL is shown below; paste the auth code back in here.",
   "claude_auth.modal.mode.setup_token.label": "Paste a setup-token",
-  "claude_auth.modal.mode.setup_token.blurb": "Long-lived token from `claude setup-token`. Stored encrypted; the executor exports it as `ANTHROPIC_API_KEY`.",
+  "claude_auth.modal.mode.setup_token.blurb":
+    "Long-lived token from `claude setup-token`. Stored encrypted; the executor exports it as `ANTHROPIC_API_KEY`.",
   "claude_auth.modal.mode.api_key.label": "Anthropic Console API key",
-  "claude_auth.modal.mode.api_key.blurb": "Per-token API billing. Same storage path as setup-token (both end up in the env var the CLI reads).",
-  "claude_auth.modal.host_mount.body": "GAPT mounts the host `~/.claude` directory + `~/.claude.json` config file into every workspace container at boot. If the badge above says \"Logged in\", you don't need to do anything else.",
-  "claude_auth.modal.device_login.preamble": "Pick the path that matches your account: Claude.ai subscription (recommended) or Anthropic Console (API billing).",
+  "claude_auth.modal.mode.api_key.blurb":
+    "Per-token API billing. Same storage path as setup-token (both end up in the env var the CLI reads).",
+  "claude_auth.modal.host_mount.body":
+    'GAPT mounts the host `~/.claude` directory + `~/.claude.json` config file into every workspace container at boot. If the badge above says "Logged in", you don\'t need to do anything else.',
+  "claude_auth.modal.device_login.preamble":
+    "Pick the path that matches your account: Claude.ai subscription (recommended) or Anthropic Console (API billing).",
   "claude_auth.modal.device_login.start_subscription": "Subscription login",
   "claude_auth.modal.device_login.start_console": "Console login",
   "claude_auth.modal.device_login.visit_url": "Visit this URL to authorise",
   "claude_auth.modal.device_login.open": "Open",
   "claude_auth.modal.device_login.auth_code_label": "Auth code",
-  "claude_auth.modal.device_login.auth_code_hint": "Paste the code the URL hands you. The CLI completes the login once you submit.",
+  "claude_auth.modal.device_login.auth_code_hint":
+    "Paste the code the URL hands you. The CLI completes the login once you submit.",
   "claude_auth.modal.device_login.submit_code": "Submit",
   "claude_auth.modal.device_login.console": "Live CLI output",
   "claude_auth.modal.device_login.cancel": "Cancel login",
   "claude_auth.modal.device_login.finished": "Login subprocess finished.",
   "claude_auth.modal.setup_token.label": "Setup token",
-  "claude_auth.modal.setup_token.hint": "Run `claude setup-token` on the host (or any machine you trust) and paste the output here. Stored encrypted in GAPT's vault.",
+  "claude_auth.modal.setup_token.hint":
+    "Run `claude setup-token` on the host (or any machine you trust) and paste the output here. Stored encrypted in GAPT's vault.",
   "claude_auth.modal.setup_token.save": "Save token",
   "claude_auth.modal.api_key.label": "API key",
   "claude_auth.modal.api_key.hint": "Create at console.anthropic.com → API Keys. Stored encrypted.",
   "claude_auth.modal.api_key.save": "Save key",
   "settings.providers.cloudflare.title": "Cloudflare",
-  "settings.providers.cloudflare.description": "Connect a Cloudflare API token so GAPT can manage tunnel ingress (wildcard *.<preview-domain>) for subdomain mode. Token is stored encrypted in the vault.",
+  "settings.providers.cloudflare.description":
+    "Connect a Cloudflare API token so GAPT can manage tunnel ingress (wildcard *.<preview-domain>) for subdomain mode. Token is stored encrypted in the vault.",
   "settings.providers.cloudflare.badge.configured": "Configured",
   "settings.providers.cloudflare.badge.not_set": "Not set",
   "settings.providers.cloudflare.token.label": "API token",
-  "settings.providers.cloudflare.token.hint_new": "Create at Cloudflare → My Profile → API Tokens. Minimum scopes: Account:Cloudflare Tunnel:Edit. Paste here — value is encrypted, never displayed back.",
-  "settings.providers.cloudflare.token.hint_rotate": "Stored token is encrypted. Paste a new value to rotate; leave blank to keep the existing one and just update the selections below.",
+  "settings.providers.cloudflare.token.hint_new":
+    "Create at Cloudflare → My Profile → API Tokens. Minimum scopes: Account:Cloudflare Tunnel:Edit. Paste here — value is encrypted, never displayed back.",
+  "settings.providers.cloudflare.token.hint_rotate":
+    "Stored token is encrypted. Paste a new value to rotate; leave blank to keep the existing one and just update the selections below.",
   "settings.providers.cloudflare.account.label": "Account",
-  "settings.providers.cloudflare.account.hint": "Cloudflare account that owns the tunnel. Populated by Verify.",
+  "settings.providers.cloudflare.account.hint":
+    "Cloudflare account that owns the tunnel. Populated by Verify.",
   "settings.providers.cloudflare.tunnel.label": "Tunnel",
-  "settings.providers.cloudflare.tunnel.hint": "Cloudflared tunnel GAPT will modify. Populated after picking an account + Verify.",
+  "settings.providers.cloudflare.tunnel.hint":
+    "Cloudflared tunnel GAPT will modify. Populated after picking an account + Verify.",
   "settings.providers.cloudflare.zone.label": "Zone (optional)",
-  "settings.providers.cloudflare.zone.hint": "Used later for DNS record automation. Optional — wildcard ingress doesn't need it.",
+  "settings.providers.cloudflare.zone.hint":
+    "Used later for DNS record automation. Optional — wildcard ingress doesn't need it.",
   "settings.providers.cloudflare.preview_domain.label": "Preview domain",
-  "settings.providers.cloudflare.preview_domain.hint": "The hostname suffix GAPT issues previews under. Should match `GAPT_CADDY_PREVIEW_DOMAIN` server env var.",
+  "settings.providers.cloudflare.preview_domain.hint":
+    "The hostname suffix GAPT issues previews under. Should match `GAPT_CADDY_PREVIEW_DOMAIN` server env var.",
   "settings.providers.cloudflare.upstream.label": "Upstream URL",
-  "settings.providers.cloudflare.upstream.hint": "Where the wildcard ingress should forward to. Default `http://localhost:38080` (the GAPT Caddy port).",
+  "settings.providers.cloudflare.upstream.hint":
+    "Where the wildcard ingress should forward to. Default `http://localhost:38080` (the GAPT Caddy port).",
   "settings.providers.cloudflare.save": "Save",
   "settings.providers.cloudflare.verify": "Verify token",
   "settings.providers.cloudflare.snapshot": "Read tunnel state",
   "settings.providers.cloudflare.ensure_wildcard": "Configure wildcard ingress",
   "settings.providers.cloudflare.verified": "Token verified — selections below now show live data.",
   "settings.providers.cloudflare.tunnel_mode": "Tunnel mode",
-  "settings.providers.cloudflare.local_config_warning": "Tunnel is in local config.yml mode — Cloudflare API writes are ignored at runtime. Migrate to remote-managed first (Phase 2).",
+  "settings.providers.cloudflare.local_config_warning":
+    "Tunnel is in local config.yml mode — Cloudflare API writes are ignored at runtime. Migrate to remote-managed first (Phase 2).",
   "settings.providers.cloudflare.ingress": "Current ingress",
   "settings.providers.cloudflare.last_verified": "Last verified",
   "settings.providers.cloudflare.delete_title": "Remove Cloudflare provider",
-  "settings.providers.cloudflare.delete_description": "Deletes the stored API token + selections. GAPT will fall back to manual snippet setup. The tunnel itself is not modified.",
+  "settings.providers.cloudflare.delete_description":
+    "Deletes the stored API token + selections. GAPT will fall back to manual snippet setup. The tunnel itself is not modified.",
   "settings.providers.cloudflare.guide.title": "How to issue a Cloudflare API token",
   "settings.providers.cloudflare.guide.step1.intro": "Open Cloudflare's API token page:",
-  "settings.providers.cloudflare.guide.step1.link_label": "dash.cloudflare.com → My Profile → API Tokens",
-  "settings.providers.cloudflare.guide.step1.detail": "Click \"Create Token\" → \"Get started\" (custom token, not a template — templates don't include Cloudflare Tunnel scopes).",
-  "settings.providers.cloudflare.guide.step2.intro": "Set the permissions to exactly these (Edit scope to write ingress configuration):",
-  "settings.providers.cloudflare.guide.step2.detail": "Account Settings:Read is optional — without it GAPT derives the account from the Zone:Zone:Read response's account.id field. \"Account Resources\" can be limited to a single account; \"Zone Resources\" can be \"All zones\" if you only need ingress changes.",
-  "settings.providers.cloudflare.guide.step3.intro": "Under \"Account Resources\", pick the account that owns the tunnel. TTL and IP filtering are optional — leave them blank unless you have a policy.",
-  "settings.providers.cloudflare.guide.step3.detail": "Click \"Continue to summary\" → confirm the scopes → \"Create Token\".",
-  "settings.providers.cloudflare.guide.step4.intro": "Copy the token value Cloudflare displays once — it's shown only this time.",
-  "settings.providers.cloudflare.guide.step4.detail": "Paste it into the field below, click Save, then click \"Verify token\" to confirm GAPT can reach the API and discover your tunnel.",
-  "settings.providers.cloudflare.guide.security_note": "The token is encrypted at rest in GAPT's vault. Treat it like a password — if it leaks, revoke it on the same Cloudflare token page (click the … menu → Roll/Delete).",
+  "settings.providers.cloudflare.guide.step1.link_label":
+    "dash.cloudflare.com → My Profile → API Tokens",
+  "settings.providers.cloudflare.guide.step1.detail":
+    'Click "Create Token" → "Get started" (custom token, not a template — templates don\'t include Cloudflare Tunnel scopes).',
+  "settings.providers.cloudflare.guide.step2.intro":
+    "Set the permissions to exactly these (Edit scope to write ingress configuration):",
+  "settings.providers.cloudflare.guide.step2.detail":
+    'Account Settings:Read is optional — without it GAPT derives the account from the Zone:Zone:Read response\'s account.id field. "Account Resources" can be limited to a single account; "Zone Resources" can be "All zones" if you only need ingress changes.',
+  "settings.providers.cloudflare.guide.step3.intro":
+    'Under "Account Resources", pick the account that owns the tunnel. TTL and IP filtering are optional — leave them blank unless you have a policy.',
+  "settings.providers.cloudflare.guide.step3.detail":
+    'Click "Continue to summary" → confirm the scopes → "Create Token".',
+  "settings.providers.cloudflare.guide.step4.intro":
+    "Copy the token value Cloudflare displays once — it's shown only this time.",
+  "settings.providers.cloudflare.guide.step4.detail":
+    'Paste it into the field below, click Save, then click "Verify token" to confirm GAPT can reach the API and discover your tunnel.',
+  "settings.providers.cloudflare.guide.security_note":
+    "The token is encrypted at rest in GAPT's vault. Treat it like a password — if it leaks, revoke it on the same Cloudflare token page (click the … menu → Roll/Delete).",
   "settings.providers.cloudflare.migration.title": "Migrate to remote-managed mode",
-  "settings.providers.cloudflare.migration.intro": "If your tunnel runs with --config /etc/cloudflared/config.yml, Cloudflare API ingress writes are ignored at runtime. This wizard reads your local config, pushes the ingress to Cloudflare's remote storage, then generates a sudo script you run once to flip systemd into remote-managed mode.",
+  "settings.providers.cloudflare.migration.intro":
+    "If your tunnel runs with --config /etc/cloudflared/config.yml, Cloudflare API ingress writes are ignored at runtime. This wizard reads your local config, pushes the ingress to Cloudflare's remote storage, then generates a sudo script you run once to flip systemd into remote-managed mode.",
   "settings.providers.cloudflare.migration.step.inspect": "Inspect",
   "settings.providers.cloudflare.migration.step.push": "Push",
   "settings.providers.cloudflare.migration.step.cutover": "Cut over",
   "settings.providers.cloudflare.migration.step.verify": "Verify",
   "settings.providers.cloudflare.migration.back": "Back",
-  "settings.providers.cloudflare.migration.inspect.detail": "GAPT reads /etc/cloudflared/config.yml (override via GAPT_CLOUDFLARED_CONFIG_PATH) and parses the tunnel id + ingress array. No mutation.",
+  "settings.providers.cloudflare.migration.inspect.detail":
+    "GAPT reads /etc/cloudflared/config.yml (override via GAPT_CLOUDFLARED_CONFIG_PATH) and parses the tunnel id + ingress array. No mutation.",
   "settings.providers.cloudflare.migration.inspect.button": "Read local config",
   "settings.providers.cloudflare.migration.push.read_from": "Source:",
-  "settings.providers.cloudflare.migration.push.need_verify": "Pick an account first (Verify token above) — Cloudflare API needs the account id to address your tunnel.",
+  "settings.providers.cloudflare.migration.push.need_verify":
+    "Pick an account first (Verify token above) — Cloudflare API needs the account id to address your tunnel.",
   "settings.providers.cloudflare.migration.push.button": "Push ingress to Cloudflare",
-  "settings.providers.cloudflare.migration.cutover.pushed_ok": "Pushed ingress to Cloudflare's remote config",
-  "settings.providers.cloudflare.migration.cutover.detail": "GAPT generated a systemd drop-in script. The drop-in strips --config from ExecStart so cloudflared fetches the new remote config on restart. The original unit file is untouched (drop-ins win at runtime).",
+  "settings.providers.cloudflare.migration.cutover.pushed_ok":
+    "Pushed ingress to Cloudflare's remote config",
+  "settings.providers.cloudflare.migration.cutover.detail":
+    "GAPT generated a systemd drop-in script. The drop-in strips --config from ExecStart so cloudflared fetches the new remote config on restart. The original unit file is untouched (drop-ins win at runtime).",
   "settings.providers.cloudflare.migration.cutover.autorun_label": "Option 1 — Auto-run via GAPT",
-  "settings.providers.cloudflare.migration.cutover.autorun_hint": "GAPT runs the script with `sudo -S` on the host. Enter your sudo password — used once for this command, not stored. Only works when GAPT is installed directly on the host (not containerised).",
+  "settings.providers.cloudflare.migration.cutover.autorun_hint":
+    "GAPT runs the script with `sudo -S` on the host. Enter your sudo password — used once for this command, not stored. Only works when GAPT is installed directly on the host (not containerised).",
   "settings.providers.cloudflare.migration.cutover.autorun_button": "Run with sudo",
-  "settings.providers.cloudflare.migration.cutover.password_disclosure": "Password travels over HTTPS, is piped to sudo via stdin, and is wiped from memory after the command finishes. Not logged, not persisted.",
-  "settings.providers.cloudflare.migration.cutover.run_label": "Option 2 — Run manually (on the host)",
-  "settings.providers.cloudflare.migration.cutover.write_hint": "Save the script to /tmp first (copy the contents into /tmp/gapt-cloudflared-migrate.sh on the host), then run the sudo command above.",
-  "settings.providers.cloudflare.migration.cutover.run_hint": "Open a terminal on the GAPT host and run the command below. The script needs sudo to edit /etc/systemd/system and restart cloudflared.",
+  "settings.providers.cloudflare.migration.cutover.password_disclosure":
+    "Password travels over HTTPS, is piped to sudo via stdin, and is wiped from memory after the command finishes. Not logged, not persisted.",
+  "settings.providers.cloudflare.migration.cutover.run_label":
+    "Option 2 — Run manually (on the host)",
+  "settings.providers.cloudflare.migration.cutover.write_hint":
+    "Save the script to /tmp first (copy the contents into /tmp/gapt-cloudflared-migrate.sh on the host), then run the sudo command above.",
+  "settings.providers.cloudflare.migration.cutover.run_hint":
+    "Open a terminal on the GAPT host and run the command below. The script needs sudo to edit /etc/systemd/system and restart cloudflared.",
   "settings.providers.cloudflare.migration.cutover.continue": "I've run the script — continue",
-  "settings.providers.cloudflare.migration.verify.detail": "Re-snapshots the tunnel from Cloudflare and reports whether the mode flipped to remote-managed + the connector count.",
+  "settings.providers.cloudflare.migration.verify.detail":
+    "Re-snapshots the tunnel from Cloudflare and reports whether the mode flipped to remote-managed + the connector count.",
   "settings.providers.cloudflare.migration.verify.button": "Verify migration",
   "settings.providers.cloudflare.migration.dryrun.button": "Preview script (dry-run)",
-  "settings.providers.cloudflare.migration.dryrun.hint": "Records the planned cutover in history without executing. Use this to inspect the before-snapshot and the exact script before you commit.",
-  "settings.providers.cloudflare.migration.dryrun.banner": "Dry-run only — nothing was executed on the host. Audit row was recorded for inspection.",
+  "settings.providers.cloudflare.migration.dryrun.hint":
+    "Records the planned cutover in history without executing. Use this to inspect the before-snapshot and the exact script before you commit.",
+  "settings.providers.cloudflare.migration.dryrun.banner":
+    "Dry-run only — nothing was executed on the host. Audit row was recorded for inspection.",
   "settings.providers.cloudflare.migration.history.title": "Migration history",
-  "settings.providers.cloudflare.migration.history.hint": "Past cutover attempts on this GAPT install. Use Revert to restore the saved ingress + remove the systemd drop-in.",
+  "settings.providers.cloudflare.migration.history.hint":
+    "Past cutover attempts on this GAPT install. Use Revert to restore the saved ingress + remove the systemd drop-in.",
   "settings.providers.cloudflare.migration.history.empty": "No migrations recorded yet.",
   "settings.providers.cloudflare.migration.history.refresh": "Refresh",
   "settings.providers.cloudflare.migration.history.status.ok": "ok",
@@ -1046,8 +1203,10 @@ export const en = {
   "settings.providers.cloudflare.migration.history.detail.after": "After snapshot",
   "settings.providers.cloudflare.migration.history.detail.close": "Close",
   "settings.providers.cloudflare.migration.history.revert.confirm_title": "Revert this migration?",
-  "settings.providers.cloudflare.migration.history.revert.confirm_body": "GAPT will remove the systemd drop-in and PUT the original ingress back to Cloudflare. cloudflared returns to local-config mode. This is reversible — you can re-run the cutover wizard later.",
-  "settings.providers.cloudflare.migration.history.revert.password_label": "sudo password (leave blank if NOPASSWD)",
+  "settings.providers.cloudflare.migration.history.revert.confirm_body":
+    "GAPT will remove the systemd drop-in and PUT the original ingress back to Cloudflare. cloudflared returns to local-config mode. This is reversible — you can re-run the cutover wizard later.",
+  "settings.providers.cloudflare.migration.history.revert.password_label":
+    "sudo password (leave blank if NOPASSWD)",
   "settings.providers.cloudflare.migration.history.revert.run": "Revert",
 
   // ── Phase M.5 — sessions history + detail i18n (was hardcoded ko) ─

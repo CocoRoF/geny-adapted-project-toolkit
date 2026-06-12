@@ -107,20 +107,18 @@ export function RunDetailPanel({ runId }: Props) {
   if (!detail) return null;
 
   const { run, environment, project } = detail;
-  const StatusIcon = run.status === "success" ? CheckCircle2 : run.status === "failed" ? XCircle : AlertTriangle;
+  const StatusIcon =
+    run.status === "success" ? CheckCircle2 : run.status === "failed" ? XCircle : AlertTriangle;
   const target = environment.deploy_target_config;
   const composePaths =
     Array.isArray(target.compose_paths) && target.compose_paths.length > 0
       ? (target.compose_paths as unknown[]).map(String)
-      : target.compose_path
-        ? [String(target.compose_path)]
+      : typeof target.compose_path === "string" && target.compose_path
+        ? [target.compose_path]
         : [];
-  const primaryService =
-    typeof target.primary_service === "string" ? target.primary_service : null;
-  const primaryPort =
-    typeof target.primary_port === "number" ? target.primary_port : null;
-  const previewMode =
-    typeof target.preview_mode === "string" ? target.preview_mode : null;
+  const primaryService = typeof target.primary_service === "string" ? target.primary_service : null;
+  const primaryPort = typeof target.primary_port === "number" ? target.primary_port : null;
+  const previewMode = typeof target.preview_mode === "string" ? target.preview_mode : null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
@@ -156,41 +154,44 @@ export function RunDetailPanel({ runId }: Props) {
               {t("deploy.detail.stack_down.badge")}
             </Badge>
           ) : liveStack.running_count < liveStack.total_count ? (
-            <Badge tone="warn" className="text-[10px]" title={t("deploy.detail.stack_partial.title")}>
-              {t("deploy.detail.stack_partial.badge").replace(
-                "{r}",
-                String(liveStack.running_count),
-              ).replace("{t}", String(liveStack.total_count))}
+            <Badge
+              tone="warn"
+              className="text-[10px]"
+              title={t("deploy.detail.stack_partial.title")}
+            >
+              {t("deploy.detail.stack_partial.badge")
+                .replace("{r}", String(liveStack.running_count))
+                .replace("{t}", String(liveStack.total_count))}
             </Badge>
           ) : null
         ) : null}
-        {run.bound_url ? (() => {
-          const stackDown =
-            environment.deploy_target_kind === "local" &&
-            liveStack !== null &&
-            liveStack.total_count === 0;
-          return (
-            <a
-              href={run.bound_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(
-                "ml-auto inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11.5px] font-medium",
-                stackDown
-                  ? "border-warn/40 bg-warn/10 text-warn line-through decoration-warn/40 hover:bg-warn/20"
-                  : "border-success/40 bg-success/10 text-success hover:bg-success/20",
-              )}
-              title={
-                stackDown
-                  ? t("deploy.detail.url.stack_down")
-                  : t("deploy.detail.url.live")
-              }
-            >
-              <ExternalLink className="h-3 w-3" />
-              {run.bound_url}
-            </a>
-          );
-        })() : null}
+        {run.bound_url
+          ? (() => {
+              const stackDown =
+                environment.deploy_target_kind === "local" &&
+                liveStack !== null &&
+                liveStack.total_count === 0;
+              return (
+                <a
+                  href={run.bound_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "ml-auto inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11.5px] font-medium",
+                    stackDown
+                      ? "border-warn/40 bg-warn/10 text-warn line-through decoration-warn/40 hover:bg-warn/20"
+                      : "border-success/40 bg-success/10 text-success hover:bg-success/20",
+                  )}
+                  title={
+                    stackDown ? t("deploy.detail.url.stack_down") : t("deploy.detail.url.live")
+                  }
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {run.bound_url}
+                </a>
+              );
+            })()
+          : null}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-rows-[auto_auto_1fr] overflow-hidden">
@@ -200,10 +201,7 @@ export function RunDetailPanel({ runId }: Props) {
             <KV k="run_id" v={run.id} mono />
             <KV k="exec_code" v={run.exec_code || "—"} mono />
             <KV k="actor" v={run.actor_id || "—"} />
-            <KV
-              k="started_at"
-              v={new Date(run.started_at).toLocaleString()}
-            />
+            <KV k="started_at" v={new Date(run.started_at).toLocaleString()} />
             <KV
               k="finished_at"
               v={run.finished_at ? new Date(run.finished_at).toLocaleString() : "—"}
@@ -212,10 +210,7 @@ export function RunDetailPanel({ runId }: Props) {
           <Card title={t("deploy.detail.target")}>
             <KV k="kind" v={environment.deploy_target_kind} />
             <KV k="require_2fa" v={environment.require_2fa ? "yes" : "no"} />
-            <KV
-              k="cost_multiplier"
-              v={environment.cost_multiplier.toString()}
-            />
+            <KV k="cost_multiplier" v={environment.cost_multiplier.toString()} />
             <KV
               k="secret_refs"
               v={environment.secret_refs.length ? environment.secret_refs.join(", ") : "—"}
@@ -253,10 +248,12 @@ export function RunDetailPanel({ runId }: Props) {
             envName={environment.name}
             isSuccessRun={run.status === "success"}
             targetConfig={target}
-            onConfigChange={(updated) => setDetail({
-              ...detail,
-              environment: { ...environment, deploy_target_config: updated },
-            })}
+            onConfigChange={(updated) =>
+              setDetail({
+                ...detail,
+                environment: { ...environment, deploy_target_config: updated },
+              })
+            }
             onStatusChange={setLiveStack}
           />
         ) : (
@@ -276,14 +273,10 @@ export function RunDetailPanel({ runId }: Props) {
         <section className="flex min-h-0 flex-col overflow-hidden">
           <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-4 py-1.5 text-[11px] uppercase tracking-wider text-fg-muted">
             {t("deploy.detail.log")}
-            <span className="text-[10px] text-fg-subtle">
-              {t("deploy.detail.log_hint")}
-            </span>
+            <span className="text-[10px] text-fg-subtle">{t("deploy.detail.log_hint")}</span>
           </header>
           <pre className="flex-1 overflow-auto whitespace-pre-wrap break-all bg-bg px-4 py-3 font-mono text-[11px] leading-relaxed text-fg-muted">
-            {run.log_tail || (
-              <span className="text-fg-subtle">{t("deploy.detail.log_empty")}</span>
-            )}
+            {run.log_tail || <span className="text-fg-subtle">{t("deploy.detail.log_empty")}</span>}
           </pre>
         </section>
       </div>
@@ -314,9 +307,11 @@ function StackSection({
   // see what `docker compose down/restart/reroute` actually printed —
   // otherwise the post-action state (0/0 running, etc.) is all they get
   // and stop/restart feel like they vanished into a void.
-  const [actionOutput, setActionOutput] = useState<
-    { kind: "down" | "restart" | "reroute"; ok: boolean; output: string } | null
-  >(null);
+  const [actionOutput, setActionOutput] = useState<{
+    kind: "down" | "restart" | "reroute";
+    ok: boolean;
+    output: string;
+  } | null>(null);
   const [showOverrides, setShowOverrides] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -330,11 +325,8 @@ function StackSection({
   const savedStrip =
     typeof cfg.strip_prefix === "boolean" ? (cfg.strip_prefix ? "true" : "false") : "";
   const savedScheme =
-    cfg.upstream_scheme === "https" || cfg.upstream_scheme === "http"
-      ? cfg.upstream_scheme
-      : "";
-  const savedHostHdr =
-    typeof cfg.upstream_host_header === "string" ? cfg.upstream_host_header : "";
+    cfg.upstream_scheme === "https" || cfg.upstream_scheme === "http" ? cfg.upstream_scheme : "";
+  const savedHostHdr = typeof cfg.upstream_host_header === "string" ? cfg.upstream_host_header : "";
   const savedTlsSkip =
     typeof cfg.upstream_tls_insecure === "boolean"
       ? cfg.upstream_tls_insecure
@@ -342,9 +334,7 @@ function StackSection({
         : "false"
       : "";
   const savedMode =
-    cfg.preview_mode === "subdomain" || cfg.preview_mode === "path"
-      ? cfg.preview_mode
-      : "";
+    cfg.preview_mode === "subdomain" || cfg.preview_mode === "path" ? cfg.preview_mode : "";
 
   const [fService, setFService] = useState(savedService);
   const [fPort, setFPort] = useState(savedPort);
@@ -372,12 +362,7 @@ function StackSection({
   }, [refresh]);
 
   const onDown = async () => {
-    if (
-      !window.confirm(
-        t("deploy.stack.confirm.down").replace("{name}", envName),
-      )
-    )
-      return;
+    if (!window.confirm(t("deploy.stack.confirm.down").replace("{name}", envName))) return;
     setBusy("down");
     setActionOutput(null);
     try {
@@ -413,12 +398,10 @@ function StackSection({
     }
     if (fHostHdr !== savedHostHdr) body.upstream_host_header = fHostHdr;
     if (fTlsSkip !== savedTlsSkip) {
-      body.upstream_tls_insecure =
-        fTlsSkip === "true" ? true : fTlsSkip === "false" ? false : null;
+      body.upstream_tls_insecure = fTlsSkip === "true" ? true : fTlsSkip === "false" ? false : null;
     }
     if (fMode !== savedMode) {
-      body.preview_mode =
-        fMode === "subdomain" || fMode === "path" ? fMode : null;
+      body.preview_mode = fMode === "subdomain" || fMode === "path" ? fMode : null;
     }
     return body;
   };
@@ -449,18 +432,15 @@ function StackSection({
         const next = { ...targetConfig };
         if (body.primary_service !== undefined)
           next.primary_service = body.primary_service ?? undefined;
-        if (body.primary_port !== undefined)
-          next.primary_port = body.primary_port ?? undefined;
-        if (body.strip_prefix !== undefined)
-          next.strip_prefix = body.strip_prefix ?? undefined;
+        if (body.primary_port !== undefined) next.primary_port = body.primary_port ?? undefined;
+        if (body.strip_prefix !== undefined) next.strip_prefix = body.strip_prefix ?? undefined;
         if (body.upstream_scheme !== undefined)
           next.upstream_scheme = body.upstream_scheme ?? undefined;
         if (body.upstream_host_header !== undefined)
           next.upstream_host_header = body.upstream_host_header || undefined;
         if (body.upstream_tls_insecure !== undefined)
           next.upstream_tls_insecure = body.upstream_tls_insecure ?? undefined;
-        if (body.preview_mode !== undefined)
-          next.preview_mode = body.preview_mode ?? undefined;
+        if (body.preview_mode !== undefined) next.preview_mode = body.preview_mode ?? undefined;
         onConfigChange(next);
       }
       await refresh();
@@ -478,8 +458,7 @@ function StackSection({
    * always one click away. */
   const onModeFlip = useCallback(
     async (target: "path" | "subdomain") => {
-      const current =
-        targetConfig.preview_mode === "subdomain" ? "subdomain" : "path";
+      const current = targetConfig.preview_mode === "subdomain" ? "subdomain" : "path";
       if (target === current) return;
       const confirmKey =
         target === "subdomain"
@@ -512,12 +491,7 @@ function StackSection({
   );
 
   const onRestart = async () => {
-    if (
-      !window.confirm(
-        t("deploy.stack.confirm.restart").replace("{name}", envName),
-      )
-    )
-      return;
+    if (!window.confirm(t("deploy.stack.confirm.restart").replace("{name}", envName))) return;
     setBusy("restart");
     setActionOutput(null);
     try {
@@ -538,8 +512,7 @@ function StackSection({
   // Current routing mode — saved value first, default to "path" so
   // existing envs (created before subdomain mode was a thing) read
   // as path. This is the value the segmented control reads + writes.
-  const currentMode: "path" | "subdomain" =
-    cfg.preview_mode === "subdomain" ? "subdomain" : "path";
+  const currentMode: "path" | "subdomain" = cfg.preview_mode === "subdomain" ? "subdomain" : "path";
 
   return (
     <section className="border-b border-border bg-bg-subtle/20 px-4 py-3">
@@ -563,7 +536,7 @@ function StackSection({
             type="button"
             role="radio"
             aria-checked={currentMode === "path"}
-            onClick={() => onModeFlip("path")}
+            onClick={() => void onModeFlip("path")}
             disabled={busy !== null || currentMode === "path"}
             title={t("deploy.stack.mode.path.title")}
             className={cn(
@@ -579,7 +552,7 @@ function StackSection({
             type="button"
             role="radio"
             aria-checked={currentMode === "subdomain"}
-            onClick={() => onModeFlip("subdomain")}
+            onClick={() => void onModeFlip("subdomain")}
             disabled={busy !== null || currentMode === "subdomain"}
             title={t("deploy.stack.mode.subdomain.title")}
             className={cn(
@@ -623,7 +596,7 @@ function StackSection({
           <Button
             size="sm"
             variant="ghost"
-            onClick={onReroute}
+            onClick={() => void onReroute()}
             disabled={!hasContainers || busy !== null}
             title={t("deploy.stack.reroute.title")}
           >
@@ -637,7 +610,7 @@ function StackSection({
           <Button
             size="sm"
             variant="ghost"
-            onClick={onRestart}
+            onClick={() => void onRestart()}
             disabled={!hasContainers || busy !== null}
             title={t("deploy.stack.restart")}
           >
@@ -651,7 +624,7 @@ function StackSection({
           <Button
             size="sm"
             variant="danger"
-            onClick={onDown}
+            onClick={() => void onDown()}
             disabled={!hasContainers || busy !== null}
             title={t("deploy.stack.down")}
           >
@@ -676,17 +649,13 @@ function StackSection({
         <div
           className={cn(
             "mb-2 rounded-md border",
-            actionOutput.ok
-              ? "border-success/40 bg-success/10"
-              : "border-danger/40 bg-danger/10",
+            actionOutput.ok ? "border-success/40 bg-success/10" : "border-danger/40 bg-danger/10",
           )}
         >
           <header
             className={cn(
               "flex items-center gap-2 border-b px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-wider",
-              actionOutput.ok
-                ? "border-success/30 text-success"
-                : "border-danger/30 text-danger",
+              actionOutput.ok ? "border-success/30 text-success" : "border-danger/30 text-danger",
             )}
           >
             <span>
@@ -699,9 +668,7 @@ function StackSection({
               )}
             </span>
             <span className="text-[10px] font-normal opacity-70">
-              {actionOutput.ok
-                ? t("deploy.stack.output.ok")
-                : t("deploy.stack.output.failed")}
+              {actionOutput.ok ? t("deploy.stack.output.ok") : t("deploy.stack.output.failed")}
             </span>
             <button
               type="button"
@@ -818,9 +785,7 @@ function StackSection({
       </div>
       {!hasContainers ? (
         <p className="text-[11px] text-fg-subtle">
-          {isSuccessRun
-            ? t("deploy.stack.empty_after_success")
-            : t("deploy.stack.empty")}
+          {isSuccessRun ? t("deploy.stack.empty_after_success") : t("deploy.stack.empty")}
         </p>
       ) : (
         <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -862,13 +827,7 @@ function StackSection({
   );
 }
 
-function StackStateDot({
-  status,
-  health,
-}: {
-  status: string;
-  health: string | null;
-}) {
+function StackStateDot({ status, health }: { status: string; health: string | null }) {
   const color =
     status === "running"
       ? health && health !== "healthy"
@@ -905,14 +864,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-2 border-b border-border/40 py-0.5 last:border-b-0">
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-fg-subtle">
-        {k}
-      </span>
+      <span className="shrink-0 text-[10px] uppercase tracking-wider text-fg-subtle">{k}</span>
       <span
-        className={cn(
-          "truncate text-right text-[11.5px] text-fg",
-          mono && "font-mono",
-        )}
+        className={cn("truncate text-right text-[11.5px] text-fg", mono && "font-mono")}
         title={v}
       >
         {v}
@@ -948,13 +902,7 @@ function LiveStackLogsSection({ environmentId }: { environmentId: string }) {
       setOutput(r.output);
       setErr(null);
     } catch (e) {
-      setErr(
-        e instanceof ApiError
-          ? e.reason
-          : e instanceof Error
-            ? e.message
-            : String(e),
-      );
+      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -1012,9 +960,7 @@ function LiveStackLogsSection({ environmentId }: { environmentId: string }) {
           {t("deploy.detail.live_logs")}
           {loading ? <Loader2 className="h-3 w-3 animate-spin text-fg-subtle" /> : null}
           <span className="text-[10px] normal-case text-fg-subtle">
-            {paused
-              ? t("deploy.detail.live_logs.paused")
-              : t("deploy.detail.live_logs.streaming")}
+            {paused ? t("deploy.detail.live_logs.paused") : t("deploy.detail.live_logs.streaming")}
           </span>
         </div>
         <button
@@ -1036,19 +982,13 @@ function LiveStackLogsSection({ environmentId }: { environmentId: string }) {
           )}
         </button>
       </header>
-      {err ? (
-        <p className="bg-danger/5 px-4 py-1 text-[11px] text-danger">{err}</p>
-      ) : null}
+      {err ? <p className="bg-danger/5 px-4 py-1 text-[11px] text-danger">{err}</p> : null}
       <pre
         ref={preRef}
         onScroll={onScroll}
         className="max-h-[420px] min-h-[140px] overflow-auto whitespace-pre-wrap break-all bg-bg px-4 py-3 font-mono text-[11px] leading-relaxed text-fg-muted"
       >
-        {output || (
-          <span className="text-fg-subtle">
-            {t("deploy.detail.live_logs.empty")}
-          </span>
-        )}
+        {output || <span className="text-fg-subtle">{t("deploy.detail.live_logs.empty")}</span>}
       </pre>
     </section>
   );

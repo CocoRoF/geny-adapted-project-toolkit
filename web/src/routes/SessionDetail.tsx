@@ -19,14 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import {
-  ChevronLeft,
-  Code2,
-  Download,
-  ExternalLink,
-  Loader2,
-  Wrench,
-} from "lucide-react";
+import { ChevronLeft, Code2, Download, ExternalLink, Loader2, Wrench } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import {
@@ -61,17 +54,9 @@ export function SessionDetail() {
     async (current: SessionResponse) => {
       try {
         const next = await reactivateSession(current.id);
-        navigate(
-          `/projects/${projectId}/w/${next.workspace_id}?session=${next.id}`,
-        );
+        void navigate(`/projects/${projectId}/w/${next.workspace_id}?session=${next.id}`);
       } catch (e: unknown) {
-        setErr(
-          e instanceof ApiError
-            ? e.reason
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        );
+        setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
       }
     },
     [navigate, projectId],
@@ -87,22 +72,15 @@ export function SessionDetail() {
         setTranscript(t);
       })
       .catch((e: unknown) => {
-        setErr(
-          e instanceof ApiError
-            ? e.reason
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        );
+        setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
       })
       .finally(() => setLoading(false));
   }, [sessionId]);
 
   const downloadMarkdown = useCallback(async () => {
-    const resp = await fetch(
-      `/_gapt/api/sessions/${sessionId}/transcript?format=markdown`,
-      { credentials: "include" },
-    );
+    const resp = await fetch(`/_gapt/api/sessions/${sessionId}/transcript?format=markdown`, {
+      credentials: "include",
+    });
     if (!resp.ok) {
       console.error("transcript download failed", resp.status);
       return;
@@ -146,19 +124,14 @@ export function SessionDetail() {
           <header className="mb-5 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <Badge tone={meta.status === "active" ? "success" : "neutral"}>
-                  {meta.status}
-                </Badge>
-                <span className="font-mono text-[11px] text-fg-subtle">
-                  {meta.env_manifest_id}
-                </span>
+                <Badge tone={meta.status === "active" ? "success" : "neutral"}>{meta.status}</Badge>
+                <span className="font-mono text-[11px] text-fg-subtle">{meta.env_manifest_id}</span>
               </div>
-              <h1 className="mt-1.5 truncate font-mono text-[13px] text-fg">
-                {meta.id}
-              </h1>
+              <h1 className="mt-1.5 truncate font-mono text-[13px] text-fg">{meta.id}</h1>
               <p className="mt-0.5 text-[11px] text-fg-subtle">
                 {t("session_detail.meta.created")} {new Date(meta.created_at).toLocaleString()} ·{" "}
-                {t("session_detail.meta.last_active")} {new Date(meta.last_active_at).toLocaleString()}
+                {t("session_detail.meta.last_active")}{" "}
+                {new Date(meta.last_active_at).toLocaleString()}
               </p>
               <p className="mt-1 text-[12px] text-fg-muted">
                 <span className="font-mono text-accent">
@@ -171,30 +144,24 @@ export function SessionDetail() {
                     cache_write of N thousand tokens. */}
                 {transcript.total_cache_write_tokens ? (
                   <>
-                    {" "}⊕{transcript.total_cache_write_tokens.toLocaleString()}{" "}
-                    <span className="text-[10.5px] text-fg-subtle">
-                      cache_write
-                    </span>
+                    {" "}
+                    ⊕{transcript.total_cache_write_tokens.toLocaleString()}{" "}
+                    <span className="text-[10.5px] text-fg-subtle">cache_write</span>
                   </>
                 ) : null}
                 {transcript.total_cache_read_tokens ? (
                   <>
-                    {" "}⊖{transcript.total_cache_read_tokens.toLocaleString()}{" "}
-                    <span className="text-[10.5px] text-fg-subtle">
-                      cache_read
-                    </span>
+                    {" "}
+                    ⊖{transcript.total_cache_read_tokens.toLocaleString()}{" "}
+                    <span className="text-[10.5px] text-fg-subtle">cache_read</span>
                   </>
-                ) : null}
-                {" "}· {transcript.turns.length} turn
+                ) : null}{" "}
+                · {transcript.turns.length} turn
                 {transcript.turns.length === 1 ? "" : "s"}
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-1.5">
-              <Button
-                variant="ghost"
-                onClick={() => void downloadMarkdown()}
-                size="sm"
-              >
+              <Button variant="ghost" onClick={() => void downloadMarkdown()} size="sm">
                 <Download className="mr-1 h-3 w-3" /> .md
               </Button>
               {/* Phase L.2 — "Resume this session" for archived rows.
@@ -245,14 +212,10 @@ function TurnView({ index, turn }: { index: number; turn: TranscriptTurn }) {
         <h2 className="text-[12px] font-semibold text-fg">Turn {index}</h2>
         <div className="flex items-center gap-2 text-[10.5px] text-fg-subtle">
           {turn.started_at ? (
-            <time className="tabular-nums">
-              {new Date(turn.started_at).toLocaleString()}
-            </time>
+            <time className="tabular-nums">{new Date(turn.started_at).toLocaleString()}</time>
           ) : null}
           {turn.cost_usd ? (
-            <span className="font-mono text-accent">
-              ${turn.cost_usd.toFixed(6)}
-            </span>
+            <span className="font-mono text-accent">${turn.cost_usd.toFixed(6)}</span>
           ) : null}
         </div>
       </header>
@@ -289,11 +252,7 @@ function TurnView({ index, turn }: { index: number; turn: TranscriptTurn }) {
   );
 }
 
-function ToolUseCard({
-  tool,
-}: {
-  tool: TranscriptTurn["tool_uses"][number];
-}) {
+function ToolUseCard({ tool }: { tool: TranscriptTurn["tool_uses"][number] }) {
   const inputText = tool.input ? JSON.stringify(tool.input, null, 2) : "";
   const outputText =
     typeof tool.output === "string"
@@ -304,16 +263,12 @@ function ToolUseCard({
   // Long outputs collapse to scroll; very long ones truncate so the
   // browser doesn't render 100KB into the DOM in one shot.
   const truncatedOutput =
-    outputText.length > 8000
-      ? outputText.slice(0, 8000) + "\n…(truncated)"
-      : outputText;
+    outputText.length > 8000 ? outputText.slice(0, 8000) + "\n…(truncated)" : outputText;
   return (
     <div
       className={cn(
         "rounded-md border px-3 py-2",
-        tool.is_error
-          ? "border-danger/40 bg-danger/5"
-          : "border-border bg-bg-subtle/40",
+        tool.is_error ? "border-danger/40 bg-danger/5" : "border-border bg-bg-subtle/40",
       )}
     >
       <header className="mb-1 flex items-center gap-1.5">

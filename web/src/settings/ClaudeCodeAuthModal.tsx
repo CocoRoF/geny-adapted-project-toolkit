@@ -58,18 +58,15 @@ import {
   testClaudeConnection,
 } from "@/api/llm_backends";
 import { useI18n } from "@/app/providers/i18n-context";
+
+type TFunc = ReturnType<typeof useI18n>["t"];
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Modal } from "@/ui/Modal";
 
 type AuthMode = "host_mount" | "device_login" | "setup_token" | "api_key";
 
-const AUTH_MODES: AuthMode[] = [
-  "host_mount",
-  "device_login",
-  "setup_token",
-  "api_key",
-];
+const AUTH_MODES: AuthMode[] = ["host_mount", "device_login", "setup_token", "api_key"];
 const STORAGE_KEY = "gapt.claude_auth_mode";
 
 function readPersistedMode(): AuthMode {
@@ -104,12 +101,12 @@ export function ClaudeCodeAuthModal({
   const { t } = useI18n();
   const [mode, setMode] = useState<AuthMode>(() => readPersistedMode());
   const [status, setStatus] = useState<AuthStatusResponse | null>(null);
-  const [health, setHealth] = useState<ProviderHealth | null>(initialHealth);
+  // Health is recheck-and-forget here — the card outside owns the
+  // displayed value; we only need the setter to keep it fresh.
+  const [, setHealth] = useState<ProviderHealth | null>(initialHealth);
   const [statusLoading, setStatusLoading] = useState(false);
   const [flash, setFlash] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(null);
-  const [job, setJob] = useState<{ id: string; events: AuthJobEvent[] } | null>(
-    null,
-  );
+  const [job, setJob] = useState<{ id: string; events: AuthJobEvent[] } | null>(null);
   const [authCodeInput, setAuthCodeInput] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
@@ -166,7 +163,7 @@ export function ClaudeCodeAuthModal({
     for (const ev of job.events) {
       if (ev.channel !== "stdout") continue;
       const match = ev.text.match(/(https?:\/\/[^\s)]+)/);
-      if (match) return match[1];
+      if (match) return match[1] ?? null;
     }
     return null;
   }, [job]);
@@ -196,7 +193,7 @@ export function ClaudeCodeAuthModal({
         sseRef.current = es;
         es.onmessage = (ev: MessageEvent) => {
           try {
-            const payload: AuthJobEvent = JSON.parse(ev.data as string);
+            const payload = JSON.parse(ev.data as string) as AuthJobEvent;
             setJob((cur) => (cur ? { ...cur, events: [...cur.events, payload] } : cur));
             if (payload.channel === "exit") {
               closeSse();
@@ -260,7 +257,9 @@ export function ClaudeCodeAuthModal({
       await storeClaudeSetupToken(tokenInput.trim());
       setTokenInput("");
       setFlash({ kind: "ok", text: t("claude_auth.modal.saved") });
-      await recheckClaudeCode().then(setHealth).catch(() => undefined);
+      await recheckClaudeCode()
+        .then(setHealth)
+        .catch(() => undefined);
       onHealthChanged?.();
     } catch (e) {
       setFlash({ kind: "err", text: describeError(e) });
@@ -276,7 +275,9 @@ export function ClaudeCodeAuthModal({
       await storeProviderApiKey("anthropic", apiKeyInput.trim());
       setApiKeyInput("");
       setFlash({ kind: "ok", text: t("claude_auth.modal.saved") });
-      await recheckClaudeCode().then(setHealth).catch(() => undefined);
+      await recheckClaudeCode()
+        .then(setHealth)
+        .catch(() => undefined);
       onHealthChanged?.();
     } catch (e) {
       setFlash({ kind: "err", text: describeError(e) });
@@ -305,9 +306,7 @@ export function ClaudeCodeAuthModal({
       const r = await testClaudeConnection();
       setFlash({
         kind: r.ok ? "ok" : "warn",
-        text: r.ok
-          ? `${t("claude_auth.modal.test_ok")} (${r.duration_ms}ms)`
-          : r.detail,
+        text: r.ok ? `${t("claude_auth.modal.test_ok")} (${r.duration_ms}ms)` : r.detail,
       });
     } catch (e) {
       setFlash({ kind: "err", text: describeError(e) });
@@ -341,13 +340,11 @@ export function ClaudeCodeAuthModal({
           <Button
             variant="ghost"
             size="sm"
-            onClick={refreshStatus}
+            onClick={() => void refreshStatus()}
             disabled={statusLoading}
             title={t("claude_auth.modal.refresh")}
           >
-            <RefreshCw
-              className={statusLoading ? "h-3 w-3 animate-spin" : "h-3 w-3"}
-            />
+            <RefreshCw className={statusLoading ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
           </Button>
         </div>
 
@@ -399,15 +396,14 @@ export function ClaudeCodeAuthModal({
             authCodeInput={authCodeInput}
             setAuthCodeInput={setAuthCodeInput}
             submitting={submitting}
-            onStart={startLogin}
-            onSubmitCode={submitAuthCode}
-            onCancel={cancelJob}
+            onStart={(useConsole) => void startLogin(useConsole)}
+            onSubmitCode={() => void submitAuthCode()}
+            onCancel={() => void cancelJob()}
           />
         ) : null}
 
         {mode === "setup_token" ? (
           <SecretInputBody
-            t={t}
             label={t("claude_auth.modal.setup_token.label")}
             hint={t("claude_auth.modal.setup_token.hint")}
             placeholder="sk-ant-…"
@@ -415,7 +411,7 @@ export function ClaudeCodeAuthModal({
             onChange={setTokenInput}
             showSecret={showSecret}
             onToggleShow={() => setShowSecret((s) => !s)}
-            onSave={onSaveSetupToken}
+            onSave={() => void onSaveSetupToken()}
             saving={submitting === "save_token"}
             saveLabel={t("claude_auth.modal.setup_token.save")}
           />
@@ -423,7 +419,6 @@ export function ClaudeCodeAuthModal({
 
         {mode === "api_key" ? (
           <SecretInputBody
-            t={t}
             label={t("claude_auth.modal.api_key.label")}
             hint={t("claude_auth.modal.api_key.hint")}
             placeholder="sk-ant-api03-…"
@@ -431,7 +426,7 @@ export function ClaudeCodeAuthModal({
             onChange={setApiKeyInput}
             showSecret={showSecret}
             onToggleShow={() => setShowSecret((s) => !s)}
-            onSave={onSaveApiKey}
+            onSave={() => void onSaveApiKey()}
             saving={submitting === "save_apikey"}
             saveLabel={t("claude_auth.modal.api_key.save")}
           />
@@ -464,7 +459,7 @@ export function ClaudeCodeAuthModal({
             <Button
               variant="ghost"
               size="sm"
-              onClick={onTest}
+              onClick={() => void onTest()}
               disabled={!!submitting}
               title={t("claude_auth.modal.test_hint")}
             >
@@ -479,7 +474,7 @@ export function ClaudeCodeAuthModal({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onLogout}
+                onClick={() => void onLogout()}
                 disabled={!!submitting}
                 className="text-danger hover:bg-danger/10"
               >
@@ -516,7 +511,7 @@ function StatusBadge({
 }: {
   status: AuthStatusResponse | null;
   loading: boolean;
-  t: (k: string) => string;
+  t: TFunc;
 }) {
   if (loading || !status) {
     return (
@@ -544,9 +539,7 @@ function StatusBadge({
     <span className="inline-flex items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[11px] text-success">
       <CheckCircle2 className="h-3 w-3" />
       {label}
-      {status.email ? (
-        <span className="ml-1 text-fg-muted">· {status.email}</span>
-      ) : null}
+      {status.email ? <span className="ml-1 text-fg-muted">· {status.email}</span> : null}
     </span>
   );
 }
@@ -567,7 +560,7 @@ function DeviceLoginBody({
   onSubmitCode,
   onCancel,
 }: {
-  t: (k: string) => string;
+  t: TFunc;
   job: { id: string; events: AuthJobEvent[] } | null;
   jobFinished: boolean;
   deviceUrl: string | null;
@@ -619,9 +612,7 @@ function DeviceLoginBody({
             {t("claude_auth.modal.device_login.visit_url")}
           </p>
           <div className="mt-1 flex items-center gap-2">
-            <code className="flex-1 truncate font-mono text-[11.5px] text-fg">
-              {deviceUrl}
-            </code>
+            <code className="flex-1 truncate font-mono text-[11.5px] text-fg">{deviceUrl}</code>
             <Button variant="ghost" size="sm" onClick={onCopy} title="Copy">
               {copiedUrl ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
             </Button>
@@ -661,9 +652,7 @@ function DeviceLoginBody({
               onClick={onSubmitCode}
               disabled={!authCodeInput.trim() || submitting === "authcode"}
             >
-              {submitting === "authcode" ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : null}
+              {submitting === "authcode" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
               {t("claude_auth.modal.device_login.submit_code")}
             </Button>
           </div>
@@ -714,7 +703,6 @@ function DeviceLoginBody({
 // ─────────────────────────────── secret-paste body ──
 
 function SecretInputBody({
-  t,
   label,
   hint,
   placeholder,
@@ -726,7 +714,6 @@ function SecretInputBody({
   saving,
   saveLabel,
 }: {
-  t: (k: string) => string;
   label: string;
   hint: string;
   placeholder: string;

@@ -166,16 +166,13 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
   }, [selectedPreset]);
 
   const slugValid = slug.length > 0 && SLUG_PATTERN.test(slug);
-  const repoNameValid =
-    repoName.length > 0 && REPO_NAME_PATTERN.test(repoName);
-  const step0Valid =
-    displayName.trim().length > 0 && slugValid && repoNameValid;
+  const repoNameValid = repoName.length > 0 && REPO_NAME_PATTERN.test(repoName);
+  const step0Valid = displayName.trim().length > 0 && slugValid && repoNameValid;
   const step1Valid = selectedPresetId !== null;
   const optionsHaveErrors = false; // dynamic-form validation handled by inputs
 
   // Skip Step 3 entirely when the preset has no options.
-  const optionsStepNeeded =
-    (selectedPreset?.option_schema.length ?? 0) > 0;
+  const optionsStepNeeded = (selectedPreset?.option_schema.length ?? 0) > 0;
 
   function nextStep(): void {
     if (step === 0 && !step0Valid) return;
@@ -257,11 +254,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             ) : (
-              <Button
-                variant="primary"
-                onClick={submit}
-                disabled={submitting || !step1Valid}
-              >
+              <Button variant="primary" onClick={submit} disabled={submitting || !step1Valid}>
                 {submitting ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -295,12 +288,8 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
             >
               {idx + 1}
             </span>
-            <span className={idx === step ? "text-fg font-medium" : ""}>
-              {label}
-            </span>
-            {idx < titles.length - 1 ? (
-              <ChevronRight className="h-3 w-3 text-fg-subtle" />
-            ) : null}
+            <span className={idx === step ? "text-fg font-medium" : ""}>{label}</span>
+            {idx < titles.length - 1 ? <ChevronRight className="h-3 w-3 text-fg-subtle" /> : null}
           </li>
         ))}
       </ol>
@@ -328,11 +317,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
           <Field
             label="슬러그 (GAPT 내부 식별자)"
             hint="소문자, 숫자, 하이픈만. 표시 이름에서 자동 추출됩니다."
-            error={
-              slug.length > 0 && !slugValid
-                ? "소문자/숫자/하이픈만 사용 가능"
-                : null
-            }
+            error={slug.length > 0 && !slugValid ? "소문자/숫자/하이픈만 사용 가능" : null}
           >
             <Input
               type="text"
@@ -350,9 +335,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
             label="GitHub 레포 이름"
             hint="GAPT 가 이 이름으로 새 레포를 만듭니다. 슬러그와 달라도 됩니다."
             error={
-              repoName.length > 0 && !repoNameValid
-                ? "영숫자 + - _ . 만 (시작은 영숫자/_)"
-                : null
+              repoName.length > 0 && !repoNameValid ? "영숫자 + - _ . 만 (시작은 영숫자/_)" : null
             }
           >
             <Input
@@ -370,9 +353,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
           <Field label="공개 범위">
             <Select
               value={visibility}
-              onChange={(e) =>
-                setVisibility(e.currentTarget.value as "private" | "public")
-              }
+              onChange={(e) => setVisibility(e.currentTarget.value as "private" | "public")}
             >
               <option value="private">private (권장)</option>
               <option value="public">public</option>
@@ -406,13 +387,9 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
                   >
                     <div className="flex items-center gap-2">
                       <Icon className="h-4 w-4 text-accent" />
-                      <span className="font-medium text-[13px] text-fg">
-                        {preset.display_name}
-                      </span>
+                      <span className="font-medium text-[13px] text-fg">{preset.display_name}</span>
                     </div>
-                    <p className="text-[11.5px] text-fg-muted">
-                      {preset.description}
-                    </p>
+                    <p className="text-[11.5px] text-fg-muted">{preset.description}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
                       {preset.stack.map((s) => (
                         <span
@@ -434,17 +411,14 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
       {step === 2 && selectedPreset ? (
         <div className="flex flex-col gap-3.5">
           <p className="text-[12px] text-fg-muted">
-            {selectedPreset.display_name} — 옵션을 조정합니다. 기본값으로 두면
-            바로 다음 단계로.
+            {selectedPreset.display_name} — 옵션을 조정합니다. 기본값으로 두면 바로 다음 단계로.
           </p>
           {selectedPreset.option_schema.map((opt) => (
             <OptionField
               key={opt.id}
               option={opt}
               value={options[opt.id]}
-              onChange={(v) =>
-                setOptions((prev) => ({ ...prev, [opt.id]: v }))
-              }
+              onChange={(v) => setOptions((prev) => ({ ...prev, [opt.id]: v }))}
             />
           ))}
         </div>
@@ -453,8 +427,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
       {step === 3 && selectedPreset ? (
         <div className="flex flex-col gap-3.5">
           <p className="text-[12px] text-fg-muted">
-            아래 내용으로 GitHub 레포를 만들고 스캐폴드를 푸시한 뒤 GAPT 프로젝트로
-            등록합니다.
+            아래 내용으로 GitHub 레포를 만들고 스캐폴드를 푸시한 뒤 GAPT 프로젝트로 등록합니다.
           </p>
           <SummaryRow label="표시 이름" value={displayName} />
           <SummaryRow label="GAPT 슬러그" value={slug} />
@@ -500,6 +473,13 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
   );
 }
 
+/** Coerce a scaffold option's unknown value for an <input>/<select>.
+ * Only string/number render; objects (malformed preset JSON) become
+ * "" instead of "[object Object]". */
+function asFieldString(v: unknown): string {
+  return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+}
+
 function OptionField({
   option,
   value,
@@ -514,7 +494,7 @@ function OptionField({
       <Field label={option.label} hint={option.description}>
         <Input
           type="number"
-          value={String(value ?? option.default ?? "")}
+          value={asFieldString(value ?? option.default)}
           onChange={(e) => onChange(Number.parseInt(e.currentTarget.value, 10))}
           min={option.min}
           max={option.max}
@@ -527,7 +507,7 @@ function OptionField({
       <Field label={option.label} hint={option.description}>
         <Input
           type="text"
-          value={String(value ?? option.default ?? "")}
+          value={asFieldString(value ?? option.default)}
           onChange={(e) => onChange(e.currentTarget.value)}
         />
       </Field>
@@ -537,7 +517,7 @@ function OptionField({
     return (
       <Field label={option.label} hint={option.description}>
         <Select
-          value={String(value ?? option.default ?? "")}
+          value={asFieldString(value ?? option.default)}
           onChange={(e) => onChange(e.currentTarget.value)}
         >
           {(option.choices ?? []).map((c) => (
@@ -558,7 +538,7 @@ function OptionField({
           checked={Boolean(value ?? option.default)}
           onChange={(e) => onChange(e.currentTarget.checked)}
         />
-        {Boolean(value ?? option.default) ? "사용" : "미사용"}
+        {(value ?? option.default) ? "사용" : "미사용"}
       </label>
     </Field>
   );

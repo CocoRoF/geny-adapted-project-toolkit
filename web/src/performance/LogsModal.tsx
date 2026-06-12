@@ -81,9 +81,7 @@ export function LogsModal({ containerId, containerName, onClose }: Props) {
       <div className="flex h-[80vh] w-[min(1100px,92vw)] flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-xl">
         <header className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <h2 className="text-[13px] font-semibold text-fg">Logs</h2>
-          <code className="truncate font-mono text-[11.5px] text-fg-muted">
-            {containerName}
-          </code>
+          <code className="truncate font-mono text-[11.5px] text-fg-muted">{containerName}</code>
           <span className="text-[11px] text-fg-subtle">
             tail {TAIL_LINES} lines · auto-refresh {Math.round(POLL_MS / 1000)}s
           </span>
@@ -106,12 +104,7 @@ export function LogsModal({ containerId, containerName, onClose }: Props) {
                 </>
               )}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void pull()}
-              title="Refresh now"
-            >
+            <Button size="sm" variant="ghost" onClick={() => void pull()} title="Refresh now">
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
             <Button size="sm" variant="ghost" onClick={onClose} title="Close (ESC)">
@@ -138,9 +131,7 @@ export function LogsModal({ containerId, containerName, onClose }: Props) {
                 "h-full overflow-auto whitespace-pre-wrap break-all bg-bg px-3 py-2 font-mono text-[11.5px] leading-snug text-fg-muted",
               )}
             >
-              {text || (
-                <span className="text-fg-subtle">No log output yet.</span>
-              )}
+              {text || <span className="text-fg-subtle">No log output yet.</span>}
             </pre>
           )}
         </div>

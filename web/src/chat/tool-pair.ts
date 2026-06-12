@@ -37,8 +37,7 @@ function keyFor(event: SessionStreamEvent): string {
   // The CLI-internal tool path uses `tool_use_id` (Anthropic naming);
   // the geny-executor tool-stage path uses `call_id` / `id`. Accept
   // any of them so both call sources pair cleanly.
-  const id =
-    event.data["tool_use_id"] ?? event.data["call_id"] ?? event.data["id"];
+  const id = event.data["tool_use_id"] ?? event.data["call_id"] ?? event.data["id"];
   if (typeof id === "string" && id.length > 0) return `id:${id}`;
   const tool = event.data["tool"] ?? event.data["tool_name"];
   if (typeof tool === "string") return `name:${tool}`;

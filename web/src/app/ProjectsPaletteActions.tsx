@@ -33,10 +33,7 @@ export function ProjectsPaletteActions() {
           cleanups.push(
             palette.register({
               id: `project.open.${p.id}`,
-              title: t("palette.action.open_project").replace(
-                "{name}",
-                p.display_name,
-              ),
+              title: t("palette.action.open_project").replace("{name}", p.display_name),
               section: t("palette.section.projects"),
               keywords: [p.slug, p.display_name, "project"],
               run: () => {
@@ -52,10 +49,10 @@ export function ProjectsPaletteActions() {
             palette.register({
               id: `workspace.open.${w.id}`,
               title: t("palette.action.open_workspace")
-                .replace("{branch}", w.branch)
+                .replace("{branch}", w.name)
                 .replace("{project}", proj.display_name),
               section: t("palette.section.workspaces"),
-              keywords: [w.branch, proj.slug, proj.display_name, "workspace"],
+              keywords: [w.name, proj.slug, proj.display_name, "workspace"],
               run: () => {
                 void navigate(`/projects/${w.project_id}/w/${w.id}`);
               },

@@ -126,10 +126,7 @@ export function OverflowToolbar({ children, className, moreLabel = "more" }: Pro
   return (
     <div
       ref={containerRef}
-      className={cn(
-        "flex min-w-0 flex-1 items-center gap-2 overflow-hidden",
-        className,
-      )}
+      className={cn("flex min-w-0 flex-1 items-center gap-2 overflow-hidden", className)}
     >
       {items.slice(0, visibleCount).map((child, i) => (
         <span
@@ -155,9 +152,7 @@ export function OverflowToolbar({ children, className, moreLabel = "more" }: Pro
             onClick={() => setMenuOpen((v) => !v)}
             className={cn(
               "inline-flex h-6 items-center gap-1 rounded-md border border-border px-1.5 text-fg-muted",
-              menuOpen
-                ? "bg-bg-subtle text-fg"
-                : "bg-bg-elevated hover:bg-bg-subtle hover:text-fg",
+              menuOpen ? "bg-bg-subtle text-fg" : "bg-bg-elevated hover:bg-bg-subtle hover:text-fg",
             )}
           >
             <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.5} />

@@ -22,14 +22,7 @@
  */
 
 import { useState } from "react";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  Wrench,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Wrench, XCircle } from "lucide-react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { ToolCallCard } from "@/chat/ToolCallCard";
@@ -85,8 +78,9 @@ export function ToolCallGroup({ pairs, defaultOpen = false }: Props) {
   if (pairs.length === 0) return null;
   // Solo tools render flat — no wrapper. Keeps the simple case looking
   // identical to pre-N.1 and avoids a useless one-row "group".
-  if (pairs.length === 1) {
-    return <ToolCallCard pair={pairs[0]} />;
+  const solo = pairs.length === 1 ? pairs[0] : undefined;
+  if (solo) {
+    return <ToolCallCard pair={solo} />;
   }
 
   const status = aggregateStatus(pairs);

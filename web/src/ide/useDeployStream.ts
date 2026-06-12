@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export type DeployStreamPhase =
-  | "idle"
-  | "connecting"
-  | "open"
-  | "done"
-  | "error";
+export type DeployStreamPhase = "idle" | "connecting" | "open" | "done" | "error";
 
 export interface DeployStreamState {
   phase: DeployStreamPhase;
@@ -71,7 +66,8 @@ export function useDeployStream(runId: string | null): DeployStreamState {
     src.addEventListener("status", (ev) => {
       if (closed) return;
       try {
-        const data = JSON.parse((ev as MessageEvent).data) as {
+        if (typeof ev.data !== "string") return;
+        const data = JSON.parse(ev.data) as {
           status: string;
           bound_url?: string | null;
           exec_code?: string | null;
@@ -90,7 +86,8 @@ export function useDeployStream(runId: string | null): DeployStreamState {
     src.addEventListener("log", (ev) => {
       if (closed) return;
       try {
-        const data = JSON.parse((ev as MessageEvent).data) as { content?: string };
+        if (typeof ev.data !== "string") return;
+        const data = JSON.parse(ev.data) as { content?: string };
         if (typeof data.content !== "string") return;
         setState((s) => ({ ...s, log: s.log + data.content! }));
       } catch {
@@ -101,7 +98,8 @@ export function useDeployStream(runId: string | null): DeployStreamState {
     src.addEventListener("done", (ev) => {
       if (closed) return;
       try {
-        const data = JSON.parse((ev as MessageEvent).data) as {
+        if (typeof ev.data !== "string") return;
+        const data = JSON.parse(ev.data) as {
           status: string;
           bound_url?: string | null;
           exec_code?: string | null;

@@ -60,7 +60,7 @@ async function parseError(resp: Response): Promise<ApiError> {
     if (body && typeof body.detail === "object" && body.detail !== null) {
       code = body.detail.code ?? code;
       reason = body.detail.reason ?? reason;
-      details = body.detail as Record<string, unknown>;
+      details = body.detail;
     } else if (typeof body?.detail === "string") {
       reason = body.detail;
     }

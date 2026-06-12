@@ -168,8 +168,7 @@ export interface LogsResponse {
   truncated_to_tail: number;
 }
 
-export const listContainers = () =>
-  apiGet<ContainersResponse>("/_gapt/api/performance/containers");
+export const listContainers = () => apiGet<ContainersResponse>("/_gapt/api/performance/containers");
 
 export const getContainer = (id: string) =>
   apiGet<ContainerSample>(`/_gapt/api/performance/containers/${id}`);
@@ -194,10 +193,9 @@ export const restartContainer = (id: string) =>
   );
 
 export const fetchContainerLogs = (id: string, tail = 500) =>
-  apiFetch<LogsResponse>(
-    `/_gapt/api/performance/containers/${id}/logs?tail=${tail}`,
-    { method: "GET" },
-  );
+  apiFetch<LogsResponse>(`/_gapt/api/performance/containers/${id}/logs?tail=${tail}`, {
+    method: "GET",
+  });
 
 // ───────────────────────────────────── orphan cleanup ──
 
@@ -246,8 +244,7 @@ export interface CleanupReport {
   project_purge_errors: { project_id: string; reason: string }[];
 }
 
-export const previewOrphanCleanup = () =>
-  apiGet<OrphanPlan>("/_gapt/api/performance/orphans");
+export const previewOrphanCleanup = () => apiGet<OrphanPlan>("/_gapt/api/performance/orphans");
 
 export const cleanupOrphans = (remove_worktrees: boolean) =>
   apiPost<CleanupReport>("/_gapt/api/performance/cleanup/orphans", {

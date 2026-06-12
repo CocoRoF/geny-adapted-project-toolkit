@@ -53,11 +53,7 @@ describe("annotateEditGroups", () => {
   });
 
   it("starts a new group when the path changes", () => {
-    const events = [
-      editEvent(1, "src/a.py"),
-      editEvent(2, "src/a.py"),
-      editEvent(3, "src/b.py"),
-    ];
+    const events = [editEvent(1, "src/a.py"), editEvent(2, "src/a.py"), editEvent(3, "src/b.py")];
     const markers = annotateEditGroups(events, extract);
     expect(markers.get(1)?.groupSize).toBe(2);
     expect(markers.get(2)?.groupIndex).toBe(1);
@@ -69,11 +65,7 @@ describe("annotateEditGroups", () => {
     // Common: agent emits a `text` thought between two edits to the
     // same file. We treat them as separate groups so the header
     // doesn't span the unrelated frame.
-    const events = [
-      editEvent(1, "src/a.py"),
-      nonEdit(2, "text"),
-      editEvent(3, "src/a.py"),
-    ];
+    const events = [editEvent(1, "src/a.py"), nonEdit(2, "text"), editEvent(3, "src/a.py")];
     const markers = annotateEditGroups(events, extract);
     expect(markers.get(1)?.groupSize).toBe(1);
     expect(markers.get(3)?.groupSize).toBe(1);

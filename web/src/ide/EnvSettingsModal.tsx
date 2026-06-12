@@ -47,13 +47,8 @@ import {
 } from "@/api/environments";
 import { ensureCloudflareWildcard } from "@/api/providers";
 import { useI18n } from "@/app/providers/i18n-context";
-import {
-  EnvironmentEditor,
-  type FieldError,
-  type FormState,
-  readForm,
-  writeForm,
-} from "@/environments/EnvironmentEditor";
+import { EnvironmentEditor } from "@/environments/EnvironmentEditor";
+import { type FieldError, type FormState, readForm, writeForm } from "@/environments/env-form";
 import { StackRerouteHelpModal } from "@/ide/StackRerouteHelpModal";
 import { WildcardCertGuide } from "@/ide/WildcardCertGuide";
 import { Button } from "@/ui/Button";
@@ -103,12 +98,10 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
         // the running stack would care about — leaves preview_slug /
         // build / cost_multiplier alone.
         const r = await rerouteStack(env.id, {
-          preview_mode:
-            form.preview_mode === "" ? null : form.preview_mode,
+          preview_mode: form.preview_mode === "" ? null : form.preview_mode,
           primary_service: form.primary_service.trim() || null,
           primary_port: Number.parseInt(form.primary_port, 10) || null,
-          strip_prefix:
-            form.strip_prefix === "" ? null : form.strip_prefix === "true",
+          strip_prefix: form.strip_prefix === "" ? null : form.strip_prefix === "true",
           upstream_scheme: form.upstream_scheme || null,
           upstream_host_header: form.upstream_host_header.trim() || null,
           upstream_tls_insecure: form.upstream_tls_insecure,
@@ -116,9 +109,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
         if (r.ok) {
           setFlash(t("env_settings.saved_and_rerouted"));
         } else {
-          setErr(
-            t("env_settings.reroute_failed") + "\n" + r.output.slice(-300),
-          );
+          setErr(t("env_settings.reroute_failed") + "\n" + r.output.slice(-300));
         }
       } else {
         setFlash(t("env_settings.saved"));
@@ -128,12 +119,10 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
       if (e instanceof ApiError) {
         // 422 + `fields[]` from H.1's validator → highlight the
         // exact field that's wrong inline in the editor.
-        const fields = (e.detail as { fields?: FieldError[] } | undefined)?.fields;
+        const fields = (e.details as { fields?: FieldError[] }).fields;
         if (Array.isArray(fields) && fields.length > 0) {
           setFieldErrors(fields);
-          setErr(
-            fields.map((f) => `${f.loc.join(".")}: ${f.msg}`).join("; "),
-          );
+          setErr(fields.map((f) => `${f.loc.join(".")}: ${f.msg}`).join("; "));
         } else {
           setErr(e.reason);
         }
@@ -145,8 +134,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
     }
   };
 
-  const showSubdomainGuide =
-    form.kind === "local" && form.preview_mode === "subdomain";
+  const showSubdomainGuide = form.kind === "local" && form.preview_mode === "subdomain";
 
   return (
     <Modal
@@ -170,14 +158,8 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
           <Button variant="ghost" onClick={onClose} disabled={saving !== null}>
             {t("env_settings.close")}
           </Button>
-          <Button
-            variant="ghost"
-            onClick={() => void save(false)}
-            disabled={saving !== null}
-          >
-            {saving === "save" ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            ) : null}
+          <Button variant="ghost" onClick={() => void save(false)} disabled={saving !== null}>
+            {saving === "save" ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
             {t("env_settings.save")}
           </Button>
           <Button
@@ -186,9 +168,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
             disabled={saving !== null}
             title={t("env_settings.save_and_reroute_title")}
           >
-            {saving === "save_reroute" ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            ) : null}
+            {saving === "save_reroute" ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
             {t("env_settings.save_and_reroute")}
           </Button>
         </>
@@ -203,9 +183,7 @@ export function EnvSettingsModal({ open, env, onClose, onSaved }: Props) {
           fieldErrors={fieldErrors}
           disabled={saving !== null}
           extraBelowKindSection={
-            showSubdomainGuide ? (
-              <SubdomainSetupGuide refreshKey={saveTick} />
-            ) : null
+            showSubdomainGuide ? <SubdomainSetupGuide refreshKey={saveTick} /> : null
           }
         />
 
@@ -253,13 +231,7 @@ function SubdomainSetupGuide({ refreshKey = 0 }: { refreshKey?: number }) {
       const r = await diagnoseSubdomainMode();
       setResult(r);
     } catch (e) {
-      setErr(
-        e instanceof ApiError
-          ? e.reason
-          : e instanceof Error
-            ? e.message
-            : String(e),
-      );
+      setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
     }
@@ -357,9 +329,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
             disabled={running}
             className="ml-auto"
           >
-            {running ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            ) : null}
+            {running ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
             {t("env_settings.subdomain.diagnose.run")}
           </Button>
         </header>
@@ -372,10 +342,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
               detail={result.preview_domain ?? "—"}
             />
             <CheckLine
-              label={t("env_settings.subdomain.check.dns").replace(
-                "{host}",
-                result.sample_host,
-              )}
+              label={t("env_settings.subdomain.check.dns").replace("{host}", result.sample_host)}
               ok={result.dns_resolves}
               detail={result.dns_message}
             />
@@ -398,10 +365,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
               }
             />
             <CheckLine
-              label={t("env_settings.subdomain.check.e2e").replace(
-                "{host}",
-                result.sample_host,
-              )}
+              label={t("env_settings.subdomain.check.e2e").replace("{host}", result.sample_host)}
               ok={result.e2e_reachable}
               detail={result.e2e_message || t("env_settings.subdomain.check.fail")}
             />
@@ -432,10 +396,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
                 }
               />
             ) : null}
-            <CallToActionRow
-              diagnose={result}
-              onWildcardConfigured={diagnose}
-            />
+            <CallToActionRow diagnose={result} onWildcardConfigured={() => void diagnose()} />
             {result.next_steps.length > 0 ? (
               <div className="mt-2 rounded border border-warn/40 bg-warn/5 px-2 py-1.5">
                 <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-warn">
@@ -452,9 +413,7 @@ GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
             ) : null}
           </div>
         ) : (
-          <p className="text-[11px] text-fg-subtle">
-            {t("env_settings.subdomain.diagnose.idle")}
-          </p>
+          <p className="text-[11px] text-fg-subtle">{t("env_settings.subdomain.diagnose.idle")}</p>
         )}
       </div>
     </GuideSection>
@@ -496,11 +455,7 @@ function Step({
           }}
           title="copy"
         >
-          {copied ? (
-            <Check className="h-3 w-3 text-success" />
-          ) : (
-            <Copy className="h-3 w-3" />
-          )}
+          {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
         </button>
       </div>
     </div>
@@ -540,32 +495,27 @@ function CallToActionRow({
       </Link>
     );
   }
-  if (
-    diagnose.tunnel_mode === "remote_managed" &&
-    !diagnose.tunnel_has_wildcard
-  ) {
+  if (diagnose.tunnel_mode === "remote_managed" && !diagnose.tunnel_has_wildcard) {
     return (
       <div className="mt-1 space-y-1">
         <button
           type="button"
           disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setErr(null);
-            try {
-              await ensureCloudflareWildcard();
-              onWildcardConfigured();
-            } catch (e) {
-              setErr(
-                e instanceof ApiError
-                  ? e.reason
-                  : e instanceof Error
-                    ? e.message
-                    : String(e),
-              );
-            } finally {
-              setBusy(false);
-            }
+          onClick={() => {
+            void (async () => {
+              setBusy(true);
+              setErr(null);
+              try {
+                await ensureCloudflareWildcard();
+                onWildcardConfigured();
+              } catch (e) {
+                setErr(
+                  e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
+                );
+              } finally {
+                setBusy(false);
+              }
+            })();
           }}
           className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
         >
@@ -606,15 +556,7 @@ function OpenCertGuideButton() {
   );
 }
 
-function CheckLine({
-  label,
-  ok,
-  detail,
-}: {
-  label: string;
-  ok: boolean;
-  detail: string;
-}) {
+function CheckLine({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
   return (
     <div className="flex items-baseline gap-1.5 text-[11.5px]">
       {ok ? (
@@ -644,11 +586,7 @@ function GuideSection({
     <section className="rounded-md border border-border bg-bg-subtle/30 p-3">
       <header className="mb-2">
         <h3 className="text-[12.5px] font-semibold text-fg">{title}</h3>
-        {hint ? (
-          <p className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">
-            {hint}
-          </p>
-        ) : null}
+        {hint ? <p className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">{hint}</p> : null}
       </header>
       <div className="space-y-2">{children}</div>
     </section>

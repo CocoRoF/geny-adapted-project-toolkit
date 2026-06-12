@@ -1,19 +1,9 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  Check,
-  FolderGit2,
-  GitBranch,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, Check, FolderGit2, GitBranch, Loader2, RefreshCw } from "lucide-react";
 
 import { ApiError } from "@/api/client";
 import { getRemoteBranches } from "@/api/projects";
-import {
-  type ProjectRepository,
-  listProjectRepositories,
-} from "@/api/repositories";
+import { type ProjectRepository, listProjectRepositories } from "@/api/repositories";
 import {
   type CreateWorkspaceInput,
   type WorkspaceResponse,
@@ -132,8 +122,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
           const next = prev.slice();
           if (!next[idx]) return prev;
           const currentBranch = next[idx].branch;
-          const shouldSeed =
-            !currentBranch || currentBranch === next[idx].repo.default_branch;
+          const shouldSeed = !currentBranch || currentBranch === next[idx].repo.default_branch;
           next[idx] = {
             ...next[idx],
             branches: r.branches,
@@ -150,7 +139,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
           if (!next[idx]) return prev;
           const msg =
             err instanceof ApiError
-              ? err.reason ?? err.message
+              ? (err.reason ?? err.message)
               : err instanceof Error
                 ? err.message
                 : String(err);
@@ -171,11 +160,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       if (!next[idx]) return prev;
       const wasIncluded = next[idx].include;
       next[idx] = { ...next[idx], include: !wasIncluded };
-      if (
-        !wasIncluded &&
-        next[idx].branches === null &&
-        next[idx].repo.git_remote_url
-      ) {
+      if (!wasIncluded && next[idx].branches === null && next[idx].repo.git_remote_url) {
         queueMicrotask(() => loadBranchesFor(idx, next[idx]!.repo.id, false));
       }
       return next;
@@ -196,11 +181,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       prev.map((r, idx) => {
         if (r.include === included) return r;
         const next = { ...r, include: included };
-        if (
-          included &&
-          next.branches === null &&
-          next.repo.git_remote_url
-        ) {
+        if (included && next.branches === null && next.repo.git_remote_url) {
           queueMicrotask(() => loadBranchesFor(idx, next.repo.id, false));
         }
         return next;
@@ -253,12 +234,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
             취소
           </Button>
-          <Button
-            variant="primary"
-            type="submit"
-            form="new-workspace-form"
-            disabled={!canSubmit}
-          >
+          <Button variant="primary" type="submit" form="new-workspace-form" disabled={!canSubmit}>
             {submitting ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -269,9 +245,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
                 <Check className="mr-1.5 h-3.5 w-3.5" />
                 워크스페이스 만들기
                 {includedCount > 0 ? (
-                  <span className="ml-1.5 text-[11px] opacity-75">
-                    · {includedCount}개 레포
-                  </span>
+                  <span className="ml-1.5 text-[11px] opacity-75">· {includedCount}개 레포</span>
                 ) : null}
               </>
             )}
@@ -299,10 +273,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
               autoFocus
             />
           </Field>
-          <Field
-            label="워크트리 경로 (선택)"
-            hint="비워두면 /workspace/<slug>/<id> 로 자동 생성"
-          >
+          <Field label="워크트리 경로 (선택)" hint="비워두면 /workspace/<slug>/<id> 로 자동 생성">
             <Input
               type="text"
               value={worktreePath}
@@ -317,9 +288,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
         <section>
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-[13px] font-semibold text-fg">
-                포함할 레포지토리
-              </h3>
+              <h3 className="text-[13px] font-semibold text-fg">포함할 레포지토리</h3>
               {rows.length > 0 ? (
                 <Badge tone="neutral" className="text-[10px]">
                   {includedCount} / {rows.length}
@@ -356,12 +325,10 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
             <div className="flex items-start gap-3 rounded-lg border border-border bg-bg-subtle px-4 py-3 text-[12px] text-fg-muted">
               <FolderGit2 className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle" />
               <div>
-                <p className="font-medium text-fg">
-                  이 프로젝트에는 레포가 없어요
-                </p>
+                <p className="font-medium text-fg">이 프로젝트에는 레포가 없어요</p>
                 <p className="mt-0.5 text-[11.5px]">
-                  워크스페이스가 빈 폴더만 가집니다. 프로젝트 페이지에서 레포를 추가하면
-                  다음 워크스페이스부터 포함할 수 있어요.
+                  워크스페이스가 빈 폴더만 가집니다. 프로젝트 페이지에서 레포를 추가하면 다음
+                  워크스페이스부터 포함할 수 있어요.
                 </p>
               </div>
             </div>
@@ -373,9 +340,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
                   row={row}
                   onToggle={() => toggleInclude(idx)}
                   onBranchChange={(v) => setRowBranch(idx, v)}
-                  onRefreshBranches={() =>
-                    loadBranchesFor(idx, row.repo.id, true)
-                  }
+                  onRefreshBranches={() => loadBranchesFor(idx, row.repo.id, true)}
                 />
               ))}
             </ul>
@@ -422,9 +387,7 @@ function RepoCard({
     <li
       className={cn(
         "rounded-lg border bg-bg-elevated transition-colors",
-        row.include
-          ? "border-accent/40 ring-1 ring-accent/15"
-          : "border-border opacity-75",
+        row.include ? "border-accent/40 ring-1 ring-accent/15" : "border-border opacity-75",
       )}
     >
       {/* Header — clickable everywhere except the chips. */}
@@ -441,9 +404,7 @@ function RepoCard({
         />
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <FolderGit2 className="h-4 w-4 shrink-0 text-fg-muted" strokeWidth={1.5} />
-          <span className="truncate text-[13px] font-medium text-fg">
-            {row.repo.display_name}
-          </span>
+          <span className="truncate text-[13px] font-medium text-fg">{row.repo.display_name}</span>
           {row.repo.subpath ? (
             <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[10.5px] text-fg-muted">
               {row.repo.subpath}/
@@ -500,10 +461,7 @@ function RepoCard({
               className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-border bg-bg text-fg-muted hover:bg-surface-hover hover:text-accent disabled:opacity-50"
             >
               <RefreshCw
-                className={cn(
-                  "h-3.5 w-3.5",
-                  row.branchesLoading && "animate-spin",
-                )}
+                className={cn("h-3.5 w-3.5", row.branchesLoading && "animate-spin")}
                 strokeWidth={1.5}
               />
             </button>
@@ -527,8 +485,8 @@ function RepoCard({
       {/* Body — empty/candidate repo state. */}
       {row.include && !hasRemote ? (
         <div className="border-t border-border/60 px-3.5 py-2.5 text-[11px] text-fg-subtle">
-          이 레포는 원격 URL이 없어서 클론하지 않고 빈 폴더만 만듭니다.
-          워크스페이스 안 터미널에서 <code className="text-fg-muted">git init</code>
+          이 레포는 원격 URL이 없어서 클론하지 않고 빈 폴더만 만듭니다. 워크스페이스 안 터미널에서{" "}
+          <code className="text-fg-muted">git init</code>
           으로 시작할 수 있어요.
         </div>
       ) : null}

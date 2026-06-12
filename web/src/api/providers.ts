@@ -19,7 +19,7 @@ export interface CloudflareConfigResponse {
 
 export interface PutCloudflareConfigRequest {
   /** Omit to leave the existing token in place. */
-  api_token?: string;
+  api_token?: string | undefined;
   config: CloudflareConfig;
 }
 
@@ -87,8 +87,7 @@ export const putCloudflareConfig = (payload: PutCloudflareConfigRequest) =>
     json: payload,
   });
 
-export const deleteCloudflareConfig = () =>
-  apiDelete<void>(`/_gapt/api/providers/cloudflare`);
+export const deleteCloudflareConfig = () => apiDelete<void>(`/_gapt/api/providers/cloudflare`);
 
 export const verifyCloudflareConfig = () =>
   apiFetch<CloudflareVerifyResponse>(`/_gapt/api/providers/cloudflare/verify`, {
@@ -100,10 +99,10 @@ export const getCloudflareTunnelSnapshot = () =>
   apiGet<TunnelSnapshotResponse>(`/_gapt/api/providers/cloudflare/tunnel/snapshot`);
 
 export const ensureCloudflareWildcard = (body?: EnsureWildcardRequest) =>
-  apiFetch<TunnelSnapshotResponse>(
-    `/_gapt/api/providers/cloudflare/tunnel/ensure-wildcard`,
-    { method: "POST", json: body ?? {} },
-  );
+  apiFetch<TunnelSnapshotResponse>(`/_gapt/api/providers/cloudflare/tunnel/ensure-wildcard`, {
+    method: "POST",
+    json: body ?? {},
+  });
 
 // ─────────────────── local→remote tunnel migration ──
 
@@ -132,43 +131,37 @@ export interface MigrationVerifyResponse {
 }
 
 export const inspectLocalCloudflared = () =>
-  apiGet<LocalInspectionResponse>(
-    `/_gapt/api/providers/cloudflare/migration/inspect-local`,
-  );
+  apiGet<LocalInspectionResponse>(`/_gapt/api/providers/cloudflare/migration/inspect-local`);
 
 export interface MigrationPushRequest {
-  account_id?: string;
-  tunnel_id?: string;
+  account_id?: string | undefined;
+  tunnel_id?: string | undefined;
 }
 
 export const pushLocalToRemote = (body?: MigrationPushRequest) =>
-  apiFetch<TunnelSnapshotResponse>(
-    `/_gapt/api/providers/cloudflare/migration/push-to-remote`,
-    { method: "POST", json: body ?? {} },
-  );
+  apiFetch<TunnelSnapshotResponse>(`/_gapt/api/providers/cloudflare/migration/push-to-remote`, {
+    method: "POST",
+    json: body ?? {},
+  });
 
 export const getMigrationScript = () =>
-  apiGet<MigrationScriptResponse>(
-    `/_gapt/api/providers/cloudflare/migration/script`,
-  );
+  apiGet<MigrationScriptResponse>(`/_gapt/api/providers/cloudflare/migration/script`);
 
 export const getRevertScript = () =>
-  apiGet<MigrationScriptResponse>(
-    `/_gapt/api/providers/cloudflare/migration/revert-script`,
-  );
+  apiGet<MigrationScriptResponse>(`/_gapt/api/providers/cloudflare/migration/revert-script`);
 
 export const verifyMigration = () =>
-  apiFetch<MigrationVerifyResponse>(
-    `/_gapt/api/providers/cloudflare/migration/verify`,
-    { method: "POST", json: {} },
-  );
+  apiFetch<MigrationVerifyResponse>(`/_gapt/api/providers/cloudflare/migration/verify`, {
+    method: "POST",
+    json: {},
+  });
 
 export interface RunCutoverRequest {
-  sudo_password?: string;
-  tunnel_id?: string;
+  sudo_password?: string | undefined;
+  tunnel_id?: string | undefined;
   /** When true the script is generated + audit row recorded but
    *  NOT executed. Used by the Wizard's "Preview script" button. */
-  dry_run?: boolean;
+  dry_run?: boolean | undefined;
 }
 
 export interface RunCutoverResponse {
@@ -186,10 +179,10 @@ export interface RunCutoverResponse {
 }
 
 export const runCutoverScript = (body: RunCutoverRequest) =>
-  apiFetch<RunCutoverResponse>(
-    `/_gapt/api/providers/cloudflare/migration/run-cutover`,
-    { method: "POST", json: body },
-  );
+  apiFetch<RunCutoverResponse>(`/_gapt/api/providers/cloudflare/migration/run-cutover`, {
+    method: "POST",
+    json: body,
+  });
 
 // ───────────────────────── migration history + revert ──
 
@@ -210,7 +203,7 @@ export interface MigrationDetailResponse extends MigrationHistoryRow {
 }
 
 export interface RevertMigrationRequest {
-  sudo_password?: string;
+  sudo_password?: string | undefined;
 }
 
 export interface RevertMigrationResponse {
@@ -220,19 +213,14 @@ export interface RevertMigrationResponse {
 }
 
 export const listMigrationHistory = (limit = 50) =>
-  apiGet<MigrationHistoryRow[]>(
-    `/_gapt/api/providers/cloudflare/migrations?limit=${limit}`,
-  );
+  apiGet<MigrationHistoryRow[]>(`/_gapt/api/providers/cloudflare/migrations?limit=${limit}`);
 
 export const getMigrationDetail = (migId: string) =>
   apiGet<MigrationDetailResponse>(
     `/_gapt/api/providers/cloudflare/migrations/${encodeURIComponent(migId)}`,
   );
 
-export const revertMigration = (
-  migId: string,
-  body: RevertMigrationRequest = {},
-) =>
+export const revertMigration = (migId: string, body: RevertMigrationRequest = {}) =>
   apiPost<RevertMigrationResponse>(
     `/_gapt/api/providers/cloudflare/migrations/${encodeURIComponent(migId)}/revert`,
     body,
@@ -266,7 +254,7 @@ export const getCertStatus = () =>
   apiGet<CertStatusResponse>(`/_gapt/api/providers/cloudflare/cert/status`);
 
 export const enableTotalTls = (certificate_authority = "google") =>
-  apiFetch<EnableTotalTlsResponse>(
-    `/_gapt/api/providers/cloudflare/cert/enable-total-tls`,
-    { method: "POST", json: { certificate_authority } },
-  );
+  apiFetch<EnableTotalTlsResponse>(`/_gapt/api/providers/cloudflare/cert/enable-total-tls`, {
+    method: "POST",
+    json: { certificate_authority },
+  });

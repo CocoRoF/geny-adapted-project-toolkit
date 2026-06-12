@@ -90,7 +90,6 @@ export default defineConfig({
           // Heavy deps get their own chunks so the initial paint
           // doesn't ship Monaco when the user is on /login.
           monaco: ["@monaco-editor/react"],
-          dockview: ["dockview"],
           cmdk: ["cmdk"],
         },
       },

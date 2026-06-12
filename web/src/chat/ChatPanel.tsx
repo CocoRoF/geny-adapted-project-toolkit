@@ -153,19 +153,14 @@ const THINKING_PRESETS: { value: number; label: string }[] = [
  *  `<a>` so the file's blob URL is released as soon as the download
  *  starts; no global state, no UI side-effects beyond the download. */
 async function downloadTranscriptMarkdown(sessionId: string): Promise<void> {
-  const resp = await fetch(
-    `/_gapt/api/sessions/${sessionId}/transcript?format=markdown`,
-    { credentials: "include" },
-  );
+  const resp = await fetch(`/_gapt/api/sessions/${sessionId}/transcript?format=markdown`, {
+    credentials: "include",
+  });
   if (!resp.ok) {
     // Surface the failure in dev console — operator can re-try from
     // the UI button. A toast would be nicer but is overkill for the
     // one error path that exists today (server 5xx or 403).
-    console.error(
-      "transcript download failed",
-      resp.status,
-      await resp.text().catch(() => ""),
-    );
+    console.error("transcript download failed", resp.status, await resp.text().catch(() => ""));
     return;
   }
   const blob = await resp.blob();
@@ -189,12 +184,7 @@ const MODEL_PRESETS: { value: string; label: string }[] = [
   { value: "opus", label: "opus (deepest)" },
 ];
 
-export function ChatPanel({
-  projectId,
-  workspaceId,
-  standalone = false,
-  onPoppedOut,
-}: Props) {
+export function ChatPanel({ projectId, workspaceId, standalone = false, onPoppedOut }: Props) {
   const { t } = useI18n();
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [message, setMessage] = useState("");
@@ -276,9 +266,7 @@ export function ChatPanel({
         const url = new URL(window.location.href);
         const hinted = url.searchParams.get("session");
         const fromUrl = hinted ? rows.find((s) => s.id === hinted) : undefined;
-        const wsActive = rows.find(
-          (s) => s.workspace_id === workspaceId && s.status === "active",
-        );
+        const wsActive = rows.find((s) => s.workspace_id === workspaceId && s.status === "active");
         if (fromUrl) setSession(fromUrl);
         else if (wsActive) setSession(wsActive);
       })
@@ -325,11 +313,7 @@ export function ChatPanel({
   const openPopup = useCallback(() => {
     const query = session ? `?session=${encodeURIComponent(session.id)}` : "";
     const url = `${ROUTER_BASENAME}/projects/${projectId}/w/${workspaceId}/chat${query}`;
-    const win = window.open(
-      url,
-      `gapt-chat-${workspaceId}`,
-      "popup=yes,width=560,height=800",
-    );
+    const win = window.open(url, `gapt-chat-${workspaceId}`, "popup=yes,width=560,height=800");
     if (win) {
       win.focus();
       onPoppedOut?.(win);
@@ -376,35 +360,30 @@ export function ChatPanel({
   // events from the previous session so the new event stream renders
   // cleanly. Reactivates archived sessions inline before attaching so
   // the runtime path can rehydrate prior messages (Phase L.1).
-  const onSwitchSession = useCallback(
-    (target: SessionResponse) => {
-      setSessionMenuOpen(false);
-      setUserEvents([]);
-      setError(null);
-      const attach = (row: SessionResponse) => {
-        setSession(row);
-        setWorkspaceSessions((rows) =>
-          rows.map((r) => (r.id === row.id ? row : r)),
-        );
-      };
-      if (target.status === "archived") {
-        void reactivateSession(target.id)
-          .then(attach)
-          .catch((err: unknown) => {
-            setError(
-              err instanceof ApiError
-                ? `${err.code}: ${err.reason}`
-                : err instanceof Error
-                  ? err.message
-                  : String(err),
-            );
-          });
-      } else {
-        attach(target);
-      }
-    },
-    [],
-  );
+  const onSwitchSession = useCallback((target: SessionResponse) => {
+    setSessionMenuOpen(false);
+    setUserEvents([]);
+    setError(null);
+    const attach = (row: SessionResponse) => {
+      setSession(row);
+      setWorkspaceSessions((rows) => rows.map((r) => (r.id === row.id ? row : r)));
+    };
+    if (target.status === "archived") {
+      void reactivateSession(target.id)
+        .then(attach)
+        .catch((err: unknown) => {
+          setError(
+            err instanceof ApiError
+              ? `${err.code}: ${err.reason}`
+              : err instanceof Error
+                ? err.message
+                : String(err),
+          );
+        });
+    } else {
+      attach(target);
+    }
+  }, []);
 
   const stream = useSessionStream(session?.id ?? null);
 
@@ -427,12 +406,8 @@ export function ChatPanel({
     const filteredUser =
       backendUserTexts.size === 0
         ? userEvents
-        : userEvents.filter(
-            (ev) => !backendUserTexts.has(asString(ev.data["text"])),
-          );
-    return [...filteredUser, ...stream.events].sort((a, b) =>
-      a.ts.localeCompare(b.ts),
-    );
+        : userEvents.filter((ev) => !backendUserTexts.has(asString(ev.data["text"])));
+    return [...filteredUser, ...stream.events].sort((a, b) => a.ts.localeCompare(b.ts));
   }, [userEvents, stream.events]);
 
   // Auto-scroll on new events.
@@ -508,7 +483,7 @@ export function ChatPanel({
       }
       if (nextMode) setMode(nextMode);
       const activeMode = nextMode ?? mode;
-      const display = outgoing;  // what we show locally — *before* prepending PLAN_PREFIX
+      const display = outgoing; // what we show locally — *before* prepending PLAN_PREFIX
       if (activeMode === "plan" && outgoing.length > 0) {
         outgoing = `${PLAN_PREFIX}\n\n${outgoing}`;
       }
@@ -562,10 +537,7 @@ export function ChatPanel({
       }
       void invokeSession(session.id, outgoing, activeMode, overrideBody)
         .catch((err: unknown) => {
-          if (
-            err instanceof ApiError &&
-            err.code === "session.already_invoking"
-          ) {
+          if (err instanceof ApiError && err.code === "session.already_invoking") {
             // Phase N.2.7 — cross-device handoff: another tab/PC is
             // still mid-turn on this session. Hold the payload + the
             // optimistic echo so the user can either take over or
@@ -578,21 +550,14 @@ export function ChatPanel({
             });
             return;
           }
-          if (
-            err instanceof ApiError &&
-            err.code === "session.budget_exhausted"
-          ) {
+          if (err instanceof ApiError && err.code === "session.budget_exhausted") {
             // Phase N.3 — GAPT-side budget cap reached. The server
             // attached the live totals via structured `details` so we
             // can render exact spend + cap in the banner; falling back
             // to 0/0 is safe (the banner just hides the figures).
             const d = err.details;
-            const cost =
-              typeof d.cost_usd === "number" ? d.cost_usd : 0;
-            const cap =
-              typeof d.cost_budget_usd === "number"
-                ? d.cost_budget_usd
-                : 0;
+            const cost = typeof d.cost_usd === "number" ? d.cost_usd : 0;
+            const cap = typeof d.cost_budget_usd === "number" ? d.cost_budget_usd : 0;
             setBudgetExhausted({
               cost_usd: cost,
               cost_budget_usd: cap,
@@ -657,9 +622,7 @@ export function ChatPanel({
   // so the local bubble is a ghost that has to be cleared.
   const dismissBudgetExhausted = useCallback(() => {
     if (!budgetExhausted) return;
-    setUserEvents((prev) =>
-      prev.filter((e) => e.seq !== budgetExhausted.echoSeq),
-    );
+    setUserEvents((prev) => prev.filter((e) => e.seq !== budgetExhausted.echoSeq));
     setBudgetExhausted(null);
   }, [budgetExhausted]);
 
@@ -972,16 +935,14 @@ export function ChatPanel({
                     key: string;
                     pairs: ToolPair[];
                   };
-              const merged = mergeAssistantText(
-                allEvents.filter((e) => e.kind !== "step"),
-              );
+              const merged = mergeAssistantText(allEvents.filter((e) => e.kind !== "step"));
               const entries: RenderEntry[] = [];
               let runPairs: ToolPair[] = [];
               const flushRun = () => {
                 if (runPairs.length === 0) return;
                 entries.push({
                   kind: "tool_group",
-                  key: `tool-group-${runPairs[0].call.seq}`,
+                  key: `tool-group-${runPairs[0]?.call.seq ?? 0}`,
                   pairs: runPairs,
                 });
                 runPairs = [];
@@ -1027,9 +988,7 @@ export function ChatPanel({
                     const marker = editGroupMarkers.get(event.seq);
                     const isGroupStart = marker !== undefined && marker.groupIndex === 0;
                     const cardKey = `diff-${event.seq}`;
-                    const card = (
-                      <DiffCard workspaceId={workspaceId} payload={edit} />
-                    );
+                    const card = <DiffCard workspaceId={workspaceId} payload={edit} />;
                     if (marker && marker.groupSize > 1) {
                       return (
                         <div key={cardKey} data-event-kind="tool_result">
@@ -1126,18 +1085,12 @@ export function ChatPanel({
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="font-medium">
-                    이 세션의 예산 한도에 도달했습니다.
-                  </p>
+                  <p className="font-medium">이 세션의 예산 한도에 도달했습니다.</p>
                   <p className="mt-0.5 text-[11.5px] opacity-90">
                     누적 비용{" "}
-                    <span className="font-mono">
-                      ${budgetExhausted.cost_usd.toFixed(4)}
-                    </span>
+                    <span className="font-mono">${budgetExhausted.cost_usd.toFixed(4)}</span>
                     {" / 한도 "}
-                    <span className="font-mono">
-                      ${budgetExhausted.cost_budget_usd.toFixed(4)}
-                    </span>
+                    <span className="font-mono">${budgetExhausted.cost_budget_usd.toFixed(4)}</span>
                     . 새 세션을 시작하거나 Settings 에서 한도를 조정하세요.
                   </p>
                 </div>
@@ -1164,8 +1117,8 @@ export function ChatPanel({
                 <div className="flex-1">
                   <p className="font-medium">다른 곳에서 작업이 진행 중입니다.</p>
                   <p className="mt-0.5 text-[11.5px] opacity-90">
-                    다른 PC / 탭에서 시작한 invoke 가 아직 끝나지 않았어요.
-                    이어받으면 진행 중인 작업을 중단하고 이 메시지로 다음 turn 을 진행합니다.
+                    다른 PC / 탭에서 시작한 invoke 가 아직 끝나지 않았어요. 이어받으면 진행 중인
+                    작업을 중단하고 이 메시지로 다음 turn 을 진행합니다.
                   </p>
                 </div>
               </div>
@@ -1300,9 +1253,7 @@ function ManifestPill({
                   }
                 >
                   <span className="flex w-full items-center gap-1.5">
-                    <span className="flex-1 truncate font-mono text-[12.5px] text-fg">
-                      {m.id}
-                    </span>
+                    <span className="flex-1 truncate font-mono text-[12.5px] text-fg">{m.id}</span>
                     {m.source === "workspace" ? (
                       <span className="rounded bg-accent/15 px-1 text-[9.5px] uppercase tracking-wider text-accent">
                         ws
@@ -1315,23 +1266,17 @@ function ManifestPill({
                     ) : null}
                   </span>
                   {m.description ? (
-                    <span className="text-[11px] text-fg-muted">
-                      {m.description}
-                    </span>
+                    <span className="text-[11px] text-fg-muted">{m.description}</span>
                   ) : null}
                   {m.model ? (
-                    <span className="font-mono text-[10.5px] text-fg-subtle">
-                      model: {m.model}
-                    </span>
+                    <span className="font-mono text-[10.5px] text-fg-subtle">model: {m.model}</span>
                   ) : null}
                 </button>
               </li>
             );
           })}
           {manifests.length === 0 ? (
-            <li className="px-3 py-2 text-[11px] text-fg-subtle">
-              No manifests loaded.
-            </li>
+            <li className="px-3 py-2 text-[11px] text-fg-subtle">No manifests loaded.</li>
           ) : null}
         </ul>
       ) : null}
@@ -1387,9 +1332,7 @@ function ModelPill({
         }
       >
         <span className="text-fg-subtle">model:</span>
-        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>
-          {label}
-        </span>
+        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>{label}</span>
         {!locked ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
       </button>
       {open && !locked ? (
@@ -1427,7 +1370,9 @@ function ModelPill({
                 }
               >
                 <span className="font-mono text-[12px] text-fg">{p.value}</span>
-                <span className="text-[10.5px] text-fg-subtle">{p.label.replace(p.value, "").trim()}</span>
+                <span className="text-[10.5px] text-fg-subtle">
+                  {p.label.replace(p.value, "").trim()}
+                </span>
               </button>
             </li>
           ))}
@@ -1482,9 +1427,7 @@ function ThinkingPill({
         }
       >
         <span className="text-fg-subtle">think:</span>
-        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>
-          {label}
-        </span>
+        <span className={isInherit ? "italic font-mono text-fg-muted" : "font-mono"}>{label}</span>
         {!locked ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
       </button>
       {open && !locked ? (
@@ -1503,12 +1446,8 @@ function ThinkingPill({
                   : "flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-bg-subtle"
               }
             >
-              <span className="font-mono text-[12px] italic text-fg-muted">
-                auto
-              </span>
-              <span className="text-[10.5px] text-fg-subtle">
-                (manifest decides)
-              </span>
+              <span className="font-mono text-[12px] italic text-fg-muted">auto</span>
+              <span className="text-[10.5px] text-fg-subtle">(manifest decides)</span>
             </button>
           </li>
           {THINKING_PRESETS.map((p) => (
@@ -1556,8 +1495,7 @@ function SessionPicker({
   onPick: (target: SessionResponse) => void;
 }) {
   const label = current
-    ? current.first_user_message?.slice(0, 24) ||
-      `session ${current.id.slice(-6)}`
+    ? current.first_user_message?.slice(0, 24) || `session ${current.id.slice(-6)}`
     : "no session";
   return (
     <div className="relative">
@@ -1584,8 +1522,7 @@ function SessionPicker({
         >
           {sessions.map((s) => {
             const isCurrent = current?.id === s.id;
-            const snippet =
-              s.first_user_message?.trim() || "(no recorded prompt)";
+            const snippet = s.first_user_message?.trim() || "(no recorded prompt)";
             return (
               <li key={s.id}>
                 <button
@@ -1609,9 +1546,7 @@ function SessionPicker({
                       {s.status}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
-                      {snippet.length > 50
-                        ? `${snippet.slice(0, 50)}…`
-                        : snippet}
+                      {snippet.length > 50 ? `${snippet.slice(0, 50)}…` : snippet}
                     </span>
                     <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-fg-subtle">
                       ${s.cost_usd.toFixed(4)}
@@ -1708,8 +1643,7 @@ function mergeAssistantText(events: SessionStreamEvent[]): SessionStreamEvent[] 
   }
 
   for (const ev of events) {
-    const isAssistantText =
-      ev.kind === "text" && asString(ev.data["role"]) !== "user";
+    const isAssistantText = ev.kind === "text" && asString(ev.data["role"]) !== "user";
     if (isAssistantText) {
       const chunk = asString(ev.data["text"]) || asString(ev.data["chunk"]);
       if (!bufferHead) bufferHead = ev;

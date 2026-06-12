@@ -8,11 +8,7 @@ import { ActivityBar, type SideView } from "@/ide/shell/ActivityBar";
 import { BottomPanel, type BottomTab } from "@/ide/shell/BottomPanel";
 import { EditorArea } from "@/ide/shell/EditorArea";
 import { type EditorTab, tabIdFor } from "@/ide/shell/editor-tabs";
-import {
-  DEFAULT_LAYOUT,
-  LAYOUT_PRESETS,
-  type LayoutState,
-} from "@/ide/shell/layouts";
+import { DEFAULT_LAYOUT, LAYOUT_PRESETS, type LayoutState } from "@/ide/shell/layouts";
 import { SidePanel } from "@/ide/shell/SidePanel";
 import { SplitHandle } from "@/ide/shell/SplitHandle";
 import { StatusBar } from "@/ide/shell/StatusBar";
@@ -71,9 +67,7 @@ export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Prop
    * it either way. The editor column auto-opens so the user always
    * sees what they just clicked. */
   const openTab = useCallback((tab: EditorTab) => {
-    setTabs((prev) =>
-      prev.some((t) => t.id === tab.id) ? prev : [...prev, tab],
-    );
+    setTabs((prev) => (prev.some((t) => t.id === tab.id) ? prev : [...prev, tab]));
     setActiveTabId(tab.id);
     setLayout((s) => (s.editorOpen ? s : { ...s, editorOpen: true }));
   }, []);
@@ -122,9 +116,7 @@ export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Prop
     setLayout((s) => ({ ...s, editorOpen: false }));
   }, []);
 
-  const activeTab = activeTabId
-    ? tabs.find((t) => t.id === activeTabId) ?? null
-    : null;
+  const activeTab = activeTabId ? (tabs.find((t) => t.id === activeTabId) ?? null) : null;
 
   // Phase D.5 — palette-driven layout presets. One usePaletteAction
   // per preset (the cmdk fuzzy filter handles ranking).
@@ -255,14 +247,7 @@ export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Prop
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [
-    layout.bottomTab,
-    layout.chatOpen,
-    layout.sideView,
-    setBottomTab,
-    setChatOpen,
-    setSideView,
-  ]);
+  }, [layout.bottomTab, layout.chatOpen, layout.sideView, setBottomTab, setChatOpen, setSideView]);
 
   const onToggleTerminal = useCallback(() => {
     setBottomTab(layout.bottomTab === "terminal" ? null : "terminal");

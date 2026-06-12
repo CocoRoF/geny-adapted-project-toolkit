@@ -39,10 +39,7 @@ export function StatusBar({
       </span>
       <span className="inline-flex items-center gap-1.5">
         <Server
-          className={cn(
-            "h-3 w-3",
-            isRunning ? "text-success" : "text-fg-subtle",
-          )}
+          className={cn("h-3 w-3", isRunning ? "text-success" : "text-fg-subtle")}
           strokeWidth={1.5}
         />
         {workspaceStatus}

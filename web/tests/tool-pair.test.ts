@@ -118,9 +118,7 @@ describe("pairToolEvents", () => {
     it("keeps a live pair running while the turn hasn't terminated", () => {
       // Boundary: no `done` and no terminal error yet → still
       // legitimately running.
-      const pairs = pairToolEvents([
-        ev(1, "tool_call", { tool: "gapt_read", call_id: "a" }),
-      ]);
+      const pairs = pairToolEvents([ev(1, "tool_call", { tool: "gapt_read", call_id: "a" })]);
       const first = pairs[0]!;
       expect(first.running).toBe(true);
       expect(first.abandoned).toBe(false);

@@ -54,9 +54,7 @@ describe("<Login />", () => {
       () => jsonResponse(200, { id: "admin" }),
     ];
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
-      calls.push(
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-      );
+      calls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       const handler = sequence.shift();
       if (!handler) throw new Error(`Unexpected fetch ${calls.at(-1)}`);
       return Promise.resolve(handler());

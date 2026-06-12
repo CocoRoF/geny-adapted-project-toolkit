@@ -58,8 +58,7 @@ export function ImportProjectModal({ open, onClose, onCreated }: Props) {
   }
 
   const slugValid = slug.length === 0 || SLUG_PATTERN.test(slug);
-  const canSubmit =
-    !submitting && slugValid && displayName.length > 0 && gitRemoteUrl.length > 0;
+  const canSubmit = !submitting && slugValid && displayName.length > 0 && gitRemoteUrl.length > 0;
 
   return (
     <Modal

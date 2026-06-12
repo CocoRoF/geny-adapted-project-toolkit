@@ -92,9 +92,7 @@ export function CleanupOrphansModal({ onClose, onCleaned }: Props) {
       <div className="flex max-h-[80vh] w-[min(720px,92vw)] flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-xl">
         <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <Trash2 className="h-4 w-4 text-warn" strokeWidth={1.5} />
-          <h2 className="text-[14px] font-semibold text-fg">
-            {t("performance.cleanup.title")}
-          </h2>
+          <h2 className="text-[14px] font-semibold text-fg">{t("performance.cleanup.title")}</h2>
           <Button
             size="sm"
             variant="ghost"
@@ -156,7 +154,7 @@ export function CleanupOrphansModal({ onClose, onCleaned }: Props) {
               </Button>
               <Button
                 variant="danger"
-                onClick={run}
+                onClick={() => void run()}
                 disabled={phase !== "ready" || !!nothing}
               >
                 {phase === "running" ? (
@@ -207,10 +205,7 @@ function PlanView({
       <p className="text-[12px] text-fg-muted">{t("performance.cleanup.intro")}</p>
 
       {/* Containers */}
-      <Section
-        title={t("performance.cleanup.section.containers")}
-        count={plan.containers.length}
-      >
+      <Section title={t("performance.cleanup.section.containers")} count={plan.containers.length}>
         {plan.containers.length === 0 ? (
           <Empty label={t("performance.cleanup.empty.containers")} />
         ) : (
@@ -240,10 +235,7 @@ function PlanView({
       </Section>
 
       {/* Caddy routes */}
-      <Section
-        title={t("performance.cleanup.section.caddy")}
-        count={plan.caddy_route_ids.length}
-      >
+      <Section title={t("performance.cleanup.section.caddy")} count={plan.caddy_route_ids.length}>
         {plan.caddy_route_ids.length === 0 ? (
           <Empty label={t("performance.cleanup.empty.caddy")} />
         ) : (

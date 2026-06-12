@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { useTheme } from "@/app/providers/theme-context";
+import { asString, parseJsonObject } from "@/lib/json";
 
 interface Props {
   workspaceId: string;
@@ -64,9 +65,7 @@ export function TerminalPanel({ workspaceId }: Props) {
         fit.fit();
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }),
-          );
+          ws.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }));
         }
       } catch {
         // ignore — terminal element may not be in layout yet
@@ -115,25 +114,22 @@ export function TerminalPanel({ workspaceId }: Props) {
         // Send an initial resize so the server PTY matches what xterm
         // shows. The query string above was best-effort; this is
         // authoritative.
-        ws.send(
-          JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }),
-        );
+        ws.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }));
       };
 
       ws.onmessage = (event) => {
         try {
-          const frame = JSON.parse(event.data) as Record<string, unknown>;
-          const ftype = String(frame["type"] ?? "");
+          const frame = parseJsonObject(event.data);
+          if (!frame) return; // malformed frame — drop it
+          const ftype = asString(frame["type"]);
           if (ftype === "output") {
-            term.write(String(frame["data"] ?? ""));
+            term.write(asString(frame["data"]));
           } else if (ftype === "exit") {
             const code = Number(frame["code"] ?? 0);
-            term.write(
-              `\r\n\x1b[2m── shell exited with code ${code} ──\x1b[0m\r\n`,
-            );
+            term.write(`\r\n\x1b[2m── shell exited with code ${code} ──\x1b[0m\r\n`);
           } else if (ftype === "error") {
-            const code = String(frame["code"] ?? "error");
-            const reason = String(frame["reason"] ?? "");
+            const code = asString(frame["code"], "error");
+            const reason = asString(frame["reason"]);
             term.write(`\r\n\x1b[31m${code}: ${reason}\x1b[0m\r\n`);
           }
         } catch {

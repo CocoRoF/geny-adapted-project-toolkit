@@ -22,19 +22,12 @@ export interface ManifestListResponse {
 }
 
 export const listManifests = (workspaceId?: string) => {
-  const qs = workspaceId
-    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
-    : "";
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
   return apiGet<ManifestListResponse>(`/_gapt/api/manifests${qs}`);
 };
 
-export const getManifestDetail = (
-  manifestId: string,
-  workspaceId?: string,
-) => {
-  const qs = workspaceId
-    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
-    : "";
+export const getManifestDetail = (manifestId: string, workspaceId?: string) => {
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
   return apiGet<{ source: string; manifest: Record<string, unknown> }>(
     `/_gapt/api/manifests/${encodeURIComponent(manifestId)}${qs}`,
   );

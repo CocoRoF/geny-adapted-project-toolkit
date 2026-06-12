@@ -5,7 +5,6 @@ import {
   Archive,
   ChevronDown,
   Download,
-  ExternalLink,
   FolderGit2,
   FolderPlus,
   GitBranch,
@@ -39,7 +38,7 @@ export function ProjectsIndex() {
   const [state, setState] = useState<LoadState>("idle");
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);  // ← Import (legacy)
+  const [showCreate, setShowCreate] = useState(false); // ← Import (legacy)
   // Phase N.2.6 — split "+ 새 프로젝트" into a dropdown menu with two
   // entry points: scaffold (create new repo) vs import (existing repo).
   // Phase N.4 adds a third: "empty" project (no git, multi-repo
@@ -220,9 +219,7 @@ export function ProjectsIndex() {
                     <Download className="mt-0.5 h-3.5 w-3.5 text-fg-muted" />
                     <div>
                       <div className="text-[13px] font-medium text-fg">불러오기</div>
-                      <div className="text-[11px] text-fg-muted">
-                        기존 git 레포 URL 등록
-                      </div>
+                      <div className="text-[11px] text-fg-muted">기존 git 레포 URL 등록</div>
                     </div>
                   </button>
                 </li>
@@ -265,10 +262,7 @@ export function ProjectsIndex() {
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span>
-            {(stats.active >= stats.cap
-              ? t("workspaces.cap.at_cap")
-              : t("workspaces.cap.warning")
-            )
+            {(stats.active >= stats.cap ? t("workspaces.cap.at_cap") : t("workspaces.cap.warning"))
               .replace("{active}", String(stats.active))
               .replace("{cap}", String(stats.cap))}
           </span>
@@ -307,10 +301,7 @@ export function ProjectsIndex() {
             return (
               <li key={p.id} className="group relative">
                 <div className="block h-full rounded-lg border border-border bg-bg-elevated transition-colors hover:border-accent/60">
-                  <Link
-                    to={`/projects/${p.id}`}
-                    className="block p-4 hover:bg-surface-hover"
-                  >
+                  <Link to={`/projects/${p.id}`} className="block p-4 hover:bg-surface-hover">
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <h3 className="truncate pr-8 text-[14px] font-semibold text-fg group-hover:text-accent">
                         {p.display_name}
@@ -332,10 +323,10 @@ export function ProjectsIndex() {
                     {p.repository_count > 1 ? (
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
                         <GitBranch className="h-3 w-3" />
-                        <span className="truncate">
-                          {p.repository_count}개 레포지토리
-                        </span>
-                        <Badge tone="accent" className="text-[9px]">multi</Badge>
+                        <span className="truncate">{p.repository_count}개 레포지토리</span>
+                        <Badge tone="accent" className="text-[9px]">
+                          multi
+                        </Badge>
                       </div>
                     ) : p.repository_count === 0 ? (
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
@@ -360,9 +351,9 @@ export function ProjectsIndex() {
                           <Link
                             to={`/projects/${p.id}/w/${w.id}`}
                             className="truncate font-mono text-fg-muted hover:text-accent"
-                            title={`${w.branch} — ${w.status}`}
+                            title={`${w.name} — ${w.status}`}
                           >
-                            {w.branch}
+                            {w.name}
                           </Link>
                           <span
                             className={
@@ -380,10 +371,7 @@ export function ProjectsIndex() {
                       ))}
                       {wsForProject.length > 3 ? (
                         <li className="pt-1 text-[10.5px] text-fg-subtle">
-                          {t("workspaces.more").replace(
-                            "{n}",
-                            String(wsForProject.length - 3),
-                          )}
+                          {t("workspaces.more").replace("{n}", String(wsForProject.length - 3))}
                         </li>
                       ) : null}
                     </ul>

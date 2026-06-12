@@ -83,7 +83,7 @@ export function streamDeploy(
   onFrame: (frame: DeployStreamFrame) => void,
 ): AbortController {
   const ctrl = new AbortController();
-  (async () => {
+  void (async () => {
     try {
       const resp = await fetch(`/_gapt/api/environments/${envId}/deploy/stream`, {
         method: "POST",
@@ -178,8 +178,7 @@ export const triggerDeployAsync = (envId: string, body: DeployRequestBody) =>
 export const getActiveDeploy = (envId: string) =>
   apiGet<ActiveRun | null>(`/_gapt/api/environments/${envId}/deploy/active`);
 
-export const getDeployRun = (runId: string) =>
-  apiGet<ActiveRun>(`/_gapt/api/deploy/runs/${runId}`);
+export const getDeployRun = (runId: string) => apiGet<ActiveRun>(`/_gapt/api/deploy/runs/${runId}`);
 
 export const cancelDeployRun = (runId: string) =>
   apiPost<void>(`/_gapt/api/deploy/runs/${runId}/cancel`);
@@ -251,10 +250,7 @@ export interface StackLogs {
   bytes: number;
 }
 
-export const getStackLogs = (
-  envId: string,
-  options: { tail?: number; since?: string } = {},
-) => {
+export const getStackLogs = (envId: string, options: { tail?: number; since?: string } = {}) => {
   const q = new URLSearchParams();
   if (options.tail !== undefined) q.set("tail", String(options.tail));
   if (options.since) q.set("since", options.since);
@@ -346,5 +342,4 @@ export interface SubdomainDiagnose {
   next_steps: string[];
 }
 
-export const diagnoseSubdomainMode = () =>
-  apiGet<SubdomainDiagnose>(`/_gapt/api/preview/diagnose`);
+export const diagnoseSubdomainMode = () => apiGet<SubdomainDiagnose>(`/_gapt/api/preview/diagnose`);

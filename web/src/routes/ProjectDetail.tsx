@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   ChevronDown,
   ChevronLeft,
@@ -24,7 +24,6 @@ import {
 import {
   type WorkspaceResponse,
   type WorkspaceStatus,
-  createWorkspace,
   deleteWorkspace,
   getWorkspaceCloneLog,
   listWorkspaces,
@@ -61,7 +60,6 @@ const STATUS_TONE: Record<WorkspaceStatus, "neutral" | "accent" | "success" | "w
 /** `/projects/:pid` — project overview + workspace list. */
 export function ProjectDetail() {
   const { pid } = useParams();
-  const navigate = useNavigate();
   const { t } = useI18n();
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
@@ -139,9 +137,7 @@ export function ProjectDetail() {
         subpath: addRepoForm.subpath.trim(),
         display_name: addRepoForm.display_name.trim(),
         git_remote_url: addRepoForm.git_remote_url.trim() || null,
-        git_provider: addRepoForm.git_remote_url.includes("github.com")
-          ? "github"
-          : null,
+        git_provider: addRepoForm.git_remote_url.includes("github.com") ? "github" : null,
         sort_order: repos.length,
       });
       setShowAddRepo(false);
@@ -159,7 +155,11 @@ export function ProjectDetail() {
   const onRemoveRepo = useCallback(
     async (repoId: string, displayName: string) => {
       if (!projectId) return;
-      if (!window.confirm(`'${displayName}' 레포지토리를 제거할까요? (워크스페이스의 파일은 그대로 둠)`)) {
+      if (
+        !window.confirm(
+          `'${displayName}' 레포지토리를 제거할까요? (워크스페이스의 파일은 그대로 둠)`,
+        )
+      ) {
         return;
       }
       try {
@@ -355,9 +355,7 @@ export function ProjectDetail() {
                 />
               </div>
             </div>
-            {addRepoErr ? (
-              <p className="mt-2 text-[11px] text-danger">{addRepoErr}</p>
-            ) : null}
+            {addRepoErr ? <p className="mt-2 text-[11px] text-danger">{addRepoErr}</p> : null}
             <div className="mt-3 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setShowAddRepo(false)}>
                 취소
@@ -370,8 +368,8 @@ export function ProjectDetail() {
         ) : null}
         {state === "ready" && repos.length === 0 ? (
           <p className="rounded-md border border-dashed border-border bg-bg-elevated/40 px-4 py-3 text-[12px] text-fg-muted">
-            이 프로젝트에는 레포지토리가 없습니다. 위의 <strong>레포 추가</strong> 버튼으로
-            git URL 을 등록하거나, 비워둔 채로 추가해서 빈 폴더로만 시작할 수도 있습니다.
+            이 프로젝트에는 레포지토리가 없습니다. 위의 <strong>레포 추가</strong> 버튼으로 git URL
+            을 등록하거나, 비워둔 채로 추가해서 빈 폴더로만 시작할 수도 있습니다.
           </p>
         ) : null}
         {repos.length > 0 ? (
@@ -392,9 +390,7 @@ export function ProjectDetail() {
                     rel="noreferrer"
                     className="ml-2 inline-flex items-center gap-1 truncate text-fg-muted hover:text-accent"
                   >
-                    <span className="max-w-[420px] truncate text-[11px]">
-                      {r.git_remote_url}
-                    </span>
+                    <span className="max-w-[420px] truncate text-[11px]">{r.git_remote_url}</span>
                     <ExternalLink className="h-3 w-3 shrink-0" />
                   </a>
                 ) : (
@@ -578,9 +574,7 @@ export function ProjectDetail() {
                       )}
                     </div>
                   </div>
-                  {showInlineLog ? (
-                    <InlineCloneLog workspaceId={w.id} live={isCreating} />
-                  ) : null}
+                  {showInlineLog ? <InlineCloneLog workspaceId={w.id} live={isCreating} /> : null}
                 </li>
               );
             })}
@@ -673,9 +667,7 @@ function InlineCloneLog({ workspaceId, live }: InlineCloneLogProps) {
         ) : (
           <ChevronDown className="h-3 w-3 shrink-0" />
         )}
-        <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
-          clone.log
-        </span>
+        <span className="text-[10px] uppercase tracking-wide text-fg-subtle">clone.log</span>
         <span className="truncate flex-1 text-fg-muted">{lastLine || "—"}</span>
         <span className="shrink-0 text-fg-subtle">{lines.length} lines</span>
       </button>

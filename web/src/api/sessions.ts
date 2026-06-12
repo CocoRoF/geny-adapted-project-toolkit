@@ -77,9 +77,7 @@ export const listSessions = (
   if (opts.includeArchived) qs.set("include_archived", "true");
   if (opts.workspaceId) qs.set("workspace_id", opts.workspaceId);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return apiGet<SessionResponse[]>(
-    `/_gapt/api/projects/${projectId}/sessions${suffix}`,
-  );
+  return apiGet<SessionResponse[]>(`/_gapt/api/projects/${projectId}/sessions${suffix}`);
 };
 
 // Phase L.2 — flip a session back to active so the ChatPanel can
@@ -118,9 +116,7 @@ export interface SessionTranscript {
 }
 
 export const getSessionTranscript = (sessionId: string): Promise<SessionTranscript> =>
-  apiGet<SessionTranscript>(
-    `/_gapt/api/sessions/${sessionId}/transcript?format=json`,
-  );
+  apiGet<SessionTranscript>(`/_gapt/api/sessions/${sessionId}/transcript?format=json`);
 
 export const getSession = (sessionId: string): Promise<SessionResponse> =>
   apiGet<SessionResponse>(`/_gapt/api/sessions/${sessionId}`);
@@ -156,15 +152,11 @@ export const invokeSession = (
     message,
     mode,
     ...(overrides.model != null ? { model: overrides.model } : {}),
-    ...(overrides.thinking_enabled != null
-      ? { thinking_enabled: overrides.thinking_enabled }
-      : {}),
+    ...(overrides.thinking_enabled != null ? { thinking_enabled: overrides.thinking_enabled } : {}),
     ...(overrides.thinking_budget_tokens != null
       ? { thinking_budget_tokens: overrides.thinking_budget_tokens }
       : {}),
-    ...(overrides.clear && overrides.clear.length > 0
-      ? { clear: overrides.clear }
-      : {}),
+    ...(overrides.clear && overrides.clear.length > 0 ? { clear: overrides.clear } : {}),
   });
 
 export const interruptSession = (

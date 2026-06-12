@@ -34,7 +34,7 @@ export function WorkspaceChatPopup() {
 
   useEffect(() => {
     const prev = document.title;
-    document.title = `GAPT Chat — ${wsName ?? (wid ?? "")}`;
+    document.title = `GAPT Chat — ${wsName ?? wid ?? ""}`;
     return () => {
       document.title = prev;
     };

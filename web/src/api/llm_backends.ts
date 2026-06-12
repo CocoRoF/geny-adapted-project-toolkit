@@ -2,12 +2,7 @@ import { apiDelete, apiGet, apiPost } from "@/api/client";
 
 // ─────────────────────────────────────── health grid ──
 
-export type ProviderState =
-  | "ok"
-  | "missing"
-  | "expired"
-  | "unreachable"
-  | "unknown";
+export type ProviderState = "ok" | "missing" | "expired" | "unreachable" | "unknown";
 
 export interface ProviderHealth {
   provider: string;
@@ -43,9 +38,7 @@ export interface AuthStatusResponse {
 }
 
 export const getClaudeAuthStatus = () =>
-  apiGet<AuthStatusResponse>(
-    `/_gapt/api/llm-backends/cli/claude-code/auth/status`,
-  );
+  apiGet<AuthStatusResponse>(`/_gapt/api/llm-backends/cli/claude-code/auth/status`);
 
 export interface StartLoginRequest {
   use_console?: boolean;
@@ -60,10 +53,7 @@ export interface StartLoginResponse {
 }
 
 export const startClaudeAuthLogin = (body: StartLoginRequest = {}) =>
-  apiPost<StartLoginResponse>(
-    `/_gapt/api/llm-backends/cli/claude-code/auth/login`,
-    body,
-  );
+  apiPost<StartLoginResponse>(`/_gapt/api/llm-backends/cli/claude-code/auth/login`, body);
 
 export const claudeAuthLogout = () =>
   apiPost<{ ok: boolean; stdout: string; stderr: string }>(
@@ -79,9 +69,7 @@ export interface TestConnectionResponse {
 }
 
 export const testClaudeConnection = () =>
-  apiPost<TestConnectionResponse>(
-    `/_gapt/api/llm-backends/cli/claude-code/test`,
-  );
+  apiPost<TestConnectionResponse>(`/_gapt/api/llm-backends/cli/claude-code/test`);
 
 // ───────────────────────────────────── auth job ─────
 
@@ -105,9 +93,7 @@ export interface AuthJobSnapshot {
 }
 
 export const getAuthJobSnapshot = (jobId: string) =>
-  apiGet<AuthJobSnapshot>(
-    `/_gapt/api/llm-backends/auth/jobs/${encodeURIComponent(jobId)}`,
-  );
+  apiGet<AuthJobSnapshot>(`/_gapt/api/llm-backends/auth/jobs/${encodeURIComponent(jobId)}`);
 
 export const cancelAuthJob = (jobId: string) =>
   apiPost<{ ok: boolean; killed: boolean; already_finished: boolean }>(
@@ -115,10 +101,9 @@ export const cancelAuthJob = (jobId: string) =>
   );
 
 export const submitAuthJobInput = (jobId: string, text: string) =>
-  apiPost<{ ok: boolean }>(
-    `/_gapt/api/llm-backends/auth/jobs/${encodeURIComponent(jobId)}/input`,
-    { text },
-  );
+  apiPost<{ ok: boolean }>(`/_gapt/api/llm-backends/auth/jobs/${encodeURIComponent(jobId)}/input`, {
+    text,
+  });
 
 /** SSE URL the modal subscribes to. Caller uses the native
  *  `EventSource` constructor with `withCredentials: true`. */
@@ -134,18 +119,12 @@ export interface StoredKeyResponse {
 }
 
 export const storeProviderApiKey = (provider: string, api_key: string) =>
-  apiPost<StoredKeyResponse>(
-    `/_gapt/api/llm-backends/api-keys/${encodeURIComponent(provider)}`,
-    { api_key },
-  );
+  apiPost<StoredKeyResponse>(`/_gapt/api/llm-backends/api-keys/${encodeURIComponent(provider)}`, {
+    api_key,
+  });
 
 export const deleteProviderApiKey = (provider: string) =>
-  apiDelete<StoredKeyResponse>(
-    `/_gapt/api/llm-backends/api-keys/${encodeURIComponent(provider)}`,
-  );
+  apiDelete<StoredKeyResponse>(`/_gapt/api/llm-backends/api-keys/${encodeURIComponent(provider)}`);
 
 export const storeClaudeSetupToken = (token: string) =>
-  apiPost<StoredKeyResponse>(
-    `/_gapt/api/llm-backends/cli/claude-code/setup-token`,
-    { token },
-  );
+  apiPost<StoredKeyResponse>(`/_gapt/api/llm-backends/cli/claude-code/setup-token`, { token });

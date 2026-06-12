@@ -43,7 +43,11 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} disabled={busy}>
+          <Button
+            variant={tone === "danger" ? "danger" : "primary"}
+            onClick={onConfirm}
+            disabled={busy}
+          >
             {confirmLabel}
           </Button>
         </>
@@ -51,7 +55,11 @@ export function ConfirmDialog({
     >
       <div className="flex items-start gap-3">
         <AlertTriangle
-          className={tone === "danger" ? "mt-0.5 h-5 w-5 shrink-0 text-danger" : "mt-0.5 h-5 w-5 shrink-0 text-warn"}
+          className={
+            tone === "danger"
+              ? "mt-0.5 h-5 w-5 shrink-0 text-danger"
+              : "mt-0.5 h-5 w-5 shrink-0 text-warn"
+          }
         />
         <p className="text-[13px] text-fg-muted">{description}</p>
       </div>

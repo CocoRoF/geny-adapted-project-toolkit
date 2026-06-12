@@ -72,9 +72,7 @@ export function EnvEditor({ workspaceId, onOpenFile }: Props) {
   const exampleFor = useCallback(
     (envPath: string): string | null => {
       if (!intro) return null;
-      const dir = envPath.includes("/")
-        ? envPath.slice(0, envPath.lastIndexOf("/"))
-        : "";
+      const dir = envPath.includes("/") ? envPath.slice(0, envPath.lastIndexOf("/")) : "";
       const candidates = [
         `${dir}/.env.example`.replace(/^\/+/, ""),
         `${dir}/.env.template`.replace(/^\/+/, ""),
@@ -134,7 +132,10 @@ export function EnvEditor({ workspaceId, onOpenFile }: Props) {
               const example = !isExample ? exampleFor(path) : null;
               const seeding = seedingPath === path;
               return (
-                <li key={path} className="group flex items-center gap-1 rounded hover:bg-surface-hover">
+                <li
+                  key={path}
+                  className="group flex items-center gap-1 rounded hover:bg-surface-hover"
+                >
                   <button
                     type="button"
                     onClick={() => onOpenFile(path)}

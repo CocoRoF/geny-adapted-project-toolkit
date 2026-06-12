@@ -111,7 +111,7 @@ function buildTree(resp: ContainersResponse): {
     const key = id ?? "__orphan__";
     let p = projects.get(key);
     if (!p) {
-      const row = id ? projectById.get(id) ?? null : null;
+      const row = id ? (projectById.get(id) ?? null) : null;
       p = {
         project: row,
         project_id: id,
@@ -185,9 +185,7 @@ function buildTree(resp: ContainersResponse): {
   // Sort workspaces by branch and envs by name within each project.
   for (const p of projects.values()) {
     p.workspaces.sort((a, b) =>
-      (a.workspace?.name ?? a.workspace_id).localeCompare(
-        b.workspace?.name ?? b.workspace_id,
-      ),
+      (a.workspace?.name ?? a.workspace_id).localeCompare(b.workspace?.name ?? b.workspace_id),
     );
     p.environments.sort((a, b) =>
       (a.environment?.name ?? a.environment_id).localeCompare(
@@ -232,8 +230,7 @@ export function PerformanceDashboard() {
   const [, bump] = useState(0);
 
   // SSE stream — auto-pauses when tab hidden, auto-resumes on focus.
-  const { data: resp, state: streamState, error: streamErr, tickCount } =
-    useContainersStream();
+  const { data: resp, state: streamState, error: streamErr, tickCount } = useContainersStream();
   const err = streamErr;
 
   // Build per-container sparkline series from incoming ticks. We
@@ -262,7 +259,9 @@ export function PerformanceDashboard() {
   // GPU live samples come from the SSE stream now (Phase E.2); no
   // need for a separate fetch.
   useEffect(() => {
-    void getHostInfo().then(setHost).catch(() => undefined);
+    void getHostInfo()
+      .then(setHost)
+      .catch(() => undefined);
   }, []);
 
   // Phase E.2 — derive a GpusResponse-shaped object straight from
@@ -297,10 +296,7 @@ export function PerformanceDashboard() {
   const showInfra = view === "all" || view === "infra";
   const showOther = view === "all" || view === "other";
 
-  const onAction = async (
-    sample: ContainerSample,
-    action: "stop" | "kill" | "restart",
-  ) => {
+  const onAction = async (sample: ContainerSample, action: "stop" | "kill" | "restart") => {
     const label = sample.summary.name;
     const confirmTxt =
       action === "kill"
@@ -336,7 +332,10 @@ export function PerformanceDashboard() {
       {gpu && gpu.available ? <GpuTiles gpu={gpu} /> : null}
 
       {err ? (
-        <p role="alert" className="my-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+        <p
+          role="alert"
+          className="my-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+        >
           {err}
         </p>
       ) : null}
@@ -449,9 +448,7 @@ export function PerformanceDashboard() {
         ) : null}
       </div>
 
-      <p className="mt-4 text-[11px] text-fg-subtle">
-        {t("performance.stream_hint")}
-      </p>
+      <p className="mt-4 text-[11px] text-fg-subtle">{t("performance.stream_hint")}</p>
 
       {logsFor ? (
         <LogsModal
@@ -477,13 +474,7 @@ export function PerformanceDashboard() {
 
 // ─────────────────────────────────────────────────── tiles ──
 
-function FleetTiles({
-  resp,
-  host,
-}: {
-  resp: ContainersResponse | null;
-  host: HostInfo | null;
-}) {
+function FleetTiles({ resp, host }: { resp: ContainersResponse | null; host: HostInfo | null }) {
   const { t } = useI18n();
   // Fleet CPU% capped against host CPU count (so 4 vCPU host shows
   // 200% as "50% of host" — easier to reason about).
@@ -546,10 +537,7 @@ function GpuTiles({ gpu }: { gpu: GpusResponse }) {
       </h3>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {gpu.gpus.map((g) => (
-          <div
-            key={g.index}
-            className="rounded-md border border-border bg-bg p-2.5"
-          >
+          <div key={g.index} className="rounded-md border border-border bg-bg p-2.5">
             <div className="mb-1 flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5 text-accent" strokeWidth={1.5} />
               <span className="text-[12px] font-medium text-fg">
@@ -570,10 +558,7 @@ function GpuTiles({ gpu }: { gpu: GpusResponse }) {
                 />
               ) : null}
               {g.power_watts !== null ? (
-                <Stat
-                  label={t("performance.gpu.power")}
-                  value={`${g.power_watts.toFixed(0)} W`}
-                />
+                <Stat label={t("performance.gpu.power")} value={`${g.power_watts.toFixed(0)} W`} />
               ) : null}
             </div>
             <p className="mt-1 text-[10.5px] text-fg-subtle">
@@ -619,15 +604,7 @@ function Tile({
   );
 }
 
-function Stat({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon?: React.ReactNode;
-}) {
+function Stat({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
     <div>
       <div className="flex items-center gap-1 text-[10.5px] uppercase tracking-wider text-fg-subtle">
@@ -785,9 +762,7 @@ function ProjectGroup({
       <header
         className={cn(
           "flex cursor-pointer flex-wrap items-center gap-2 border-b px-3 py-2",
-          isArchived
-            ? "border-warn/30 bg-warn/5"
-            : "border-border bg-bg-subtle",
+          isArchived ? "border-warn/30 bg-warn/5" : "border-border bg-bg-subtle",
         )}
         onClick={() => setOpen((x) => !x)}
       >
@@ -821,14 +796,13 @@ function ProjectGroup({
             className="text-[10px] text-warn"
             title={t("performance.project.archived_hint_title")}
           >
-            {t("performance.project.archived_hint").replace(
-              "{n}",
-              String(allSamples.length),
-            )}
+            {t("performance.project.archived_hint").replace("{n}", String(allSamples.length))}
           </span>
         ) : null}
         <span className="ml-auto flex items-center gap-3 text-[11px] tabular-nums text-fg-muted">
-          <span>{running} {t("performance.running_lower")}</span>
+          <span>
+            {running} {t("performance.running_lower")}
+          </span>
           <span>· cpu {cpu.toFixed(1)}%</span>
           <span>· mem {formatBytes(mem)}</span>
         </span>
@@ -933,9 +907,7 @@ function ServiceBadge({ service }: { service: WorkspaceServiceRow }) {
       <ServerCog className="h-2.5 w-2.5" strokeWidth={1.5} />
       <span>{service.label}</span>
       {port ? <span className="opacity-70">:{port}</span> : null}
-      <span className="opacity-70">
-        · {t(`performance.svc.state.${service.state}` as never)}
-      </span>
+      <span className="opacity-70">· {t(`performance.svc.state.${service.state}` as never)}</span>
       {service.bound_url ? (
         <a
           href={service.bound_url}
@@ -952,10 +924,7 @@ function ServiceBadge({ service }: { service: WorkspaceServiceRow }) {
   );
 }
 
-function EnvironmentGroup({
-  env,
-  ...rest
-}: { env: TreeEnvironment } & RowHelpers) {
+function EnvironmentGroup({ env, ...rest }: { env: TreeEnvironment } & RowHelpers) {
   const { t } = useI18n();
   const isStopped = env.containers.length === 0;
   const [open, setOpen] = useState(!isStopped);
@@ -978,18 +947,10 @@ function EnvironmentGroup({
           <ChevronRight className="h-3.5 w-3.5 text-fg-muted" />
         )}
         <Rocket
-          className={cn(
-            "h-3.5 w-3.5",
-            isStopped ? "text-fg-subtle" : "text-warn",
-          )}
+          className={cn("h-3.5 w-3.5", isStopped ? "text-fg-subtle" : "text-warn")}
           strokeWidth={1.5}
         />
-        <span
-          className={cn(
-            "text-[12px] font-medium",
-            isStopped ? "text-fg-muted" : "text-fg",
-          )}
-        >
+        <span className={cn("text-[12px] font-medium", isStopped ? "text-fg-muted" : "text-fg")}>
           {env.environment?.name ?? env.environment_id} ({t("performance.prod_stack")})
         </span>
         {isStopped ? (
@@ -1019,9 +980,7 @@ function EnvironmentGroup({
           </code>
         ) : null}
         {lastAt ? (
-          <span className="text-[10px] text-fg-subtle">
-            {new Date(lastAt).toLocaleString()}
-          </span>
+          <span className="text-[10px] text-fg-subtle">{new Date(lastAt).toLocaleString()}</span>
         ) : null}
         <code className="text-[10px] text-fg-subtle">
           {env.environment_id.slice(0, 12).toLowerCase()}…
@@ -1045,9 +1004,7 @@ function EnvironmentGroup({
             {t("performance.env.stopped_hint")}
           </p>
         ) : (
-          env.containers.map((s) => (
-            <ContainerRow key={s.summary.id} sample={s} {...rest} />
-          ))
+          env.containers.map((s) => <ContainerRow key={s.summary.id} sample={s} {...rest} />)
         )
       ) : null}
     </div>
@@ -1075,7 +1032,11 @@ function FlatGroup({
         className="flex cursor-pointer items-center gap-2 border-b border-border bg-bg-subtle px-3 py-2"
         onClick={() => setOpen((x) => !x)}
       >
-        {open ? <ChevronDown className="h-4 w-4 text-fg-muted" /> : <ChevronRight className="h-4 w-4 text-fg-muted" />}
+        {open ? (
+          <ChevronDown className="h-4 w-4 text-fg-muted" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-fg-muted" />
+        )}
         {icon}
         <strong className="text-[13px] text-fg">{title}</strong>
         <span className="ml-auto flex items-center gap-3 text-[11px] tabular-nums text-fg-muted">
@@ -1128,7 +1089,10 @@ function ContainerRow({
           <ChevronRight className="h-3 w-3 shrink-0 text-fg-muted" />
         )}
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-[11.5px] font-medium text-fg" title={summary.name}>
+          <div
+            className="truncate font-mono text-[11.5px] font-medium text-fg"
+            title={summary.name}
+          >
             {summary.compose_service ? (
               <>
                 <span className="text-fg-muted">{summary.compose_service}</span>{" "}
@@ -1250,17 +1214,11 @@ function Drilldown({ sample }: { sample: ContainerSample }) {
       <Card title={t("performance.detail.limits")}>
         <KV
           k="cpus"
-          v={
-            limits.cpus_effective ? limits.cpus_effective.toFixed(2) : t("performance.unlimited")
-          }
+          v={limits.cpus_effective ? limits.cpus_effective.toFixed(2) : t("performance.unlimited")}
         />
         <KV
           k="cpu_quota"
-          v={
-            limits.cpu_quota_us
-              ? `${limits.cpu_quota_us}μs / ${limits.cpu_period_us}μs`
-              : "—"
-          }
+          v={limits.cpu_quota_us ? `${limits.cpu_quota_us}μs / ${limits.cpu_period_us}μs` : "—"}
         />
         <KV
           k="memory"
@@ -1357,7 +1315,7 @@ function StatusBadge({ status }: { status: string }) {
           ? "warn"
           : "neutral";
   return (
-    <Badge tone={tone as "success" | "danger" | "warn" | "neutral"} className="w-16 justify-center text-[10px]">
+    <Badge tone={tone} className="w-16 justify-center text-[10px]">
       {status}
     </Badge>
   );

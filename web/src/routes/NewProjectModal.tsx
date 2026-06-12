@@ -77,10 +77,7 @@ export function NewProjectModal({ open, onClose, onCreated, forceEmpty = false }
   // can land on ProjectDetail's Repositories section to add repos.
   // Non-empty modes (legacy import) still require a URL.
   const canSubmit =
-    !submitting &&
-    slugValid &&
-    displayName.length > 0 &&
-    (emptyMode || gitRemoteUrl.length > 0);
+    !submitting && slugValid && displayName.length > 0 && (emptyMode || gitRemoteUrl.length > 0);
 
   return (
     <Modal
@@ -138,9 +135,9 @@ export function NewProjectModal({ open, onClose, onCreated, forceEmpty = false }
             still appears so a single modal serves both flows. */}
         {forceEmpty ? (
           <p className="rounded-md border border-accent/40 bg-accent/5 px-3 py-2 text-[12px] text-fg-muted">
-            <strong className="text-fg">빈 프로젝트 모드</strong> — git 레포 없이
-            워크스페이스만 만들어요. 생성 후 프로젝트 페이지의 "레포지토리" 섹션에서
-            여러 git URL 을 자유롭게 추가할 수 있습니다.
+            <strong className="text-fg">빈 프로젝트 모드</strong> — git 레포 없이 워크스페이스만
+            만들어요. 생성 후 프로젝트 페이지의 "레포지토리" 섹션에서 여러 git URL 을 자유롭게
+            추가할 수 있습니다.
           </p>
         ) : (
           <label className="flex items-center gap-2 rounded-md border border-border bg-bg-elevated px-3 py-2 text-[12px]">
@@ -150,9 +147,7 @@ export function NewProjectModal({ open, onClose, onCreated, forceEmpty = false }
               onChange={(e) => setEmptyMode(e.currentTarget.checked)}
             />
             <span className="font-medium text-fg">빈 프로젝트로 시작</span>
-            <span className="text-[11px] text-fg-subtle">
-              (git 없는 폴더 + 나중에 레포 추가)
-            </span>
+            <span className="text-[11px] text-fg-subtle">(git 없는 폴더 + 나중에 레포 추가)</span>
           </label>
         )}
 

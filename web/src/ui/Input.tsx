@@ -41,7 +41,7 @@ Select.displayName = "Select";
 
 interface FieldProps {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   error?: string | null;
   children: React.ReactNode;
   /** When true, lay label out beside the input rather than above. */

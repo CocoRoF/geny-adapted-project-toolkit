@@ -35,7 +35,7 @@ export function Sparkline({
     const pts: string[] = [];
     for (let i = 0; i < values.length; i++) {
       const x = i * stepX;
-      const norm = Math.min(values[i] / safeCeil, 1);
+      const norm = Math.min((values[i] ?? 0) / safeCeil, 1);
       const y = height - norm * (height - 2) - 1;
       pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
     }

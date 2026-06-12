@@ -97,7 +97,8 @@ function _installLinkHook(): void {
     // current-tab so the operator clicking `/_gapt/api/...` doesn't
     // get a stray new tab. A leading slash + protocol-relative `//`
     // both count as "internal-or-protocol-relative" — leave them.
-    const isExternal = /^[a-z][a-z\d+\-.]*:/i.test(href) && !href.startsWith(`${window.location.origin}/`);
+    const isExternal =
+      /^[a-z][a-z\d+\-.]*:/i.test(href) && !href.startsWith(`${window.location.origin}/`);
     if (!isExternal) return;
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noopener noreferrer");
@@ -124,7 +125,6 @@ export function MarkdownText({ children, className }: Props) {
   return (
     <div
       // The whole point of this component is sanitised HTML.
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: html }}
       className={cn(
         "text-[13px] leading-relaxed text-fg",

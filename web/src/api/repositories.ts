@@ -33,23 +33,10 @@ export interface RepositoryCreatePayload {
 }
 
 export const listProjectRepositories = (projectId: string) =>
-  apiGet<ProjectRepository[]>(
-    `/_gapt/api/projects/${projectId}/repositories`,
-  );
+  apiGet<ProjectRepository[]>(`/_gapt/api/projects/${projectId}/repositories`);
 
-export const addProjectRepository = (
-  projectId: string,
-  body: RepositoryCreatePayload,
-) =>
-  apiPost<ProjectRepository>(
-    `/_gapt/api/projects/${projectId}/repositories`,
-    body,
-  );
+export const addProjectRepository = (projectId: string, body: RepositoryCreatePayload) =>
+  apiPost<ProjectRepository>(`/_gapt/api/projects/${projectId}/repositories`, body);
 
-export const archiveProjectRepository = (
-  projectId: string,
-  repoId: string,
-) =>
-  apiDelete<void>(
-    `/_gapt/api/projects/${projectId}/repositories/${repoId}`,
-  );
+export const archiveProjectRepository = (projectId: string, repoId: string) =>
+  apiDelete<void>(`/_gapt/api/projects/${projectId}/repositories/${repoId}`);

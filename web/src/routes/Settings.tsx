@@ -1,6 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Bot, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, Cpu, ExternalLink, Eye, EyeOff, FileText, KeyRound, RefreshCw, Server, Settings as SettingsIcon, Trash2, X, Zap } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Cloud,
+  Copy,
+  Cpu,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  FileText,
+  KeyRound,
+  RefreshCw,
+  Server,
+  Settings as SettingsIcon,
+  Trash2,
+  X,
+  Zap,
+} from "lucide-react";
 
 import { type AgentPrefs, getAgentPrefs, putAgentPrefs } from "@/api/agent_prefs";
 import { ApiError } from "@/api/client";
@@ -25,7 +47,6 @@ import {
   getCloudflareTunnelSnapshot,
   getMigrationDetail,
   getMigrationScript,
-  getRevertScript,
   inspectLocalCloudflared,
   listMigrationHistory,
   pushLocalToRemote,
@@ -143,8 +164,8 @@ export function Settings() {
         <div>
           <h1 className="text-[20px] font-semibold tracking-tight text-fg">{t("nav.settings")}</h1>
           <p className="text-[12px] text-fg-muted">
-            Per-user credentials. Saved values are encrypted at rest and propagated to the
-            sandbox for clones, git pushes, and executor tools.
+            Per-user credentials. Saved values are encrypted at rest and propagated to the sandbox
+            for clones, git pushes, and executor tools.
           </p>
         </div>
       </header>
@@ -187,9 +208,7 @@ export function Settings() {
       <section className="mb-6 space-y-4">
         <div className="flex items-center gap-2">
           <Cloud className="h-4 w-4 text-fg-muted" />
-          <h2 className="text-[15px] font-semibold text-fg">
-            {t("settings.providers.heading")}
-          </h2>
+          <h2 className="text-[15px] font-semibold text-fg">{t("settings.providers.heading")}</h2>
         </div>
         <CloudflareProviderCard />
       </section>
@@ -197,9 +216,7 @@ export function Settings() {
       <section className="mb-6 space-y-4">
         <div className="flex items-center gap-2">
           <Cpu className="h-4 w-4 text-fg-muted" />
-          <h2 className="text-[15px] font-semibold text-fg">
-            {t("settings.gpu.heading")}
-          </h2>
+          <h2 className="text-[15px] font-semibold text-fg">{t("settings.gpu.heading")}</h2>
         </div>
         <WorkspaceGpuCard />
       </section>
@@ -364,7 +381,7 @@ function SecretRow({
                 <X className="h-4 w-4" />
               </Button>
             ) : null}
-            <Button onClick={save} disabled={busy || value.trim() === ""}>
+            <Button onClick={() => void save()} disabled={busy || value.trim() === ""}>
               {busy ? "Saving…" : configured ? "Rotate" : "Save"}
             </Button>
           </div>
@@ -382,7 +399,7 @@ function SecretRow({
       <ConfirmDialog
         open={confirmDelete}
         onCancel={() => setConfirmDelete(false)}
-        onConfirm={remove}
+        onConfirm={() => void remove()}
         title="Delete credential?"
         description={`Remove ${spec.title} from your account? Workspaces created afterwards will not have access to this credential.`}
         confirmLabel="Delete"
@@ -462,7 +479,7 @@ function formToPayload(form: AgentPrefsFormState): AgentPrefs {
     max_iterations: numOrNull(form.max_iterations),
     cost_budget_usd: numOrNull(form.cost_budget_usd),
     timeout_s: numOrNull(form.timeout_s),
-    permission_mode: pm === "" ? null : (pm as AgentPrefs["permission_mode"]),
+    permission_mode: pm === "" ? null : (pm as NonNullable<AgentPrefs["permission_mode"]>),
     default_manifest_id: mid === "" ? null : mid,
   };
 }
@@ -554,9 +571,9 @@ function AgentPrefsCard() {
       <CardHeader>
         <CardTitle>Pipeline overrides</CardTitle>
         <CardDescription>
-          Override the bundled <code>gapt_default</code> manifest for every chat session you
-          start. Leave a field blank to use the manifest's default. Per-project overrides
-          ship later; this is the global baseline.
+          Override the bundled <code>gapt_default</code> manifest for every chat session you start.
+          Leave a field blank to use the manifest's default. Per-project overrides ship later; this
+          is the global baseline.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -573,10 +590,7 @@ function AgentPrefsCard() {
               ))}
             </Select>
           </Field>
-          <Field
-            label="Max output tokens"
-            hint="Per API call. Bundled default = 8192. 1–200000."
-          >
+          <Field label="Max output tokens" hint="Per API call. Bundled default = 8192. 1–200000.">
             <Input
               type="number"
               min={1}
@@ -670,7 +684,7 @@ function AgentPrefsCard() {
           <p className="text-[11px] text-fg-subtle">
             {savedAt ? `Saved ${formatRelative(savedAt)}` : "Not yet saved"}
           </p>
-          <Button onClick={save} disabled={busy}>
+          <Button onClick={() => void save()} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -826,9 +840,7 @@ function MigrationWizard({
   // in component state only, cleared on success and never logged.
   const [sudoPassword, setSudoPassword] = useState("");
   const [showSudoPassword, setShowSudoPassword] = useState(false);
-  const [autorunResult, setAutorunResult] = useState<RunCutoverResponse | null>(
-    null,
-  );
+  const [autorunResult, setAutorunResult] = useState<RunCutoverResponse | null>(null);
   const [dryRunResult, setDryRunResult] = useState<RunCutoverResponse | null>(null);
 
   const runDryRun = async () => {
@@ -958,26 +970,22 @@ function MigrationWizard({
 
           {/* Stepper */}
           <div className="flex items-center gap-1 text-[10.5px] font-medium uppercase tracking-wider">
-            {(["inspect", "push", "cutover", "verify"] as MigrationStep[]).map(
-              (s, i, arr) => (
-                <div key={s} className="flex items-center gap-1">
-                  <span
-                    className={
-                      stepStatus(s) === "done"
-                        ? "rounded-full border border-success/40 bg-success/10 px-1.5 py-0.5 text-success"
-                        : stepStatus(s) === "active"
-                          ? "rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-accent"
-                          : "rounded-full border border-border bg-bg px-1.5 py-0.5 text-fg-subtle"
-                    }
-                  >
-                    {i + 1}. {t(`settings.providers.cloudflare.migration.step.${s}`)}
-                  </span>
-                  {i < arr.length - 1 ? (
-                    <span className="text-fg-subtle">→</span>
-                  ) : null}
-                </div>
-              ),
-            )}
+            {(["inspect", "push", "cutover", "verify"] as MigrationStep[]).map((s, i, arr) => (
+              <div key={s} className="flex items-center gap-1">
+                <span
+                  className={
+                    stepStatus(s) === "done"
+                      ? "rounded-full border border-success/40 bg-success/10 px-1.5 py-0.5 text-success"
+                      : stepStatus(s) === "active"
+                        ? "rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-accent"
+                        : "rounded-full border border-border bg-bg px-1.5 py-0.5 text-fg-subtle"
+                  }
+                >
+                  {i + 1}. {t(`settings.providers.cloudflare.migration.step.${s}`)}
+                </span>
+                {i < arr.length - 1 ? <span className="text-fg-subtle">→</span> : null}
+              </div>
+            ))}
           </div>
 
           {/* Step 1: Inspect */}
@@ -986,7 +994,7 @@ function MigrationWizard({
               <p className="text-[11.5px] text-fg-muted">
                 {t("settings.providers.cloudflare.migration.inspect.detail")}
               </p>
-              <Button onClick={runInspect} disabled={!!busy}>
+              <Button onClick={() => void runInspect()} disabled={!!busy}>
                 {busy === "inspect"
                   ? "Reading…"
                   : t("settings.providers.cloudflare.migration.inspect.button")}
@@ -1029,12 +1037,9 @@ function MigrationWizard({
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={runPush}
+                  onClick={() => void runPush()}
                   disabled={
-                    !!busy ||
-                    !configured ||
-                    !accountId ||
-                    !(tunnelId || inspect.tunnel_uuid)
+                    !!busy || !configured || !accountId || !(tunnelId || inspect.tunnel_uuid)
                   }
                 >
                   {busy === "push"
@@ -1103,13 +1108,13 @@ function MigrationWizard({
                         onClick={() => setShowSudoPassword((s) => !s)}
                         title={showSudoPassword ? "Hide" : "Show"}
                       >
-                        {showSudoPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        {showSudoPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
                       </Button>
-                      <Button
-                        onClick={runAutorun}
-                        disabled={!!busy}
-                        variant="primary"
-                      >
+                      <Button onClick={() => void runAutorun()} disabled={!!busy} variant="primary">
                         <Zap className="mr-1 h-3.5 w-3.5" />
                         {busy === "autorun"
                           ? "Running…"
@@ -1117,7 +1122,7 @@ function MigrationWizard({
                       </Button>
                       <Button
                         variant="ghost"
-                        onClick={runDryRun}
+                        onClick={() => void runDryRun()}
                         disabled={!!busy}
                         type="button"
                         title={t("settings.providers.cloudflare.migration.dryrun.hint")}
@@ -1180,9 +1185,7 @@ function MigrationWizard({
                       {t("settings.providers.cloudflare.migration.cutover.run_hint")}
                     </p>
                     <div className="mt-1.5 flex items-center justify-between gap-2 rounded bg-bg px-2 py-1 font-mono text-[10.5px] text-fg">
-                      <span className="truncate">
-                        sudo bash /tmp/{script.filename}
-                      </span>
+                      <span className="truncate">sudo bash /tmp/{script.filename}</span>
                       <CopyButton text={`sudo bash /tmp/${script.filename}`} />
                     </div>
                     <p className="mt-1.5 text-[11px] text-fg-muted">
@@ -1210,7 +1213,7 @@ function MigrationWizard({
               <p className="text-[11.5px] text-fg-muted">
                 {t("settings.providers.cloudflare.migration.verify.detail")}
               </p>
-              <Button onClick={runVerify} disabled={!!busy}>
+              <Button onClick={() => void runVerify()} disabled={!!busy}>
                 <RefreshCw className="mr-1 h-3.5 w-3.5" />
                 {busy === "verify"
                   ? "Verifying…"
@@ -1326,9 +1329,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
     }
   };
 
-  const statusTone = (
-    s: string,
-  ): "success" | "warn" | "danger" | "neutral" => {
+  const statusTone = (s: string): "success" | "warn" | "danger" | "neutral" => {
     if (s === "ok") return "success";
     if (s === "rolled_back") return "warn";
     if (s === "failed") return "danger";
@@ -1366,7 +1367,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
         <Button
           variant="ghost"
           size="icon"
-          onClick={reload}
+          onClick={() => void reload()}
           disabled={loading}
           title={t("settings.providers.cloudflare.migration.history.refresh")}
         >
@@ -1404,9 +1405,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
                 const reverted = r.rolled_back_at !== null || r.status === "rolled_back";
                 return (
                   <tr key={r.id} className="border-b border-border/60 last:border-0">
-                    <td className="py-1 pr-2 text-fg-subtle">
-                      {formatRelative(r.started_at)}
-                    </td>
+                    <td className="py-1 pr-2 text-fg-subtle">{formatRelative(r.started_at)}</td>
                     <td className="py-1 pr-2 font-mono text-fg-muted">{r.kind}</td>
                     <td className="py-1 pr-2">
                       <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>
@@ -1420,11 +1419,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
                       ) : null}
                     </td>
                     <td className="py-1 pr-2 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void openDetail(r.id)}
-                      >
+                      <Button variant="ghost" size="sm" onClick={() => void openDetail(r.id)}>
                         {t("settings.providers.cloudflare.migration.history.view")}
                       </Button>
                       <Button
@@ -1564,9 +1559,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
                   </Button>
                 </div>
               </Field>
-              {revertErr ? (
-                <p className="text-[11px] text-danger">{revertErr}</p>
-              ) : null}
+              {revertErr ? <p className="text-[11px] text-danger">{revertErr}</p> : null}
               <div className="flex items-center justify-end gap-2">
                 <Button
                   variant="ghost"
@@ -1579,7 +1572,7 @@ function MigrationHistorySection({ refreshKey }: { refreshKey: number }) {
                 >
                   Cancel
                 </Button>
-                <Button onClick={confirmRevert} disabled={reverting} variant="primary">
+                <Button onClick={() => void confirmRevert()} disabled={reverting} variant="primary">
                   {reverting
                     ? t("settings.providers.cloudflare.migration.history.reverting")
                     : t("settings.providers.cloudflare.migration.history.revert.run")}
@@ -1691,25 +1684,24 @@ function CloudflareProviderCard() {
       // GAPT already knows.
       setDraft((d) => {
         const next = { ...d };
-        if (!next.account_id && r.accounts.length === 1) {
-          next.account_id = r.accounts[0].id;
+        const onlyAccount = r.accounts.length === 1 ? r.accounts[0] : undefined;
+        if (!next.account_id && onlyAccount) {
+          next.account_id = onlyAccount.id;
         }
         const aid = next.account_id;
         if (aid && !next.tunnel_id) {
           const t = r.tunnels_by_account[aid] ?? [];
           // Prefer the tunnel that matches local config.yml,
           // otherwise fall back to the single-option case.
-          const matched = localTunnelUuid
-            ? t.find((tn) => tn.id === localTunnelUuid)
-            : null;
+          const matched = localTunnelUuid ? t.find((tn) => tn.id === localTunnelUuid) : null;
+          const onlyTunnel = t.length === 1 ? t[0] : undefined;
           if (matched) next.tunnel_id = matched.id;
-          else if (t.length === 1) next.tunnel_id = t[0].id;
+          else if (onlyTunnel) next.tunnel_id = onlyTunnel.id;
         }
         if (!next.zone_id) {
-          const candidateZones = aid
-            ? r.zones.filter((z) => z.account_id === aid)
-            : r.zones;
-          if (candidateZones.length === 1) next.zone_id = candidateZones[0].id;
+          const candidateZones = aid ? r.zones.filter((z) => z.account_id === aid) : r.zones;
+          const only = candidateZones.length === 1 ? candidateZones[0] : undefined;
+          if (only) next.zone_id = only.id;
         }
         if (!next.preview_domain && serverPreviewDomain) {
           next.preview_domain = serverPreviewDomain;
@@ -1859,9 +1851,7 @@ function CloudflareProviderCard() {
             {verifyResult && verifyResult.accounts.length > 0 ? (
               <Select
                 value={draft.account_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, account_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, account_id: e.target.value || null }))}
                 disabled={!!busy}
               >
                 <option value="">—</option>
@@ -1875,9 +1865,7 @@ function CloudflareProviderCard() {
             ) : (
               <Input
                 value={draft.account_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, account_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, account_id: e.target.value || null }))}
                 placeholder={
                   verifyResult
                     ? "Paste Account ID from dash.cloudflare.com URL"
@@ -1895,9 +1883,7 @@ function CloudflareProviderCard() {
             {verifyResult && draft.account_id && tunnels.length > 0 ? (
               <Select
                 value={draft.tunnel_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, tunnel_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, tunnel_id: e.target.value || null }))}
                 disabled={!!busy}
               >
                 <option value="">—</option>
@@ -1910,9 +1896,7 @@ function CloudflareProviderCard() {
             ) : (
               <Input
                 value={draft.tunnel_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, tunnel_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, tunnel_id: e.target.value || null }))}
                 placeholder={
                   verifyResult && draft.account_id
                     ? "Paste Tunnel UUID (or run Inspect below to auto-detect)"
@@ -1930,9 +1914,7 @@ function CloudflareProviderCard() {
             {verifyResult ? (
               <Select
                 value={draft.zone_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, zone_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, zone_id: e.target.value || null }))}
                 disabled={!!busy}
               >
                 <option value="">—</option>
@@ -1945,9 +1927,7 @@ function CloudflareProviderCard() {
             ) : (
               <Input
                 value={draft.zone_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, zone_id: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, zone_id: e.target.value || null }))}
                 placeholder="(optional)"
                 disabled={!!busy}
               />
@@ -1960,9 +1940,7 @@ function CloudflareProviderCard() {
           >
             <Input
               value={draft.preview_domain ?? ""}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, preview_domain: e.target.value || null }))
-              }
+              onChange={(e) => setDraft((d) => ({ ...d, preview_domain: e.target.value || null }))}
               placeholder="gapt.example.com"
               disabled={!!busy}
             />
@@ -1975,9 +1953,7 @@ function CloudflareProviderCard() {
             >
               <Input
                 value={draft.upstream ?? ""}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, upstream: e.target.value || null }))
-                }
+                onChange={(e) => setDraft((d) => ({ ...d, upstream: e.target.value || null }))}
                 placeholder="http://localhost:38080"
                 disabled={!!busy}
               />
@@ -1988,22 +1964,22 @@ function CloudflareProviderCard() {
         {err ? <p className="text-[12px] text-danger">{err}</p> : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={save} disabled={!!busy}>
+          <Button onClick={() => void save()} disabled={!!busy}>
             {busy === "save" ? "Saving…" : t("settings.providers.cloudflare.save")}
           </Button>
-          <Button onClick={verify} disabled={!!busy || !configured} variant="ghost">
+          <Button onClick={() => void verify()} disabled={!!busy || !configured} variant="ghost">
             <RefreshCw className="mr-1 h-3.5 w-3.5" />
             {busy === "verify" ? "Verifying…" : t("settings.providers.cloudflare.verify")}
           </Button>
           <Button
-            onClick={fetchSnapshot}
+            onClick={() => void fetchSnapshot()}
             disabled={!!busy || !draft.account_id || !draft.tunnel_id}
             variant="ghost"
           >
             {busy === "snapshot" ? "Loading…" : t("settings.providers.cloudflare.snapshot")}
           </Button>
           <Button
-            onClick={ensureWildcard}
+            onClick={() => void ensureWildcard()}
             disabled={
               !!busy ||
               !draft.account_id ||
@@ -2020,45 +1996,45 @@ function CloudflareProviderCard() {
           </Button>
         </div>
 
-        {verifyResult ? (
-          (() => {
-            const hasWarn = verifyResult.warnings.length > 0;
-            const tunnelCount = Object.values(verifyResult.tunnels_by_account).reduce(
-              (n, arr) => n + arr.length,
-              0,
-            );
-            return (
-              <div
-                className={
-                  hasWarn
-                    ? "rounded border border-warn/40 bg-warn/5 px-3 py-2 text-[11.5px] text-fg-muted"
-                    : "rounded border border-success/40 bg-success/5 px-3 py-2 text-[11.5px] text-fg-muted"
-                }
-              >
-                <p
+        {verifyResult
+          ? (() => {
+              const hasWarn = verifyResult.warnings.length > 0;
+              const tunnelCount = Object.values(verifyResult.tunnels_by_account).reduce(
+                (n, arr) => n + arr.length,
+                0,
+              );
+              return (
+                <div
                   className={
-                    hasWarn ? "mb-1 font-medium text-warn" : "mb-1 font-medium text-success"
+                    hasWarn
+                      ? "rounded border border-warn/40 bg-warn/5 px-3 py-2 text-[11.5px] text-fg-muted"
+                      : "rounded border border-success/40 bg-success/5 px-3 py-2 text-[11.5px] text-fg-muted"
                   }
                 >
-                  {t("settings.providers.cloudflare.verified")}
-                </p>
-                <p>
-                  Accounts: {verifyResult.accounts.length}, Zones: {verifyResult.zones.length},
-                  Tunnels: {tunnelCount}
-                </p>
-                {hasWarn ? (
-                  <ul className="mt-1.5 space-y-1 text-[11px] text-warn">
-                    {verifyResult.warnings.map((w, i) => (
-                      <li key={i} className="leading-relaxed">
-                        ⚠ {w}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            );
-          })()
-        ) : null}
+                  <p
+                    className={
+                      hasWarn ? "mb-1 font-medium text-warn" : "mb-1 font-medium text-success"
+                    }
+                  >
+                    {t("settings.providers.cloudflare.verified")}
+                  </p>
+                  <p>
+                    Accounts: {verifyResult.accounts.length}, Zones: {verifyResult.zones.length},
+                    Tunnels: {tunnelCount}
+                  </p>
+                  {hasWarn ? (
+                    <ul className="mt-1.5 space-y-1 text-[11px] text-warn">
+                      {verifyResult.warnings.map((w, i) => (
+                        <li key={i} className="leading-relaxed">
+                          ⚠ {w}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              );
+            })()
+          : null}
 
         {snapshot ? (
           <div className="rounded border border-border bg-bg-subtle px-3 py-2 text-[11.5px]">
@@ -2123,7 +2099,7 @@ function CloudflareProviderCard() {
       <ConfirmDialog
         open={confirmDelete}
         onCancel={() => setConfirmDelete(false)}
-        onConfirm={remove}
+        onConfirm={() => void remove()}
         title={t("settings.providers.cloudflare.delete_title")}
         description={t("settings.providers.cloudflare.delete_description")}
         confirmLabel="Delete"
@@ -2169,8 +2145,7 @@ function WorkspaceGpuCard() {
   // glance. `null` = CPU-only — neutral. Anything else = a GPU is
   // mapped, success.
   const policyText = resp?.applied_policy ?? t("settings.gpu.policy.cpu_only");
-  const policyTone: "neutral" | "success" =
-    resp?.applied_policy ? "success" : "neutral";
+  const policyTone: "neutral" | "success" = resp?.applied_policy ? "success" : "neutral";
 
   return (
     <Card>
@@ -2180,20 +2155,16 @@ function WorkspaceGpuCard() {
             {t("settings.gpu.title")}
             <Badge tone={policyTone}>{policyText}</Badge>
           </CardTitle>
-          <CardDescription className="mt-1.5">
-            {t("settings.gpu.description")}
-          </CardDescription>
+          <CardDescription className="mt-1.5">{t("settings.gpu.description")}</CardDescription>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          onClick={refresh}
+          onClick={() => void refresh()}
           disabled={loading}
           title={t("settings.gpu.refresh")}
         >
-          <RefreshCw
-            className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"}
-          />
+          <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -2228,10 +2199,7 @@ function WorkspaceGpuCard() {
                 </p>
                 <p className="text-[12px] text-fg">
                   {resp.available
-                    ? t("settings.gpu.host.count").replace(
-                        "{n}",
-                        String(resp.gpus.length),
-                      )
+                    ? t("settings.gpu.host.count").replace("{n}", String(resp.gpus.length))
                     : t("settings.gpu.host.absent")}
                 </p>
               </div>
@@ -2247,8 +2215,7 @@ function WorkspaceGpuCard() {
                     <span className="font-mono text-fg-muted">#{g.index}</span>
                     <span className="flex-1 truncate text-fg">{g.name}</span>
                     <span className="text-fg-subtle">
-                      {(g.memory_total_bytes / (1024 * 1024 * 1024)).toFixed(1)}{" "}
-                      GiB
+                      {(g.memory_total_bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB
                     </span>
                     <span className="text-fg-subtle">
                       {t("settings.gpu.host.driver")}: {g.driver_version}
@@ -2262,16 +2229,12 @@ function WorkspaceGpuCard() {
               <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-subtle">
                 {t("settings.gpu.change.label")}
               </p>
-              <p className="mb-2 text-[11.5px] text-fg-muted">
-                {t("settings.gpu.change.body")}
-              </p>
+              <p className="mb-2 text-[11.5px] text-fg-muted">{t("settings.gpu.change.body")}</p>
               <div className="flex flex-wrap items-center gap-2 font-mono text-[11.5px]">
                 <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
                   {resp.policy_env_var}=all
                 </code>
-                <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
-                  {resp.policy_env_var}=0
-                </code>
+                <code className="rounded bg-bg px-1.5 py-0.5 text-fg">{resp.policy_env_var}=0</code>
                 <code className="rounded bg-bg px-1.5 py-0.5 text-fg">
                   {resp.policy_env_var}=0,1
                 </code>
@@ -2279,15 +2242,11 @@ function WorkspaceGpuCard() {
                   {t("settings.gpu.change.unset")}
                 </code>
               </div>
-              <p className="mt-2 text-[11px] text-warn">
-                {t("settings.gpu.change.restart_hint")}
-              </p>
+              <p className="mt-2 text-[11px] text-warn">{t("settings.gpu.change.restart_hint")}</p>
             </div>
           </>
         ) : (
-          <p className="text-[12px] text-fg-subtle">
-            {t("settings.gpu.loading")}
-          </p>
+          <p className="text-[12px] text-fg-subtle">{t("settings.gpu.loading")}</p>
         )}
       </CardContent>
     </Card>
@@ -2387,9 +2346,7 @@ function GithubTokenStatusPanel({ refreshTrigger }: { refreshTrigger: number }) 
           title="Refresh"
           className="ml-auto grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-bg hover:text-fg disabled:opacity-50"
         >
-          <RefreshCw
-            className={loading ? "h-3 w-3 animate-spin" : "h-3 w-3"}
-          />
+          <RefreshCw className={loading ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
         </button>
       </div>
       {/* Body — definition list, same monospace + muted style as
@@ -2406,13 +2363,11 @@ function GithubTokenStatusPanel({ refreshTrigger }: { refreshTrigger: number }) 
         {status.scopes.length > 0 ? (
           <>
             <dt className="text-fg-subtle">Scopes</dt>
-            <dd className="font-mono text-fg-muted">
-              {status.scopes.join(", ")}
-            </dd>
+            <dd className="font-mono text-fg-muted">{status.scopes.join(", ")}</dd>
           </>
         ) : null}
       </dl>
-      {(status.source === "host" || status.reason) ? (
+      {status.source === "host" || status.reason ? (
         <p className="border-t border-border px-3 py-2 text-[10.5px] text-fg-subtle">
           {status.source === "host" && !status.reason
             ? "Saving a PAT above will take precedence over this host fallback."

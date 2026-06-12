@@ -71,7 +71,9 @@ export function CiPanel({ projectId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
-  const [logs, setLogs] = useState<Record<number, { loading: boolean; text: string; truncated: boolean; err?: string | null }>>({});
+  const [logs, setLogs] = useState<
+    Record<number, { loading: boolean; text: string; truncated: boolean; err?: string | null }>
+  >({});
   const [reruning, setRerunning] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
@@ -242,7 +244,7 @@ export function CiPanel({ projectId }: Props) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => onRerun(run.id, false)}
+                          onClick={() => void onRerun(run.id, false)}
                           disabled={reruning === run.id}
                           className="h-6 px-1.5 text-[11px]"
                           title="Re-run all jobs"
@@ -258,7 +260,7 @@ export function CiPanel({ projectId }: Props) {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onRerun(run.id, true)}
+                            onClick={() => void onRerun(run.id, true)}
                             disabled={reruning === run.id}
                             className="h-6 px-1.5 text-[11px]"
                             title="Re-run failed jobs only"

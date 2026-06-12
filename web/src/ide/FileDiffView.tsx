@@ -39,11 +39,7 @@ export function FileDiffView({ workspaceId, path }: Props) {
       setDiff(await getWorkspaceDiff(workspaceId));
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? err.reason
-          : err instanceof Error
-            ? err.message
-            : String(err),
+        err instanceof ApiError ? err.reason : err instanceof Error ? err.message : String(err),
       );
     } finally {
       setLoading(false);
@@ -58,14 +54,8 @@ export function FileDiffView({ workspaceId, path }: Props) {
     return () => clearInterval(id);
   }, [load]);
 
-  const lines = useMemo(
-    () => extractFileBlock(diff?.unified ?? "", path),
-    [diff, path],
-  );
-  const fileStat = useMemo(
-    () => diff?.files.find((f) => f.path === path) ?? null,
-    [diff, path],
-  );
+  const lines = useMemo(() => extractFileBlock(diff?.unified ?? "", path), [diff, path]);
+  const fileStat = useMemo(() => diff?.files.find((f) => f.path === path) ?? null, [diff, path]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -78,16 +68,14 @@ export function FileDiffView({ workspaceId, path }: Props) {
           </span>
         ) : (
           <span className="text-fg-subtle">
-            {loading
-              ? t("ide.file_diff.loading")
-              : t("ide.file_diff.no_changes")}
+            {loading ? t("ide.file_diff.loading") : t("ide.file_diff.no_changes")}
           </span>
         )}
         <span className="ml-auto" />
         <Button
           variant="ghost"
           size="sm"
-          onClick={load}
+          onClick={() => void load()}
           disabled={loading}
           title={t("ide.file_diff.refresh")}
         >

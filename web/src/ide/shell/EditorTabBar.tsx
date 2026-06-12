@@ -1,11 +1,5 @@
 import { FileDiff, FileText, Globe, MoreHorizontal, X } from "lucide-react";
-import {
-  type KeyboardEvent,
-  type MouseEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 import { cn } from "@/ui/cn";
@@ -173,10 +167,7 @@ export function EditorTabBar({ tabs, activeTabId, onActivate, onClose }: Props) 
                     onClick={() => activateAndReveal(tab.id)}
                   >
                     <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono"
-                      title={titleFor(tab)}
-                    >
+                    <span className="min-w-0 flex-1 truncate font-mono" title={titleFor(tab)}>
                       {labelFor(tab)}
                     </span>
                     {tab.kind === "diff" ? (

@@ -48,10 +48,6 @@ const STATE_TONE: Record<ProviderState, "success" | "neutral" | "warn" | "danger
   unknown: "neutral",
 };
 
-// Providers that the modal handles via a dedicated flow (not a
-// generic API-key paste). Today: just Claude Code CLI.
-const SPECIAL_MODAL_PROVIDERS = new Set(["claude_code_cli"]);
-
 // Providers that ONLY accept an API key (no other auth shape).
 const API_KEY_PROVIDERS = new Set(["anthropic", "openai", "google"]);
 
@@ -98,7 +94,7 @@ export function LlmBackendsCard() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={refresh}
+            onClick={() => void refresh()}
             disabled={loading}
             title={t("settings.llm_backends.refresh")}
           >
@@ -107,7 +103,10 @@ export function LlmBackendsCard() {
         </CardHeader>
         <CardContent className="space-y-3">
           {error ? (
-            <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+            <p
+              role="alert"
+              className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
+            >
               {error}
             </p>
           ) : null}
@@ -124,7 +123,7 @@ export function LlmBackendsCard() {
                     setEditing((cur) => (cur === row.provider ? null : row.provider))
                   }
                   onOpenClaudeModal={() => setClaudeModalOpen(true)}
-                  onRefresh={refresh}
+                  onRefresh={() => void refresh()}
                 />
               </li>
             ))}
@@ -136,7 +135,7 @@ export function LlmBackendsCard() {
         open={claudeModalOpen}
         onClose={() => setClaudeModalOpen(false)}
         initialHealth={claudeRow}
-        onHealthChanged={refresh}
+        onHealthChanged={() => void refresh()}
       />
     </>
   );
@@ -152,13 +151,7 @@ interface RowProps {
   onRefresh: () => void;
 }
 
-function ProviderRow({
-  row,
-  expanded,
-  onToggleEdit,
-  onOpenClaudeModal,
-  onRefresh,
-}: RowProps) {
+function ProviderRow({ row, expanded, onToggleEdit, onOpenClaudeModal, onRefresh }: RowProps) {
   const { t } = useI18n();
   const isClaudeCli = row.provider === "claude_code_cli";
   const isApiKey = API_KEY_PROVIDERS.has(row.provider);
@@ -307,12 +300,12 @@ function ApiKeyEditor({
           >
             {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
-          <Button onClick={save} disabled={!value.trim() || !!busy} variant="primary">
+          <Button onClick={() => void save()} disabled={!value.trim() || !!busy} variant="primary">
             {busy === "save" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             {t("settings.llm_backends.editor.save")}
           </Button>
           {alreadyStored ? (
-            <Button onClick={clear} variant="ghost" size="sm" disabled={!!busy}>
+            <Button onClick={() => void clear()} variant="ghost" size="sm" disabled={!!busy}>
               {busy === "delete" ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (

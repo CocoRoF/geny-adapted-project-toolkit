@@ -116,9 +116,7 @@ export function ToolCallCard({ pair }: Props) {
         <strong className="shrink-0 font-mono text-[12px] text-accent">{tool}</strong>
         <span className="shrink-0">{statusBadge}</span>
         {argsSummary ? (
-          <code className="ml-auto min-w-0 truncate text-[11px] text-fg-muted">
-            {argsSummary}
-          </code>
+          <code className="ml-auto min-w-0 truncate text-[11px] text-fg-muted">{argsSummary}</code>
         ) : null}
       </header>
 

@@ -26,275 +26,10 @@
 import { Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { DeployTargetKind, EnvironmentResponse } from "@/api/environments";
+import type { DeployTargetKind } from "@/api/environments";
+import { type FieldError, type FormState, readForm, writeForm } from "@/environments/env-form";
 import { useI18n } from "@/app/providers/i18n-context";
 import { cn } from "@/ui/cn";
-
-// ──────────────────────────────────────── shared form shape ──
-
-/**
- * The denormalised editor form. Strings (not numbers) for inputs so
- * empty-state and partial-typing don't fight `<input type="number">`'s
- * built-in NaN handling — we convert at submit time in `writeForm`.
- *
- * Unknown legacy keys live in `extras` and round-trip untouched so a
- * row with `{"primary_port": 3000, "legacy_foo": "bar"}` doesn't lose
- * `legacy_foo` on save. The UI surfaces them in a read-only chip row
- * inside `LocalSection` so the operator can choose to clean them up.
- */
-export interface FormState {
-  // common (every kind)
-  name: string;
-  kind: DeployTargetKind;
-  require_2fa: boolean;
-  cost_multiplier: string;
-
-  // local
-  compose_path: string;
-  compose_paths_csv: string; // user-edited as comma-separated; split on save
-  preview_mode: "" | "path" | "subdomain";
-  preview_slug: string;
-  strip_prefix: "" | "true" | "false"; // "" = inherit deploy default
-  primary_service: string;
-  primary_port: string;
-  upstream_scheme: "" | "http" | "https";
-  upstream_host_header: string;
-  upstream_tls_insecure: boolean;
-  build: boolean;
-
-  // remote_ssh
-  host: string;
-  user: string;
-  port: string;
-  key_secret_ref: string;
-  remote_compose_path: string;
-
-  // webhook
-  webhook_url: string;
-  webhook_secret_ref: string;
-  env_keys_csv: string;
-
-  // unknown legacy keys preserved verbatim
-  extras: Record<string, unknown>;
-}
-
-export interface FieldError {
-  loc: (string | number)[];
-  msg: string;
-  type?: string;
-}
-
-// ──────────────────────────────────────── kind defaults ──
-
-/**
- * Returns a partial FormState carrying the *sensible defaults* for a
- * freshly-picked kind in create mode. The caller merges these onto
- * a blank form when the kind toggles.
- *
- * The defaults are deliberately small — they only seed values the
- * operator would otherwise have to type for a working baseline. We
- * don't pre-fill optional knobs (preview_slug, primary_service) so
- * the modal stays visually "empty" until the user explicitly tunes
- * the env.
- */
-export function defaultsFor(kind: DeployTargetKind): Partial<FormState> {
-  switch (kind) {
-    case "local":
-      return {
-        compose_path: "docker-compose.yml",
-        preview_mode: "path",
-        strip_prefix: "true",
-      };
-    case "remote_ssh":
-      return {
-        port: "22",
-        user: "deploy",
-        remote_compose_path: "docker-compose.yml",
-      };
-    case "webhook":
-      return {};
-    case "k8s":
-      return {};
-  }
-}
-
-// ──────────────────────────────────────── read/write ──
-
-const _KNOWN_LOCAL_KEYS = new Set([
-  "compose_path",
-  "compose_paths",
-  "preview_mode",
-  "preview_slug",
-  "strip_prefix",
-  "primary_service",
-  "primary_port",
-  "upstream_scheme",
-  "upstream_host_header",
-  "upstream_tls_insecure",
-  "build",
-]);
-
-const _KNOWN_REMOTE_SSH_KEYS = new Set([
-  "host",
-  "user",
-  "port",
-  "key_secret_ref",
-  "compose_path",
-]);
-
-const _KNOWN_WEBHOOK_KEYS = new Set(["url", "secret_ref", "env_keys"]);
-
-function knownKeysFor(kind: DeployTargetKind): Set<string> {
-  if (kind === "local") return _KNOWN_LOCAL_KEYS;
-  if (kind === "remote_ssh") return _KNOWN_REMOTE_SSH_KEYS;
-  if (kind === "webhook") return _KNOWN_WEBHOOK_KEYS;
-  return new Set();
-}
-
-/** Build a FormState from an existing environment (edit mode), or
- * from the kind's defaults (create mode when `initial` is undefined). */
-export function readForm(
-  initial: EnvironmentResponse | undefined,
-  fallbackKind: DeployTargetKind = "local",
-): FormState {
-  const kind = initial?.deploy_target_kind ?? fallbackKind;
-  const cfg: Record<string, unknown> = initial?.deploy_target_config ?? {};
-  const knownKeys = knownKeysFor(kind);
-  const extras: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(cfg)) {
-    if (!knownKeys.has(k)) extras[k] = v;
-  }
-  const composePathsRaw = Array.isArray(cfg.compose_paths)
-    ? (cfg.compose_paths as unknown[]).filter((x): x is string => typeof x === "string")
-    : [];
-  const envKeysRaw = Array.isArray(cfg.env_keys)
-    ? (cfg.env_keys as unknown[]).filter((x): x is string => typeof x === "string")
-    : [];
-  // Apply kind defaults *only* in create mode — edit mode echoes the
-  // saved row exactly so the operator sees what's actually stored.
-  const defaults = initial === undefined ? defaultsFor(kind) : {};
-  return {
-    name: initial?.name ?? "",
-    kind,
-    require_2fa: initial?.require_2fa ?? false,
-    cost_multiplier: String(initial?.cost_multiplier ?? 1),
-    // local
-    compose_path:
-      typeof cfg.compose_path === "string"
-        ? cfg.compose_path
-        : (defaults.compose_path ?? ""),
-    compose_paths_csv: composePathsRaw.join(", "),
-    preview_mode:
-      cfg.preview_mode === "subdomain" || cfg.preview_mode === "path"
-        ? cfg.preview_mode
-        : (defaults.preview_mode ?? ""),
-    preview_slug: typeof cfg.preview_slug === "string" ? cfg.preview_slug : "",
-    strip_prefix:
-      typeof cfg.strip_prefix === "boolean"
-        ? cfg.strip_prefix
-          ? "true"
-          : "false"
-        : ((defaults.strip_prefix as "" | "true" | "false") ?? ""),
-    primary_service:
-      typeof cfg.primary_service === "string" ? cfg.primary_service : "",
-    primary_port:
-      typeof cfg.primary_port === "number" ? String(cfg.primary_port) : "",
-    upstream_scheme:
-      cfg.upstream_scheme === "https" || cfg.upstream_scheme === "http"
-        ? cfg.upstream_scheme
-        : "",
-    upstream_host_header:
-      typeof cfg.upstream_host_header === "string" ? cfg.upstream_host_header : "",
-    upstream_tls_insecure: cfg.upstream_tls_insecure === true,
-    build: cfg.build === true,
-    // remote_ssh
-    host: typeof cfg.host === "string" ? cfg.host : "",
-    user:
-      typeof cfg.user === "string" ? cfg.user : (defaults.user ?? ""),
-    port:
-      typeof cfg.port === "number" ? String(cfg.port) : (defaults.port ?? ""),
-    key_secret_ref:
-      typeof cfg.key_secret_ref === "string" ? cfg.key_secret_ref : "",
-    remote_compose_path:
-      typeof cfg.compose_path === "string" && kind === "remote_ssh"
-        ? cfg.compose_path
-        : (defaults.remote_compose_path ?? ""),
-    // webhook
-    webhook_url: typeof cfg.url === "string" ? cfg.url : "",
-    webhook_secret_ref:
-      typeof cfg.secret_ref === "string" ? cfg.secret_ref : "",
-    env_keys_csv: envKeysRaw.join(", "),
-    extras,
-  };
-}
-
-/** Build the API payload from the form state. Strict about types so
- * the backend's pydantic discriminated union doesn't have to coerce —
- * what we POST is what gets stored. */
-export function writeForm(form: FormState): {
-  name: string;
-  deploy_target_kind: DeployTargetKind;
-  deploy_target_config: Record<string, unknown>;
-  require_2fa: boolean;
-  cost_multiplier: number;
-} {
-  const config: Record<string, unknown> = { ...form.extras };
-
-  if (form.kind === "local") {
-    if (form.compose_path.trim()) config.compose_path = form.compose_path.trim();
-    const composePaths = form.compose_paths_csv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (composePaths.length > 0) config.compose_paths = composePaths;
-    if (form.preview_mode) config.preview_mode = form.preview_mode;
-    if (form.preview_slug.trim()) {
-      config.preview_slug = form.preview_slug.trim().toLowerCase();
-    }
-    if (form.strip_prefix !== "") {
-      config.strip_prefix = form.strip_prefix === "true";
-    }
-    if (form.primary_service.trim())
-      config.primary_service = form.primary_service.trim();
-    if (form.primary_port.trim()) {
-      const n = Number.parseInt(form.primary_port, 10);
-      if (Number.isFinite(n)) config.primary_port = n;
-    }
-    if (form.upstream_scheme) config.upstream_scheme = form.upstream_scheme;
-    if (form.upstream_host_header.trim()) {
-      config.upstream_host_header = form.upstream_host_header.trim();
-    }
-    config.upstream_tls_insecure = form.upstream_tls_insecure;
-    config.build = form.build;
-  } else if (form.kind === "remote_ssh") {
-    if (form.host.trim()) config.host = form.host.trim();
-    if (form.user.trim()) config.user = form.user.trim();
-    if (form.port.trim()) {
-      const n = Number.parseInt(form.port, 10);
-      if (Number.isFinite(n)) config.port = n;
-    }
-    if (form.key_secret_ref) config.key_secret_ref = form.key_secret_ref;
-    if (form.remote_compose_path.trim()) {
-      config.compose_path = form.remote_compose_path.trim();
-    }
-  } else if (form.kind === "webhook") {
-    if (form.webhook_url.trim()) config.url = form.webhook_url.trim();
-    if (form.webhook_secret_ref) config.secret_ref = form.webhook_secret_ref;
-    const envKeys = form.env_keys_csv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (envKeys.length > 0) config.env_keys = envKeys;
-  }
-
-  return {
-    name: form.name.trim(),
-    deploy_target_kind: form.kind,
-    deploy_target_config: config,
-    require_2fa: form.require_2fa,
-    cost_multiplier: Number(form.cost_multiplier) || 1,
-  };
-}
 
 // ──────────────────────────────────────── component ──
 
@@ -420,17 +155,12 @@ export function EnvironmentEditor({
 
       {/* ── Common policy fields ── */}
       <div className="grid grid-cols-2 gap-3">
-        <Field
-          label={t("env_editor.require_2fa")}
-          hint={t("env_editor.require_2fa_hint")}
-        >
+        <Field label={t("env_editor.require_2fa")} hint={t("env_editor.require_2fa_hint")}>
           <label className="flex h-8 items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px]">
             <input
               type="checkbox"
               checked={form.require_2fa}
-              onChange={(e) =>
-                onFormChange({ ...form, require_2fa: e.target.checked })
-              }
+              onChange={(e) => onFormChange({ ...form, require_2fa: e.target.checked })}
               disabled={disabled}
             />
             {form.require_2fa
@@ -438,10 +168,7 @@ export function EnvironmentEditor({
               : t("env_editor.require_2fa.not_required")}
           </label>
         </Field>
-        <Field
-          label={t("env_editor.cost_multiplier")}
-          hint={t("env_editor.cost_multiplier_hint")}
-        >
+        <Field label={t("env_editor.cost_multiplier")} hint={t("env_editor.cost_multiplier_hint")}>
           <Input
             value={form.cost_multiplier}
             onChange={(v) => onFormChange({ ...form, cost_multiplier: v })}
@@ -494,9 +221,7 @@ const _PRESETS: {
     name_key: "env_editor.preset.nextjs_prod_basepath",
     hint_key: "env_editor.preset.nextjs_prod_basepath_hint",
     matches: (f) =>
-      f.preview_mode === "path" &&
-      f.strip_prefix === "false" &&
-      f.upstream_scheme !== "https",
+      f.preview_mode === "path" && f.strip_prefix === "false" && f.upstream_scheme !== "https",
     apply: (f) => ({
       ...f,
       preview_mode: "path",
@@ -547,12 +272,7 @@ interface SectionProps {
   disabled?: boolean;
 }
 
-function LocalSection({
-  form,
-  onFormChange,
-  errorByConfigKey,
-  disabled,
-}: SectionProps) {
+function LocalSection({ form, onFormChange, errorByConfigKey, disabled }: SectionProps) {
   const { t } = useI18n();
   return (
     <Section title={t("env_editor.section.compose")}>
@@ -565,10 +285,7 @@ function LocalSection({
           error={errorByConfigKey.get("compose_path")}
         />
       </Field>
-      <Field
-        label={t("env_editor.compose_paths")}
-        hint={t("env_editor.compose_paths_hint")}
-      >
+      <Field label={t("env_editor.compose_paths")} hint={t("env_editor.compose_paths_hint")}>
         <Input
           value={form.compose_paths_csv}
           onChange={(v) => onFormChange({ ...form, compose_paths_csv: v })}
@@ -596,17 +313,11 @@ function LocalSection({
               >
                 <div className="flex items-center gap-1.5">
                   <Sparkles
-                    className={cn(
-                      "h-3 w-3 shrink-0",
-                      active ? "text-accent" : "text-fg-subtle",
-                    )}
+                    className={cn("h-3 w-3 shrink-0", active ? "text-accent" : "text-fg-subtle")}
                     strokeWidth={1.5}
                   />
                   <span
-                    className={cn(
-                      "text-[12px] font-semibold",
-                      active ? "text-accent" : "text-fg",
-                    )}
+                    className={cn("text-[12px] font-semibold", active ? "text-accent" : "text-fg")}
                   >
                     {t(p.name_key as never)}
                   </span>
@@ -616,9 +327,7 @@ function LocalSection({
                     </span>
                   ) : null}
                 </div>
-                <p className="text-[10.5px] leading-snug text-fg-muted">
-                  {t(p.hint_key as never)}
-                </p>
+                <p className="text-[10.5px] leading-snug text-fg-muted">{t(p.hint_key as never)}</p>
               </button>
             );
           })}
@@ -644,10 +353,7 @@ function LocalSection({
               <option value="subdomain">subdomain</option>
             </select>
           </Field>
-          <Field
-            label={t("env_editor.preview_slug")}
-            hint={t("env_editor.preview_slug_hint")}
-          >
+          <Field label={t("env_editor.preview_slug")} hint={t("env_editor.preview_slug_hint")}>
             <Input
               value={form.preview_slug}
               onChange={(v) => onFormChange({ ...form, preview_slug: v })}
@@ -718,9 +424,7 @@ function LocalSection({
               <input
                 type="checkbox"
                 checked={form.upstream_tls_insecure}
-                onChange={(e) =>
-                  onFormChange({ ...form, upstream_tls_insecure: e.target.checked })
-                }
+                onChange={(e) => onFormChange({ ...form, upstream_tls_insecure: e.target.checked })}
                 disabled={disabled}
               />
               {form.upstream_tls_insecure
@@ -735,9 +439,7 @@ function LocalSection({
           >
             <Input
               value={form.upstream_host_header}
-              onChange={(v) =>
-                onFormChange({ ...form, upstream_host_header: v })
-              }
+              onChange={(v) => onFormChange({ ...form, upstream_host_header: v })}
               placeholder="example.com"
               disabled={disabled}
             />
@@ -758,9 +460,7 @@ function LocalSection({
 
       {Object.keys(form.extras).length > 0 ? (
         <Section title={t("env_editor.extras")} sub>
-          <p className="text-[10.5px] text-fg-subtle">
-            {t("env_editor.extras_hint")}
-          </p>
+          <p className="text-[10.5px] text-fg-subtle">{t("env_editor.extras_hint")}</p>
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(form.extras).map(([k, v]) => (
               <span
@@ -808,11 +508,7 @@ function RemoteSshSection({
       hint={t("env_editor.section.remote_ssh_hint")}
     >
       <div className="grid grid-cols-3 gap-3">
-        <Field
-          label={t("env_editor.host")}
-          span={2}
-          error={errorByConfigKey.get("host")}
-        >
+        <Field label={t("env_editor.host")} span={2} error={errorByConfigKey.get("host")}>
           <Input
             value={form.host}
             onChange={(v) => onFormChange({ ...form, host: v })}
@@ -865,9 +561,7 @@ function RemoteSshSection({
           />
         </Field>
       </div>
-      <p className="text-[10.5px] text-warn">
-        {t("env_editor.remote_ssh_form_only_notice")}
-      </p>
+      <p className="text-[10.5px] text-warn">{t("env_editor.remote_ssh_form_only_notice")}</p>
     </Section>
   );
 }
@@ -883,10 +577,7 @@ function WebhookSection({
 }: SectionProps & { projectId: string }) {
   const { t } = useI18n();
   return (
-    <Section
-      title={t("env_editor.section.webhook")}
-      hint={t("env_editor.section.webhook_hint")}
-    >
+    <Section title={t("env_editor.section.webhook")} hint={t("env_editor.section.webhook_hint")}>
       <Field
         label={t("env_editor.webhook_url")}
         hint={t("env_editor.webhook_url_hint")}
@@ -912,10 +603,7 @@ function WebhookSection({
           disabled={disabled}
         />
       </Field>
-      <Field
-        label={t("env_editor.env_keys")}
-        hint={t("env_editor.env_keys_hint")}
-      >
+      <Field label={t("env_editor.env_keys")} hint={t("env_editor.env_keys_hint")}>
         <Input
           value={form.env_keys_csv}
           onChange={(v) => onFormChange({ ...form, env_keys_csv: v })}
@@ -923,9 +611,7 @@ function WebhookSection({
           disabled={disabled}
         />
       </Field>
-      <p className="text-[10.5px] text-warn">
-        {t("env_editor.webhook_form_only_notice")}
-      </p>
+      <p className="text-[10.5px] text-warn">{t("env_editor.webhook_form_only_notice")}</p>
     </Section>
   );
 }
@@ -934,9 +620,7 @@ function K8sNotSupportedBanner() {
   const { t } = useI18n();
   return (
     <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2.5">
-      <p className="text-[12px] font-medium text-warn">
-        {t("env_editor.k8s_unsupported.title")}
-      </p>
+      <p className="text-[12px] font-medium text-warn">{t("env_editor.k8s_unsupported.title")}</p>
       <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">
         {t("env_editor.k8s_unsupported.body")}
       </p>
@@ -971,9 +655,7 @@ function RawConfigPreview({ form }: { form: FormState }) {
         className="flex w-full items-center justify-between px-3 py-2 text-left text-[11.5px] text-fg-muted hover:bg-bg"
       >
         <span>{t("env_editor.raw_preview.toggle")}</span>
-        <span className="font-mono text-[10.5px] text-fg-subtle">
-          {open ? "▼" : "▶"}
-        </span>
+        <span className="font-mono text-[10.5px] text-fg-subtle">{open ? "▼" : "▶"}</span>
       </button>
       {open ? (
         <pre className="max-h-64 overflow-auto border-t border-border bg-bg p-3 text-[11px] leading-snug text-fg-muted">
@@ -1001,25 +683,14 @@ function Section({
     <section
       className={cn(
         "rounded-md p-3",
-        sub
-          ? "border-0 bg-transparent p-0"
-          : "border border-border bg-bg-subtle/30",
+        sub ? "border-0 bg-transparent p-0" : "border border-border bg-bg-subtle/30",
       )}
     >
       <header className={cn("mb-2", sub ? "mb-1.5" : null)}>
-        <h3
-          className={cn(
-            "font-semibold text-fg",
-            sub ? "text-[11.5px]" : "text-[12.5px]",
-          )}
-        >
+        <h3 className={cn("font-semibold text-fg", sub ? "text-[11.5px]" : "text-[12.5px]")}>
           {title}
         </h3>
-        {hint ? (
-          <p className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">
-            {hint}
-          </p>
-        ) : null}
+        {hint ? <p className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">{hint}</p> : null}
       </header>
       <div className="space-y-2">{children}</div>
     </section>
@@ -1034,22 +705,16 @@ function Field({
   error,
 }: {
   label: string;
-  hint?: string;
-  span?: number;
+  hint?: string | undefined;
+  span?: number | undefined;
   children: React.ReactNode;
-  error?: string;
+  error?: string | undefined;
 }) {
   return (
     <label
-      className={cn(
-        "flex flex-col gap-1",
-        span === 2 && "col-span-2",
-        span === 3 && "col-span-3",
-      )}
+      className={cn("flex flex-col gap-1", span === 2 && "col-span-2", span === 3 && "col-span-3")}
     >
-      <span className="text-[10.5px] uppercase tracking-wider text-fg-subtle">
-        {label}
-      </span>
+      <span className="text-[10.5px] uppercase tracking-wider text-fg-subtle">{label}</span>
       {children}
       {error ? (
         <span className="text-[10.5px] text-danger">{error}</span>
@@ -1070,10 +735,10 @@ function Input({
 }: {
   value: string;
   onChange: (v: string) => void;
-  placeholder?: string;
-  inputMode?: "numeric" | "decimal" | "text";
-  disabled?: boolean;
-  error?: string;
+  placeholder?: string | undefined;
+  inputMode?: "numeric" | "decimal" | "text" | undefined;
+  disabled?: boolean | undefined;
+  error?: string | undefined;
 }) {
   return (
     <input
@@ -1105,12 +770,10 @@ function SecretPicker({
   ownerId: string;
   value: string;
   onChange: (v: string) => void;
-  disabled?: boolean;
+  disabled?: boolean | undefined;
 }) {
   const { t } = useI18n();
-  const [secrets, setSecrets] = useState<
-    { id: string; key_name: string }[] | null
-  >(null);
+  const [secrets, setSecrets] = useState<{ id: string; key_name: string }[] | null>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {

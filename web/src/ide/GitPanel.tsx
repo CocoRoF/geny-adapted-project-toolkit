@@ -30,7 +30,6 @@ import {
   type GitLogCommit,
   type GitLogResponse,
   type GitPushResponse,
-  type GitStashEntry,
   type GitStashListResponse,
   type GitStatusEntry,
   type GitStatusResponse,
@@ -52,10 +51,7 @@ import {
   gitStashPush,
   gitSync,
 } from "@/api/git";
-import {
-  type ProjectRepository,
-  listProjectRepositories,
-} from "@/api/repositories";
+import { type ProjectRepository, listProjectRepositories } from "@/api/repositories";
 import { rehydrateWorkspace } from "@/api/workspaces";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
@@ -140,21 +136,25 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   // first-open state shows a few entries without dominating Changes.
   // Persisted per-browser so a layout the operator dialled in
   // survives page reloads (mirrors IdeShell's layout persistence).
-  const [stashHeight, setStashHeight] = useState(
-    () => readStoredHeight("gapt.git.stashHeight", 140),
+  const [stashHeight, setStashHeight] = useState(() =>
+    readStoredHeight("gapt.git.stashHeight", 140),
   );
-  const [historyHeight, setHistoryHeight] = useState(
-    () => readStoredHeight("gapt.git.historyHeight", 200),
+  const [historyHeight, setHistoryHeight] = useState(() =>
+    readStoredHeight("gapt.git.historyHeight", 200),
   );
   useEffect(() => {
     try {
       localStorage.setItem("gapt.git.stashHeight", String(stashHeight));
-    } catch { /* private mode — keep in-memory only */ }
+    } catch {
+      /* private mode — keep in-memory only */
+    }
   }, [stashHeight]);
   useEffect(() => {
     try {
       localStorage.setItem("gapt.git.historyHeight", String(historyHeight));
-    } catch { /* private mode — keep in-memory only */ }
+    } catch {
+      /* private mode — keep in-memory only */
+    }
   }, [historyHeight]);
 
   // Phase N.4 — fetch the repo list once per project. The selector
@@ -240,9 +240,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       setBranchesResp(b);
       setStash(st);
       setLog(l);
-      setSelected((prev) =>
-        prev.size === 0 ? new Set(s.entries.map((e) => e.path)) : prev,
-      );
+      setSelected((prev) => (prev.size === 0 ? new Set(s.entries.map((e) => e.path)) : prev));
     } catch (e) {
       if (seq !== refreshSeq.current) return; // stale failure — drop
       // Phase N.4 — backend translates "fatal: not a git repository"
@@ -255,8 +253,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       // still returns 500 with the raw stderr in ``reason``. Match
       // that string too so the panel degrades gracefully.
       const msg = errText(e);
-      const isStructured =
-        e instanceof ApiError && e.code === "git.repo_not_cloned";
+      const isStructured = e instanceof ApiError && e.code === "git.repo_not_cloned";
       const isLegacyRawError = msg.includes("not a git repository");
       if (isStructured || isLegacyRawError) {
         setNotCloned(true);
@@ -341,8 +338,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   // ── discard ────────────────────────────────────────
   const onDiscard = useCallback(
     async (path: string) => {
-      if (!window.confirm(t("git.discard.confirm").replace("{path}", path)))
-        return;
+      if (!window.confirm(t("git.discard.confirm").replace("{path}", path))) return;
       setBusy("discard");
       try {
         const r = await gitDiscard(workspaceId, [path], selectedRepoId);
@@ -366,7 +362,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setBusy(null);
       }
     },
-    [workspaceId, activePath, refresh, t],
+    [workspaceId, activePath, refresh, selectedRepoId, t],
   );
 
   // ── sync trio (fetch / pull / sync) ────────────────
@@ -407,7 +403,11 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     }
     setBusy("commit");
     try {
-      const r = await gitCommit(workspaceId, { message, paths: Array.from(selected) }, selectedRepoId);
+      const r = await gitCommit(
+        workspaceId,
+        { message, paths: Array.from(selected) },
+        selectedRepoId,
+      );
       setFlash({
         kind: "info",
         text: `${t("git.commit.done")} ${r.sha}${r.branch ? ` (${r.branch})` : ""}`,
@@ -420,7 +420,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     } finally {
       setBusy(null);
     }
-  }, [message, selected, workspaceId, refresh, t]);
+  }, [message, selected, workspaceId, refresh, selectedRepoId, t]);
 
   const onPush = useCallback(async () => {
     setBusy("push");
@@ -440,7 +440,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     } finally {
       setBusy(null);
     }
-  }, [workspaceId, refresh, t]);
+  }, [workspaceId, refresh, selectedRepoId, t]);
 
   const onPr = useCallback(async () => {
     setBusy("pr");
@@ -462,7 +462,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     } finally {
       setBusy(null);
     }
-  }, [message, workspaceId, t]);
+  }, [message, workspaceId, selectedRepoId, t]);
 
   // ── branches ───────────────────────────────────────
   const onCheckout = useCallback(
@@ -495,20 +495,15 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setBusy(null);
       }
     },
-    [workspaceId, refresh, t],
+    [workspaceId, refresh, selectedRepoId, t],
   );
 
   const onBranchDelete = useCallback(
     async (branchName: string) => {
-      if (!window.confirm(t("git.branch.delete_confirm").replace("{name}", branchName)))
-        return;
+      if (!window.confirm(t("git.branch.delete_confirm").replace("{name}", branchName))) return;
       setBusy("branch-delete");
       try {
-        const r = await gitBranchDelete(
-          workspaceId,
-          { branch: branchName },
-          selectedRepoId,
-        );
+        const r = await gitBranchDelete(workspaceId, { branch: branchName }, selectedRepoId);
         if (r.ok) {
           setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
         } else {
@@ -542,7 +537,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setBusy(null);
       }
     },
-    [workspaceId, refresh, t],
+    [workspaceId, refresh, selectedRepoId, t],
   );
 
   // ── stash ──────────────────────────────────────────
@@ -552,7 +547,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       const r = await gitStashPush(
         workspaceId,
         {
-          message: stashMsgInput.trim() || undefined,
+          ...(stashMsgInput.trim() ? { message: stashMsgInput.trim() } : {}),
           include_untracked: true,
         },
         selectedRepoId,
@@ -560,7 +555,10 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       setFlash(
         r.ok
           ? { kind: "info", text: t("git.stash.pushed") }
-          : { kind: "error", text: `${t("git.stash.push_failed")}: ${(r.error || "").slice(0, 200)}` },
+          : {
+              kind: "error",
+              text: `${t("git.stash.push_failed")}: ${(r.error || "").slice(0, 200)}`,
+            },
       );
       setStashMsgInput("");
       await refresh();
@@ -569,7 +567,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     } finally {
       setBusy(null);
     }
-  }, [workspaceId, stashMsgInput, refresh, t]);
+  }, [workspaceId, stashMsgInput, refresh, selectedRepoId, t]);
 
   const onStashPop = useCallback(
     async (ref: string) => {
@@ -591,7 +589,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setBusy(null);
       }
     },
-    [workspaceId, refresh, t],
+    [workspaceId, refresh, selectedRepoId, t],
   );
 
   const onStashDrop = useCallback(
@@ -615,7 +613,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         setBusy(null);
       }
     },
-    [workspaceId, refresh, t],
+    [workspaceId, refresh, selectedRepoId, t],
   );
 
   const syncState = useMemo(() => {
@@ -638,8 +636,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   // to a sibling that actually had a clone on disk.
   const selectedRepo = repos.find((r) => r.id === selectedRepoId) ?? null;
   const isEmptyProject = reposLoaded && repos.length === 0;
-  const isCandidateRepo =
-    selectedRepo !== null && !selectedRepo.git_remote_url;
+  const isCandidateRepo = selectedRepo !== null && !selectedRepo.git_remote_url;
   // `notCloned` only meaningfully applies to repos that DO have a
   // remote — a candidate (no remote) is "empty by design", not "not
   // cloned yet", so we route it to a different sub-state below.
@@ -648,9 +645,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   const showNormalBody = !isEmptyProject && !showNotCloned && !showCandidate;
 
   return (
-    <div
-      className="grid h-full grid-cols-1"
-    >
+    <div className="grid h-full grid-cols-1">
       <aside className="flex h-full flex-col overflow-hidden border-r border-border bg-bg-elevated">
         {/* ── Header (branch · upstream · sync state all on ONE row;
                        action buttons on the row below) ── */}
@@ -687,110 +682,110 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
               actual header rows (branch switcher, sync trio, etc.)
               are suppressed when the body is in an empty state. */}
           {showNormalBody ? (
-          <>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setBranchMenuOpen((v) => !v)}
-              className="flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg-subtle"
-              title={t("git.branch.switcher")}
-            >
-              <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" strokeWidth={1.5} />
-              <span className="truncate font-mono text-[12.5px] font-semibold text-fg">
-                {status?.branch ?? t("git.branch.detached")}
-              </span>
-              <ChevronDown className="h-3 w-3 shrink-0 text-fg-subtle" />
-            </button>
-            {status?.upstream ? (
-              <code
-                className="min-w-0 truncate text-[10.5px] text-fg-subtle"
-                title={`upstream → ${status.upstream}`}
-              >
-                → {status.upstream}
-              </code>
-            ) : (
-              <span className="truncate text-[10px] text-warn" title={t("git.upstream.none")}>
-                ⚠ {t("git.upstream.none_short")}
-              </span>
-            )}
-            <SyncStateBadge
-              state={syncState}
-              ahead={status?.ahead ?? 0}
-              behind={status?.behind ?? 0}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={refresh}
-              disabled={loading || busy !== null}
-              title={t("git.refresh")}
-              className="ml-auto"
-            >
-              {loading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3 w-3" />
-              )}
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => runSync("fetch", () => gitFetch(workspaceId, selectedRepoId))}
-              disabled={busy !== null}
-              title={t("git.fetch.title")}
-            >
-              {busy === "fetch" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-1 h-3 w-3" />
-              )}
-              {t("git.fetch")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => runSync("pull", () => gitPull(workspaceId, selectedRepoId))}
-              disabled={busy !== null}
-              title={t("git.pull.title")}
-            >
-              {busy === "pull" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <ArrowDownToLine className="mr-1 h-3 w-3" />
-              )}
-              {t("git.pull")}
-              {status && status.behind > 0 ? (
-                <span className="ml-1 text-[10px] opacity-70">↓{status.behind}</span>
+            <>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setBranchMenuOpen((v) => !v)}
+                  className="flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg-subtle"
+                  title={t("git.branch.switcher")}
+                >
+                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-fg-muted" strokeWidth={1.5} />
+                  <span className="truncate font-mono text-[12.5px] font-semibold text-fg">
+                    {status?.branch ?? t("git.branch.detached")}
+                  </span>
+                  <ChevronDown className="h-3 w-3 shrink-0 text-fg-subtle" />
+                </button>
+                {status?.upstream ? (
+                  <code
+                    className="min-w-0 truncate text-[10.5px] text-fg-subtle"
+                    title={`upstream → ${status.upstream}`}
+                  >
+                    → {status.upstream}
+                  </code>
+                ) : (
+                  <span className="truncate text-[10px] text-warn" title={t("git.upstream.none")}>
+                    ⚠ {t("git.upstream.none_short")}
+                  </span>
+                )}
+                <SyncStateBadge
+                  state={syncState}
+                  ahead={status?.ahead ?? 0}
+                  behind={status?.behind ?? 0}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void refresh()}
+                  disabled={loading || busy !== null}
+                  title={t("git.refresh")}
+                  className="ml-auto"
+                >
+                  {loading ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void runSync("fetch", () => gitFetch(workspaceId, selectedRepoId))}
+                  disabled={busy !== null}
+                  title={t("git.fetch.title")}
+                >
+                  {busy === "fetch" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1 h-3 w-3" />
+                  )}
+                  {t("git.fetch")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void runSync("pull", () => gitPull(workspaceId, selectedRepoId))}
+                  disabled={busy !== null}
+                  title={t("git.pull.title")}
+                >
+                  {busy === "pull" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <ArrowDownToLine className="mr-1 h-3 w-3" />
+                  )}
+                  {t("git.pull")}
+                  {status && status.behind > 0 ? (
+                    <span className="ml-1 text-[10px] opacity-70">↓{status.behind}</span>
+                  ) : null}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void runSync("sync", () => gitSync(workspaceId, selectedRepoId))}
+                  disabled={busy !== null}
+                  title={t("git.sync.title")}
+                >
+                  {busy === "sync" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1 h-3 w-3" />
+                  )}
+                  {t("git.sync")}
+                </Button>
+              </div>
+              {branchMenuOpen ? (
+                <BranchMenu
+                  branches={branchesResp?.branches ?? []}
+                  busy={busy === "checkout" || busy === "branch-delete"}
+                  newBranchInput={newBranchInput}
+                  onNewBranchInput={setNewBranchInput}
+                  onCheckout={(b) => void onCheckout(b)}
+                  onDelete={(b) => void onBranchDelete(b)}
+                  onClose={() => setBranchMenuOpen(false)}
+                />
               ) : null}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => runSync("sync", () => gitSync(workspaceId, selectedRepoId))}
-              disabled={busy !== null}
-              title={t("git.sync.title")}
-            >
-              {busy === "sync" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-1 h-3 w-3" />
-              )}
-              {t("git.sync")}
-            </Button>
-          </div>
-          {branchMenuOpen ? (
-            <BranchMenu
-              branches={branchesResp?.branches ?? []}
-              busy={busy === "checkout" || busy === "branch-delete"}
-              newBranchInput={newBranchInput}
-              onNewBranchInput={setNewBranchInput}
-              onCheckout={onCheckout}
-              onDelete={onBranchDelete}
-              onClose={() => setBranchMenuOpen(false)}
-            />
-          ) : null}
             </>
           ) : null}
         </header>
@@ -804,8 +799,8 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
             description={
               <>
                 이 프로젝트는 빈 상태입니다. 프로젝트 페이지의 "레포지토리" 섹션에서{" "}
-                <strong className="text-fg">레포 추가</strong>로 git URL 을 등록하거나,
-                URL 없이 빈 폴더만 만들 수도 있어요.
+                <strong className="text-fg">레포 추가</strong>로 git URL 을 등록하거나, URL 없이 빈
+                폴더만 만들 수도 있어요.
               </>
             }
             footer={
@@ -824,12 +819,11 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
             title={`'${selectedRepo?.display_name}' 은(는) 빈 폴더 레포예요`}
             description={
               <>
-                이 레포는 원격 URL 없이 등록돼서 git 추적이 비활성화돼 있어요.
-                터미널에서{" "}
+                이 레포는 원격 URL 없이 등록돼서 git 추적이 비활성화돼 있어요. 터미널에서{" "}
                 <code className="rounded bg-bg-subtle px-1 py-0.5 text-[11px] text-fg-muted">
                   cd {selectedRepo?.subpath || "."} && git init
-                </code>
-                {" "}으로 git 추적을 시작하거나, 프로젝트 페이지에서 원격 URL 을 추가하세요.
+                </code>{" "}
+                으로 git 추적을 시작하거나, 프로젝트 페이지에서 원격 URL 을 추가하세요.
               </>
             }
           />
@@ -838,18 +832,15 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
           <EmptyStateBody
             icon={
               <RefreshCw
-                className={cn(
-                  "h-8 w-8 text-fg-subtle",
-                  rehydrating && "animate-spin",
-                )}
+                className={cn("h-8 w-8 text-fg-subtle", rehydrating && "animate-spin")}
                 strokeWidth={1.25}
               />
             }
             title="이 레포는 아직 워크스페이스에 없어요"
             description={
               <>
-                프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요.
-                아래 버튼으로 지금 바로 가져올 수 있습니다.
+                프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요. 아래
+                버튼으로 지금 바로 가져올 수 있습니다.
               </>
             }
             footer={
@@ -857,7 +848,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={onRehydrate}
+                  onClick={() => void onRehydrate()}
                   disabled={rehydrating}
                 >
                   {rehydrating ? (
@@ -894,51 +885,47 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
 
         {showNormalBody ? (
           <>
-        {/* ── Commit composer (VS Code-style: lives ABOVE Changes,
+            {/* ── Commit composer (VS Code-style: lives ABOVE Changes,
             full-width primary button, dropdown for variants) ── */}
-        <div className="shrink-0 space-y-1.5 border-b border-border bg-bg-elevated px-2 py-2">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.currentTarget.value)}
-            placeholder={t("git.commit.placeholder_branch").replace(
-              "{branch}",
-              status?.branch ?? "?",
-            )}
-            rows={2}
-            className="w-full resize-none rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                if (
-                  !(busy !== null || !dirty || !message.trim() || selected.size === 0)
-                ) {
-                  void onCommit();
-                }
-              }
-            }}
-          />
-          <Button
-            variant="primary"
-            onClick={onCommit}
-            disabled={
-              busy !== null || !dirty || !message.trim() || selected.size === 0
-            }
-            className="w-full justify-center"
-          >
-            {busy === "commit" ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Check className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            <span className="font-semibold">{t("git.commit")}</span>
-            {selected.size > 0 && dirty && selected.size < (status?.entries.length ?? 0) ? (
-              <span className="ml-1.5 text-[10.5px] opacity-70">
-                ({selected.size}/{status?.entries.length})
-              </span>
-            ) : null}
-          </Button>
-          <div className="flex gap-1">
-            {/* Push button enable logic:
+            <div className="shrink-0 space-y-1.5 border-b border-border bg-bg-elevated px-2 py-2">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.currentTarget.value)}
+                placeholder={t("git.commit.placeholder_branch").replace(
+                  "{branch}",
+                  status?.branch ?? "?",
+                )}
+                rows={2}
+                className="w-full resize-none rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    if (!(busy !== null || !dirty || !message.trim() || selected.size === 0)) {
+                      void onCommit();
+                    }
+                  }
+                }}
+              />
+              <Button
+                variant="primary"
+                onClick={() => void onCommit()}
+                disabled={busy !== null || !dirty || !message.trim() || selected.size === 0}
+                className="w-full justify-center"
+              >
+                {busy === "commit" ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                <span className="font-semibold">{t("git.commit")}</span>
+                {selected.size > 0 && dirty && selected.size < (status?.entries.length ?? 0) ? (
+                  <span className="ml-1.5 text-[10.5px] opacity-70">
+                    ({selected.size}/{status?.entries.length})
+                  </span>
+                ) : null}
+              </Button>
+              <div className="flex gap-1">
+                {/* Push button enable logic:
                   * no branch    → disable (detached HEAD or empty repo)
                   * no upstream  → ENABLE (first push will -u set upstream)
                   * upstream + ahead === 0 → disable (nothing to push)
@@ -948,270 +935,263 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 yet" case into one — a freshly-scaffolded workspace
                 with commits but no tracking branch couldn't push at
                 all even though the backend supports `-u` first-push. */}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onPush}
-              disabled={
-                busy !== null ||
-                !status?.branch ||
-                (!!status?.upstream && (status.ahead ?? 0) === 0)
-              }
-              title={
-                !status?.branch
-                  ? t("git.push.no_branch")
-                  : !status.upstream
-                    ? t("git.push.first")
-                    : (status.ahead ?? 0) === 0
-                      ? t("git.push.nothing")
-                      : t("git.push")
-              }
-              className="flex-1"
-            >
-              {busy === "push" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <ArrowUpFromLine className="mr-1 h-3 w-3" />
-              )}
-              {t("git.push")}
-              {status && status.ahead > 0 ? (
-                <span className="ml-1 text-[10px] opacity-70">↑{status.ahead}</span>
-              ) : !status?.upstream && status?.branch ? (
-                <span className="ml-1 text-[10px] opacity-70">-u</span>
-              ) : null}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onPr}
-              disabled={busy !== null || !message.trim()}
-              title={t("git.pr.title")}
-              className="flex-1"
-            >
-              {busy === "pr" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <GitPullRequest className="mr-1 h-3 w-3" />
-              )}
-              {t("git.pr")}
-            </Button>
-          </div>
-          {flash ? (
-            <p
-              className={cn(
-                "px-1 text-[11px]",
-                flash.kind === "error"
-                  ? "text-danger"
-                  : flash.kind === "warn"
-                    ? "text-warn"
-                    : "text-accent",
-              )}
-            >
-              {flash.text}
-            </p>
-          ) : null}
-          {prUrl ? (
-            <a
-              href={prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 px-1 text-[11px] text-accent hover:underline"
-            >
-              <Send className="h-3 w-3" />
-              {prUrl}
-            </a>
-          ) : null}
-        </div>
-
-        {/* ── Changes (VS Code-style collapsible w/ count) ── */}
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <header className="flex items-center gap-1.5 border-b border-border bg-bg-subtle/40 px-3 py-1.5">
-            <ChevronDown className="h-3 w-3 text-fg-muted" />
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
-              {t("git.section.changes")}
-            </span>
-            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
-              {status?.entries.length ?? 0}
-            </span>
-            {dirty ? (
-              <button
-                type="button"
-                className="text-[10px] text-fg-subtle hover:text-accent"
-                onClick={toggleAll}
-                title={
-                  selected.size === status?.entries.length
-                    ? t("git.deselect_all")
-                    : t("git.select_all")
-                }
-              >
-                {selected.size === status?.entries.length ? "☑" : "☐"}
-              </button>
-            ) : null}
-          </header>
-          <div className="flex-1 overflow-y-auto py-0.5">
-            {!status || status.entries.length === 0 ? (
-              <p className="px-3 py-3 text-[11px] text-fg-subtle">
-                {loading ? t("git.loading") : t("git.clean")}
-              </p>
-            ) : (
-              <ul className="space-y-px">
-                {status.entries.map((e) => (
-                  <FileRow
-                    key={e.path}
-                    entry={e}
-                    checked={selected.has(e.path)}
-                    active={activePath === e.path}
-                    onToggle={() => toggle(e.path)}
-                    onView={() => onDiff(e.path)}
-                    onDiscard={() => onDiscard(e.path)}
-                    discarding={busy === "discard"}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        {/* ── Stash (resizable when open; double-click resets) ── */}
-        {openSections.stash ? (
-          <SplitHandle
-            axis="vertical"
-            value={stashHeight}
-            onChange={setStashHeight}
-            min={80}
-            max={500}
-            resetTo={140}
-            invert
-          />
-        ) : null}
-        <section
-          className="shrink-0 overflow-hidden border-t border-border"
-          style={openSections.stash ? { height: stashHeight } : undefined}
-        >
-          <button
-            type="button"
-            className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
-            onClick={() => setOpenSections((s) => ({ ...s, stash: !s.stash }))}
-            aria-expanded={openSections.stash}
-          >
-            {openSections.stash ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <Package className="h-3 w-3" strokeWidth={1.5} />
-            {t("git.section.stash")}
-            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
-              {stashCount}
-            </span>
-          </button>
-          {openSections.stash ? (
-            <div className="flex h-[calc(100%-30px)] flex-col border-t border-border px-2 py-1.5">
-              <div className="mb-1.5 flex gap-1">
-                <input
-                  value={stashMsgInput}
-                  onChange={(e) => setStashMsgInput(e.target.value)}
-                  placeholder={t("git.stash.msg_placeholder")}
-                  className="flex-1 rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-fg placeholder:text-fg-subtle"
-                  disabled={busy !== null}
-                />
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={onStashPush}
-                  disabled={busy !== null || !dirty}
-                  title={t("git.stash.push_title")}
+                  onClick={() => void onPush()}
+                  disabled={
+                    busy !== null ||
+                    !status?.branch ||
+                    (!!status?.upstream && (status.ahead ?? 0) === 0)
+                  }
+                  title={
+                    !status?.branch
+                      ? t("git.push.no_branch")
+                      : !status.upstream
+                        ? t("git.push.first")
+                        : (status.ahead ?? 0) === 0
+                          ? t("git.push.nothing")
+                          : t("git.push")
+                  }
+                  className="flex-1"
                 >
-                  {busy === "stash" ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                  {busy === "push" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                   ) : (
-                    <Inbox className="h-3 w-3" />
+                    <ArrowUpFromLine className="mr-1 h-3 w-3" />
                   )}
+                  {t("git.push")}
+                  {status && status.ahead > 0 ? (
+                    <span className="ml-1 text-[10px] opacity-70">↑{status.ahead}</span>
+                  ) : !status?.upstream && status?.branch ? (
+                    <span className="ml-1 text-[10px] opacity-70">-u</span>
+                  ) : null}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void onPr()}
+                  disabled={busy !== null || !message.trim()}
+                  title={t("git.pr.title")}
+                  className="flex-1"
+                >
+                  {busy === "pr" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <GitPullRequest className="mr-1 h-3 w-3" />
+                  )}
+                  {t("git.pr")}
                 </Button>
               </div>
-              {stashCount === 0 ? (
-                <p className="px-1 py-1 text-[10.5px] text-fg-subtle">
-                  {t("git.stash.empty")}
+              {flash ? (
+                <p
+                  className={cn(
+                    "px-1 text-[11px]",
+                    flash.kind === "error"
+                      ? "text-danger"
+                      : flash.kind === "warn"
+                        ? "text-warn"
+                        : "text-accent",
+                  )}
+                >
+                  {flash.text}
                 </p>
-              ) : (
-                <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-                  {stash!.entries.map((s) => (
-                    <li
-                      key={s.ref}
-                      className="group flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px]"
-                    >
-                      <code className="font-mono text-[10.5px] text-fg-subtle">
-                        {s.ref}
-                      </code>
-                      <span className="flex-1 truncate text-fg" title={s.subject}>
-                        {s.subject}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onStashPop(s.ref)}
-                        disabled={busy !== null}
-                        className="invisible rounded p-0.5 text-fg-subtle hover:bg-accent/10 hover:text-accent group-hover:visible"
-                        title={t("git.stash.pop_title")}
-                      >
-                        <ArrowDownToLine className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onStashDrop(s.ref)}
-                        disabled={busy !== null}
-                        className="invisible rounded p-0.5 text-fg-subtle hover:bg-danger/10 hover:text-danger group-hover:visible"
-                        title={t("git.stash.drop_title")}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              ) : null}
+              {prUrl ? (
+                <a
+                  href={prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-1 text-[11px] text-accent hover:underline"
+                >
+                  <Send className="h-3 w-3" />
+                  {prUrl}
+                </a>
+              ) : null}
             </div>
-          ) : null}
-        </section>
 
-        {/* ── History (commit log with refs + graph hints; resizable) ── */}
-        {openSections.history ? (
-          <SplitHandle
-            axis="vertical"
-            value={historyHeight}
-            onChange={setHistoryHeight}
-            min={80}
-            max={700}
-            resetTo={200}
-            invert
-          />
-        ) : null}
-        <section
-          className="flex shrink-0 flex-col overflow-hidden border-t border-border"
-          style={openSections.history ? { height: historyHeight } : undefined}
-        >
-          <button
-            type="button"
-            className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
-            onClick={() => setOpenSections((s) => ({ ...s, history: !s.history }))}
-            aria-expanded={openSections.history}
-          >
+            {/* ── Changes (VS Code-style collapsible w/ count) ── */}
+            <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <header className="flex items-center gap-1.5 border-b border-border bg-bg-subtle/40 px-3 py-1.5">
+                <ChevronDown className="h-3 w-3 text-fg-muted" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+                  {t("git.section.changes")}
+                </span>
+                <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
+                  {status?.entries.length ?? 0}
+                </span>
+                {dirty ? (
+                  <button
+                    type="button"
+                    className="text-[10px] text-fg-subtle hover:text-accent"
+                    onClick={toggleAll}
+                    title={
+                      selected.size === status?.entries.length
+                        ? t("git.deselect_all")
+                        : t("git.select_all")
+                    }
+                  >
+                    {selected.size === status?.entries.length ? "☑" : "☐"}
+                  </button>
+                ) : null}
+              </header>
+              <div className="flex-1 overflow-y-auto py-0.5">
+                {!status || status.entries.length === 0 ? (
+                  <p className="px-3 py-3 text-[11px] text-fg-subtle">
+                    {loading ? t("git.loading") : t("git.clean")}
+                  </p>
+                ) : (
+                  <ul className="space-y-px">
+                    {status.entries.map((e) => (
+                      <FileRow
+                        key={e.path}
+                        entry={e}
+                        checked={selected.has(e.path)}
+                        active={activePath === e.path}
+                        onToggle={() => toggle(e.path)}
+                        onView={() => onDiff(e.path)}
+                        onDiscard={() => void onDiscard(e.path)}
+                        discarding={busy === "discard"}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+
+            {/* ── Stash (resizable when open; double-click resets) ── */}
+            {openSections.stash ? (
+              <SplitHandle
+                axis="vertical"
+                value={stashHeight}
+                onChange={setStashHeight}
+                min={80}
+                max={500}
+                resetTo={140}
+                invert
+              />
+            ) : null}
+            <section
+              className="shrink-0 overflow-hidden border-t border-border"
+              style={openSections.stash ? { height: stashHeight } : undefined}
+            >
+              <button
+                type="button"
+                className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+                onClick={() => setOpenSections((s) => ({ ...s, stash: !s.stash }))}
+                aria-expanded={openSections.stash}
+              >
+                {openSections.stash ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <Package className="h-3 w-3" strokeWidth={1.5} />
+                {t("git.section.stash")}
+                <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
+                  {stashCount}
+                </span>
+              </button>
+              {openSections.stash ? (
+                <div className="flex h-[calc(100%-30px)] flex-col border-t border-border px-2 py-1.5">
+                  <div className="mb-1.5 flex gap-1">
+                    <input
+                      value={stashMsgInput}
+                      onChange={(e) => setStashMsgInput(e.target.value)}
+                      placeholder={t("git.stash.msg_placeholder")}
+                      className="flex-1 rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-fg placeholder:text-fg-subtle"
+                      disabled={busy !== null}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void onStashPush()}
+                      disabled={busy !== null || !dirty}
+                      title={t("git.stash.push_title")}
+                    >
+                      {busy === "stash" ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Inbox className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                  {stashCount === 0 ? (
+                    <p className="px-1 py-1 text-[10.5px] text-fg-subtle">{t("git.stash.empty")}</p>
+                  ) : (
+                    <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+                      {stash!.entries.map((s) => (
+                        <li
+                          key={s.ref}
+                          className="group flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px]"
+                        >
+                          <code className="font-mono text-[10.5px] text-fg-subtle">{s.ref}</code>
+                          <span className="flex-1 truncate text-fg" title={s.subject}>
+                            {s.subject}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void onStashPop(s.ref)}
+                            disabled={busy !== null}
+                            className="invisible rounded p-0.5 text-fg-subtle hover:bg-accent/10 hover:text-accent group-hover:visible"
+                            title={t("git.stash.pop_title")}
+                          >
+                            <ArrowDownToLine className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void onStashDrop(s.ref)}
+                            disabled={busy !== null}
+                            className="invisible rounded p-0.5 text-fg-subtle hover:bg-danger/10 hover:text-danger group-hover:visible"
+                            title={t("git.stash.drop_title")}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </section>
+
+            {/* ── History (commit log with refs + graph hints; resizable) ── */}
             {openSections.history ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <GitCommit className="h-3 w-3" strokeWidth={1.5} />
-            {t("git.section.history")}
-            <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
-              {log?.commits.length ?? 0}
-            </span>
-          </button>
-          {openSections.history ? (
-            <HistoryList
-              commits={log?.commits ?? []}
-              currentBranch={status?.branch ?? null}
-            />
-          ) : null}
-        </section>
+              <SplitHandle
+                axis="vertical"
+                value={historyHeight}
+                onChange={setHistoryHeight}
+                min={80}
+                max={700}
+                resetTo={200}
+                invert
+              />
+            ) : null}
+            <section
+              className="flex shrink-0 flex-col overflow-hidden border-t border-border"
+              style={openSections.history ? { height: historyHeight } : undefined}
+            >
+              <button
+                type="button"
+                className="flex w-full shrink-0 items-center gap-1.5 bg-bg-subtle/40 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:bg-bg-subtle"
+                onClick={() => setOpenSections((s) => ({ ...s, history: !s.history }))}
+                aria-expanded={openSections.history}
+              >
+                {openSections.history ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <GitCommit className="h-3 w-3" strokeWidth={1.5} />
+                {t("git.section.history")}
+                <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-bg-subtle px-1.5 text-[10px] font-semibold text-fg-subtle">
+                  {log?.commits.length ?? 0}
+                </span>
+              </button>
+              {openSections.history ? (
+                <HistoryList commits={log?.commits ?? []} currentBranch={status?.branch ?? null} />
+              ) : null}
+            </section>
           </>
         ) : null}
       </aside>
@@ -1264,10 +1244,7 @@ function BranchMenu({
   busy: boolean;
   newBranchInput: string;
   onNewBranchInput: (v: string) => void;
-  onCheckout: (
-    name: string,
-    opts?: { create?: boolean; startPoint?: string },
-  ) => void;
+  onCheckout: (name: string, opts?: { create?: boolean; startPoint?: string }) => void;
   onDelete: (name: string) => void;
   onClose: () => void;
 }) {
@@ -1295,8 +1272,7 @@ function BranchMenu({
           size="sm"
           variant="primary"
           onClick={() =>
-            newBranchInput.trim() &&
-            onCheckout(newBranchInput.trim(), { create: true })
+            newBranchInput.trim() && onCheckout(newBranchInput.trim(), { create: true })
           }
           disabled={busy || !newBranchInput.trim()}
           title={t("git.branch.create_title")}
@@ -1309,9 +1285,7 @@ function BranchMenu({
       </div>
       <SectionLabel>{t("git.branch.local")}</SectionLabel>
       {locals.length === 0 ? (
-        <p className="px-3 py-1.5 text-[10.5px] text-fg-subtle">
-          {t("git.branch.no_local")}
-        </p>
+        <p className="px-3 py-1.5 text-[10.5px] text-fg-subtle">{t("git.branch.no_local")}</p>
       ) : (
         <ul>
           {locals.map((b) => (
@@ -1339,9 +1313,7 @@ function BranchMenu({
                   key={b.name}
                   branch={b}
                   busy={busy}
-                  onClick={() =>
-                    onCheckout(localName, { create: true, startPoint: b.name })
-                  }
+                  onClick={() => onCheckout(localName, { create: true, startPoint: b.name })}
                   trailingHint={t("git.branch.checkout_remote_hint")}
                 />
               );
@@ -1371,7 +1343,7 @@ function BranchRow({
   branch: GitBranchInfo;
   busy: boolean;
   onClick: () => void;
-  onDelete?: () => void;
+  onDelete?: (() => void) | undefined;
   trailingHint?: string;
 }) {
   const { t } = useI18n();
@@ -1400,9 +1372,7 @@ function BranchRow({
           {branch.name}
         </span>
         {branch.upstream ? (
-          <code className="shrink-0 text-[9.5px] text-fg-subtle">
-            → {branch.upstream}
-          </code>
+          <code className="shrink-0 text-[9.5px] text-fg-subtle">→ {branch.upstream}</code>
         ) : null}
         {branch.ahead !== null && branch.ahead > 0 ? (
           <span className="text-[9.5px] text-success">↑{branch.ahead}</span>
@@ -1438,9 +1408,7 @@ function HistoryList({
 }) {
   const { t } = useI18n();
   if (commits.length === 0) {
-    return (
-      <p className="px-3 py-2 text-[10.5px] text-fg-subtle">{t("git.history.empty")}</p>
-    );
+    return <p className="px-3 py-2 text-[10.5px] text-fg-subtle">{t("git.history.empty")}</p>;
   }
   return (
     <ul className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -1463,9 +1431,7 @@ function HistoryList({
                 </span>
               )}
             </span>
-            <code className="shrink-0 font-mono text-[10.5px] text-fg-subtle">
-              {c.short_sha}
-            </code>
+            <code className="shrink-0 font-mono text-[10.5px] text-fg-subtle">{c.short_sha}</code>
             <span className="truncate text-fg">{c.subject}</span>
             {c.refs.length > 0 ? (
               <span className="flex shrink-0 gap-0.5">
@@ -1604,14 +1570,9 @@ function FileRow({
         onClick={onView}
         className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left"
       >
-        <span className="shrink-0 text-[12px] font-medium text-fg">
-          {filename}
-        </span>
+        <span className="shrink-0 text-[12px] font-medium text-fg">{filename}</span>
         {dirname ? (
-          <span
-            className="truncate text-[11px] text-fg-subtle"
-            title={entry.path}
-          >
+          <span className="truncate text-[11px] text-fg-subtle" title={entry.path}>
             {dirname}
           </span>
         ) : null}
@@ -1622,9 +1583,7 @@ function FileRow({
         checked={checked}
         onChange={onToggle}
         className="invisible h-3 w-3 group-hover:visible"
-        title={
-          checked ? t("git.commit.include_off") : t("git.commit.include_on")
-        }
+        title={checked ? t("git.commit.include_off") : t("git.commit.include_on")}
       />
       <button
         type="button"
@@ -1637,10 +1596,7 @@ function FileRow({
       </button>
       {/* Status letter on the right — VS Code's M / A / D / U. */}
       <span
-        className={cn(
-          "shrink-0 w-4 text-center font-mono text-[11px] font-semibold",
-          statusColor,
-        )}
+        className={cn("shrink-0 w-4 text-center font-mono text-[11px] font-semibold", statusColor)}
         title={`porcelain: ${entry.status}`}
       >
         {shortStatus(entry.status)}
@@ -1652,7 +1608,7 @@ function FileRow({
 function shortStatus(porcelain: string): string {
   const t = porcelain.trim();
   if (t === "??") return "U";
-  const wt = porcelain.length >= 2 ? porcelain[1] : porcelain[0] ?? "·";
+  const wt = porcelain.length >= 2 ? porcelain[1] : (porcelain[0] ?? "·");
   const idx = porcelain.length >= 1 ? porcelain[0] : "·";
   const ch = wt && wt.trim() ? wt : idx;
   return ch?.trim() || "·";

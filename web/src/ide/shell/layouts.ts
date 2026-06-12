@@ -35,7 +35,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
  *  (current behaviour: workspace localStorage entry) survive a
  *  preset switch — selecting "default" doesn't wipe the LS value
  *  for OTHER workspaces, only the current one's. */
-export const LAYOUT_PRESETS: Record<string, LayoutState> = {
+export const LAYOUT_PRESETS = {
   default: DEFAULT_LAYOUT,
   chat_focused: {
     sideView: null,
@@ -64,4 +64,4 @@ export const LAYOUT_PRESETS: Record<string, LayoutState> = {
     chatWidth: 380,
     editorOpen: true,
   },
-};
+} satisfies Record<string, LayoutState>;

@@ -64,9 +64,9 @@ export function useContainersStream(): UseContainersStreamResult {
       };
       src.addEventListener("stats", (ev) => {
         if (cancelled) return;
-        const msg = ev as MessageEvent;
+        if (typeof ev.data !== "string") return;
         try {
-          const parsed = JSON.parse(msg.data) as ContainersResponse;
+          const parsed = JSON.parse(ev.data) as ContainersResponse;
           setData(parsed);
           setTickCount((n) => n + 1);
         } catch {
@@ -75,10 +75,9 @@ export function useContainersStream(): UseContainersStreamResult {
       });
       src.addEventListener("error", (ev) => {
         if (cancelled) return;
-        const msg = ev as MessageEvent | Event;
-        if ("data" in msg) {
+        if ("data" in ev && typeof ev.data === "string") {
           try {
-            const parsed = JSON.parse((msg as MessageEvent).data) as { reason?: string };
+            const parsed = JSON.parse(ev.data) as { reason?: string };
             if (parsed.reason) setError(parsed.reason);
           } catch {
             // ignore

@@ -69,39 +69,36 @@ export interface GitDiscardResponse {
 }
 
 export const getGitStatus = (wid: string, repoId?: string | null) =>
-  apiGet<GitStatusResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/status`, repoId),
-  );
+  apiGet<GitStatusResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/status`, repoId));
 
 export const gitFetch = (wid: string, repoId?: string | null) =>
-  apiFetch<GitSyncResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/fetch`, repoId),
-    { method: "POST" },
-  );
+  apiFetch<GitSyncResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/fetch`, repoId), {
+    method: "POST",
+  });
 
 export const gitPull = (wid: string, repoId?: string | null) =>
-  apiFetch<GitSyncResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/pull`, repoId),
-    { method: "POST" },
-  );
+  apiFetch<GitSyncResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/pull`, repoId), {
+    method: "POST",
+  });
 
 export const gitSync = (wid: string, repoId?: string | null) =>
-  apiFetch<GitSyncResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/sync`, repoId),
-    { method: "POST" },
-  );
+  apiFetch<GitSyncResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/sync`, repoId), {
+    method: "POST",
+  });
 
 export const gitDiscard = (wid: string, paths: string[], repoId?: string | null) =>
-  apiFetch<GitDiscardResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/discard`, repoId),
-    { method: "POST", json: { paths } },
-  );
+  apiFetch<GitDiscardResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/discard`, repoId), {
+    method: "POST",
+    json: { paths },
+  });
 
 // ─── branches ───────────────────────────────────────────────────────
 
 export interface GitBranchInfo {
   name: string;
-  kind: "local" | "remote" | string;
+  // Known values: "local" | "remote" — kept open (plain string)
+  // because the backend may grow kinds without a lockstep UI release.
+  kind: string;
   current: boolean;
   upstream: string | null;
   ahead: number | null;
@@ -123,19 +120,17 @@ export interface GitCheckoutResponse {
 }
 
 export const getGitBranches = (wid: string, repoId?: string | null) =>
-  apiGet<GitBranchesResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/branches`, repoId),
-  );
+  apiGet<GitBranchesResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/branches`, repoId));
 
 export const gitCheckout = (
   wid: string,
   body: { branch: string; create?: boolean; start_point?: string | null; force?: boolean },
   repoId?: string | null,
 ) =>
-  apiFetch<GitCheckoutResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/checkout`, repoId),
-    { method: "POST", json: body },
-  );
+  apiFetch<GitCheckoutResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/checkout`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
 export const gitBranchDelete = (
   wid: string,
@@ -167,39 +162,29 @@ export interface GitStashOpResponse {
 }
 
 export const getGitStashList = (wid: string, repoId?: string | null) =>
-  apiGet<GitStashListResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/stash/list`, repoId),
-  );
+  apiGet<GitStashListResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/stash/list`, repoId));
 
 export const gitStashPush = (
   wid: string,
   body: { message?: string; include_untracked?: boolean } = {},
   repoId?: string | null,
 ) =>
-  apiFetch<GitStashOpResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/stash/push`, repoId),
-    { method: "POST", json: body },
-  );
+  apiFetch<GitStashOpResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/stash/push`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
-export const gitStashPop = (
-  wid: string,
-  body: { ref?: string } = {},
-  repoId?: string | null,
-) =>
-  apiFetch<GitStashOpResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/stash/pop`, repoId),
-    { method: "POST", json: body },
-  );
+export const gitStashPop = (wid: string, body: { ref?: string } = {}, repoId?: string | null) =>
+  apiFetch<GitStashOpResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/stash/pop`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
-export const gitStashDrop = (
-  wid: string,
-  body: { ref?: string } = {},
-  repoId?: string | null,
-) =>
-  apiFetch<GitStashOpResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/stash/drop`, repoId),
-    { method: "POST", json: body },
-  );
+export const gitStashDrop = (wid: string, body: { ref?: string } = {}, repoId?: string | null) =>
+  apiFetch<GitStashOpResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/stash/drop`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
 // ─── commit log (graph) ─────────────────────────────────────────────
 
@@ -225,21 +210,13 @@ export const getGitLog = (
 ) => {
   const params = new URLSearchParams();
   if (opts.limit) params.set("limit", String(opts.limit));
-  if (opts.all_branches !== undefined)
-    params.set("all_branches", String(opts.all_branches));
+  if (opts.all_branches !== undefined) params.set("all_branches", String(opts.all_branches));
   if (repoId) params.set("repo_id", repoId);
   const qs = params.toString();
-  return apiGet<GitLogResponse>(
-    `/_gapt/api/workspaces/${wid}/git/log${qs ? `?${qs}` : ""}`,
-  );
+  return apiGet<GitLogResponse>(`/_gapt/api/workspaces/${wid}/git/log${qs ? `?${qs}` : ""}`);
 };
 
-export const getGitDiff = (
-  wid: string,
-  path: string,
-  staged = false,
-  repoId?: string | null,
-) =>
+export const getGitDiff = (wid: string, path: string, staged = false, repoId?: string | null) =>
   apiGet<GitDiffResponse>(
     withRepo(
       `/_gapt/api/workspaces/${wid}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
@@ -252,20 +229,20 @@ export const gitCommit = (
   body: { message: string; paths?: string[] },
   repoId?: string | null,
 ) =>
-  apiFetch<GitCommitResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/commit`, repoId),
-    { method: "POST", json: body },
-  );
+  apiFetch<GitCommitResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/commit`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
 export const gitPush = (
   wid: string,
   body: { branch?: string | null; force_with_lease?: boolean } = {},
   repoId?: string | null,
 ) =>
-  apiFetch<GitPushResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/push`, repoId),
-    { method: "POST", json: body },
-  );
+  apiFetch<GitPushResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/push`, repoId), {
+    method: "POST",
+    json: body,
+  });
 
 export const createPr = (
   wid: string,
@@ -278,7 +255,7 @@ export const createPr = (
   },
   repoId?: string | null,
 ) =>
-  apiFetch<CreatePrResponse>(
-    withRepo(`/_gapt/api/workspaces/${wid}/git/create-pr`, repoId),
-    { method: "POST", json: body },
-  );
+  apiFetch<CreatePrResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/create-pr`, repoId), {
+    method: "POST",
+    json: body,
+  });

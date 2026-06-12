@@ -22,7 +22,7 @@ export function streamTestRun(
   onFrame: (frame: TestRunFrame) => void,
 ): AbortController {
   const ctrl = new AbortController();
-  (async () => {
+  void (async () => {
     try {
       const resp = await fetch(`/_gapt/api/workspaces/${workspaceId}/tests/run`, {
         method: "POST",

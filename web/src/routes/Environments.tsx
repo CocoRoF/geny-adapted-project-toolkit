@@ -14,13 +14,8 @@ import {
   type DeployResultResponse,
 } from "@/api/environments";
 import { useI18n } from "@/app/providers/i18n-context";
-import {
-  EnvironmentEditor,
-  type FieldError,
-  type FormState,
-  readForm,
-  writeForm,
-} from "@/environments/EnvironmentEditor";
+import { EnvironmentEditor } from "@/environments/EnvironmentEditor";
+import { type FieldError, type FormState, readForm, writeForm } from "@/environments/env-form";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/ui/Card";
@@ -74,8 +69,8 @@ export function Environments() {
           <div>
             <h1 className="text-[20px] font-semibold tracking-tight text-fg">Environments</h1>
             <p className="text-[12px] text-fg-muted">
-              Deploy targets for this project — pick which env you ship to, with policy
-              gates per target.
+              Deploy targets for this project — pick which env you ship to, with policy gates per
+              target.
             </p>
           </div>
         </div>
@@ -128,12 +123,7 @@ export function Environments() {
         />
       ) : null}
 
-      {deploying ? (
-        <DeployModal
-          env={deploying}
-          onClose={() => setDeploying(null)}
-        />
-      ) : null}
+      {deploying ? <DeployModal env={deploying} onClose={() => setDeploying(null)} /> : null}
 
       {confirmDelete ? (
         <ConfirmDialog
@@ -144,16 +134,18 @@ export function Environments() {
           cancelLabel="Cancel"
           tone="danger"
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={async () => {
-            try {
-              await deleteEnvironment(confirmDelete.id);
-              setConfirmDelete(null);
-              await refresh();
-            } catch (e) {
-              setErr(
-                e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
-              );
-            }
+          onConfirm={() => {
+            void (async () => {
+              try {
+                await deleteEnvironment(confirmDelete.id);
+                setConfirmDelete(null);
+                await refresh();
+              } catch (e) {
+                setErr(
+                  e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
+                );
+              }
+            })();
           }}
         />
       ) : null}
@@ -260,14 +252,11 @@ function EnvironmentEditorModal({
         // Phase H.1's 422 carries a `fields` array with pydantic-shaped
         // entries — surface them inline on the matching form fields
         // instead of one opaque banner.
-        const fields = (e.detail as { fields?: FieldError[] } | undefined)?.fields;
+        const fields = (e.details as { fields?: FieldError[] }).fields;
         if (Array.isArray(fields) && fields.length > 0) {
           setFieldErrors(fields);
           setErr(
-            t("env_editor.error.field_count").replace(
-              "{n}",
-              String(fields.length),
-            ) +
+            t("env_editor.error.field_count").replace("{n}", String(fields.length)) +
               " " +
               fields.map((f) => `${f.loc.join(".")}: ${f.msg}`).join("; "),
           );
@@ -287,17 +276,13 @@ function EnvironmentEditorModal({
       open
       onClose={onClose}
       size="lg"
-      title={
-        initial
-          ? `Edit environment · ${initial.name}`
-          : t("env_editor.create.title")
-      }
+      title={initial ? `Edit environment · ${initial.name}` : t("env_editor.create.title")}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t("env_editor.create.cancel")}
           </Button>
-          <Button onClick={submit} disabled={busy || form.name.trim() === ""}>
+          <Button onClick={() => void submit()} disabled={busy || form.name.trim() === ""}>
             {busy
               ? t("env_editor.create.submitting")
               : initial
@@ -329,16 +314,9 @@ function EnvironmentEditorModal({
   );
 }
 
-
 // ────────────────────────────────────────────── deploy modal ──
 
-function DeployModal({
-  env,
-  onClose,
-}: {
-  env: EnvironmentResponse;
-  onClose: () => void;
-}) {
+function DeployModal({ env, onClose }: { env: EnvironmentResponse; onClose: () => void }) {
   const [version, setVersion] = useState("latest");
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -380,7 +358,7 @@ function DeployModal({
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={busy}>
+            <Button onClick={() => void submit()} disabled={busy}>
               {busy ? "Deploying…" : "Deploy"}
             </Button>
           </>
@@ -428,13 +406,7 @@ function DeployModal({
   );
 }
 
-function DeployResultView({
-  result,
-  ok,
-}: {
-  result: DeployResultResponse;
-  ok: boolean;
-}) {
+function DeployResultView({ result, ok }: { result: DeployResultResponse; ok: boolean }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">

@@ -65,14 +65,11 @@ export interface ApplyIntrospectionResponse {
 export const getIntrospection = (workspaceId: string) =>
   apiGet<IntrospectResponse>(`/_gapt/api/workspaces/${workspaceId}/introspect`);
 
-export const applyIntrospection = (
-  workspaceId: string,
-  body: ApplyIntrospectionInput = {},
-) =>
-  apiFetch<ApplyIntrospectionResponse>(
-    `/_gapt/api/workspaces/${workspaceId}/apply-introspection`,
-    { method: "POST", json: body },
-  );
+export const applyIntrospection = (workspaceId: string, body: ApplyIntrospectionInput = {}) =>
+  apiFetch<ApplyIntrospectionResponse>(`/_gapt/api/workspaces/${workspaceId}/apply-introspection`, {
+    method: "POST",
+    json: body,
+  });
 
 export interface AutoPatchResponse {
   patched_files: string[];
@@ -81,7 +78,7 @@ export interface AutoPatchResponse {
 }
 
 export const autoPatchNextjsBasePath = (workspaceId: string) =>
-  apiFetch<AutoPatchResponse>(
-    `/_gapt/api/workspaces/${workspaceId}/auto-patch/nextjs-basepath`,
-    { method: "POST", json: {} },
-  );
+  apiFetch<AutoPatchResponse>(`/_gapt/api/workspaces/${workspaceId}/auto-patch/nextjs-basepath`, {
+    method: "POST",
+    json: {},
+  });

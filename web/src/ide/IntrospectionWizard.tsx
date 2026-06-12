@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  CheckCircle2,
-  Loader2,
-  Rocket,
-  Server,
-  Sparkles,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2, Loader2, Rocket, Server, Sparkles, XCircle } from "lucide-react";
 
 import {
   type ApplyIntrospectionInput,
@@ -33,12 +26,7 @@ interface Props {
  * and lets the user accept or override before materialising a dev
  * Service + prod Environment. Opens once per workspace by default
  * (caller persists "dismissed" in localStorage). */
-export function IntrospectionWizard({
-  open,
-  workspaceId,
-  onClose,
-  onApplied,
-}: Props) {
+export function IntrospectionWizard({ open, workspaceId, onClose, onApplied }: Props) {
   const [intro, setIntro] = useState<IntrospectResponse | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<ApplyIntrospectionInput>({});
@@ -104,7 +92,7 @@ export function IntrospectionWizard({
             </Button>
             <Button
               variant="primary"
-              onClick={handleApply}
+              onClick={() => void handleApply()}
               disabled={applying || !intro}
             >
               {applying ? (
@@ -129,19 +117,11 @@ export function IntrospectionWizard({
           {intro.notes.length > 0 ? <NotesList notes={intro.notes} /> : null}
 
           {intro.dev_command ? (
-            <DevSection
-              intro={intro}
-              overrides={overrides}
-              setOverrides={setOverrides}
-            />
+            <DevSection intro={intro} overrides={overrides} setOverrides={setOverrides} />
           ) : null}
 
-          {(intro.prod_compose_path || intro.has_compose) ? (
-            <ProdSection
-              intro={intro}
-              overrides={overrides}
-              setOverrides={setOverrides}
-            />
+          {intro.prod_compose_path || intro.has_compose ? (
+            <ProdSection intro={intro} overrides={overrides} setOverrides={setOverrides} />
           ) : null}
 
           {intro.env_files.length > 0 || intro.env_examples.length > 0 ? (
@@ -154,7 +134,7 @@ export function IntrospectionWizard({
               patching={patching}
               patchResult={patchResult}
               patchErr={patchErr}
-              onPatch={handlePatch}
+              onPatch={() => void handlePatch()}
             />
           ) : null}
         </div>
@@ -183,19 +163,14 @@ function ErrorBox({ message }: { message: string }) {
 
 function SummaryHeader({ intro }: { intro: IntrospectResponse }) {
   const conf = Math.round(intro.confidence * 100);
-  const tone =
-    conf >= 80 ? "success" : conf >= 40 ? "warn" : ("neutral" as const);
+  const tone = conf >= 80 ? "success" : conf >= 40 ? "warn" : ("neutral" as const);
   return (
     <div className="flex flex-wrap items-center gap-2 text-[12px]">
-      <Badge tone={tone}>
-        {intro.kind === "unknown" ? "프레임워크 미감지" : intro.kind}
-      </Badge>
+      <Badge tone={tone}>{intro.kind === "unknown" ? "프레임워크 미감지" : intro.kind}</Badge>
       {intro.has_compose ? <Badge tone="accent">docker compose</Badge> : null}
       <span className="text-fg-subtle">자신감 {conf}%</span>
       {intro.sources.length > 0 ? (
-        <span className="text-fg-subtle">
-          출처: {intro.sources.join(", ")}
-        </span>
+        <span className="text-fg-subtle">출처: {intro.sources.join(", ")}</span>
       ) : null}
     </div>
   );
@@ -290,9 +265,7 @@ function DevSection({
             disabled={!enabled}
           />
           dev 시작 전에 의존성 설치:{" "}
-          <code className="rounded bg-bg px-1 font-mono">
-            {intro.install_command}
-          </code>
+          <code className="rounded bg-bg px-1 font-mono">{intro.install_command}</code>
         </label>
       ) : null}
     </section>
@@ -333,9 +306,7 @@ function ProdSection({
       <Row
         label="환경 이름"
         value={overrides.prod_environment_name ?? "prod"}
-        onChange={(v) =>
-          setOverrides({ ...overrides, prod_environment_name: v })
-        }
+        onChange={(v) => setOverrides({ ...overrides, prod_environment_name: v })}
         disabled={!enabled}
       />
       <Row
@@ -347,16 +318,12 @@ function ProdSection({
       <Row
         label="primary 서비스"
         value={overrides.prod_primary_service ?? intro.prod_primary_service ?? ""}
-        onChange={(v) =>
-          setOverrides({ ...overrides, prod_primary_service: v })
-        }
+        onChange={(v) => setOverrides({ ...overrides, prod_primary_service: v })}
         disabled={!enabled}
       />
       <Row
         label="primary 포트"
-        value={String(
-          overrides.prod_primary_port ?? intro.prod_primary_port ?? "",
-        )}
+        value={String(overrides.prod_primary_port ?? intro.prod_primary_port ?? "")}
         onChange={(v) =>
           setOverrides({
             ...overrides,
@@ -374,9 +341,7 @@ function ProdSection({
               ? overrides.prod_build === true
               : intro.prod_build_required
           }
-          onChange={(e) =>
-            setOverrides({ ...overrides, prod_build: e.currentTarget.checked })
-          }
+          onChange={(e) => setOverrides({ ...overrides, prod_build: e.currentTarget.checked })}
           disabled={!enabled}
         />
         매 배포마다 빌드 (`docker compose up --build`)
@@ -391,12 +356,22 @@ function EnvFilesNote({ intro }: { intro: IntrospectResponse }) {
       <p className="font-semibold text-fg">.env 파일</p>
       {intro.env_files.length > 0 ? (
         <p className="mt-1">
-          이미 있음: {intro.env_files.map((f) => <code key={f} className="mr-1 rounded bg-bg-elevated px-1">{f}</code>)}
+          이미 있음:{" "}
+          {intro.env_files.map((f) => (
+            <code key={f} className="mr-1 rounded bg-bg-elevated px-1">
+              {f}
+            </code>
+          ))}
         </p>
       ) : null}
       {intro.env_examples.length > 0 ? (
         <p className="mt-1">
-          템플릿: {intro.env_examples.map((f) => <code key={f} className="mr-1 rounded bg-bg-elevated px-1">{f}</code>)}
+          템플릿:{" "}
+          {intro.env_examples.map((f) => (
+            <code key={f} className="mr-1 rounded bg-bg-elevated px-1">
+              {f}
+            </code>
+          ))}
         </p>
       ) : null}
       <p className="mt-1 text-fg-subtle">
@@ -422,14 +397,8 @@ function BasePathPatchSection({
   return (
     <section className="rounded-md border border-accent/40 bg-accent/5 p-3">
       <header className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-[12px] font-semibold text-accent">
-          🛠️ Next.js basePath 자동 패치
-        </div>
-        <Button
-          variant="secondary"
-          onClick={onPatch}
-          disabled={patching}
-        >
+        <div className="text-[12px] font-semibold text-accent">🛠️ Next.js basePath 자동 패치</div>
+        <Button variant="secondary" onClick={onPatch} disabled={patching}>
           {patching ? (
             <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
           ) : (
@@ -440,10 +409,10 @@ function BasePathPatchSection({
       </header>
       <p className="text-[11px] text-fg-muted">
         이 앱은 GAPT path 기반 preview에서 동작하려면 빌드 시
-        <code className="mx-1 rounded bg-bg-elevated px-1">NEXT_PUBLIC_BASE_PATH</code>
-        가 필요합니다. 워크스페이스 클론의
-        <code className="mx-1 rounded bg-bg-elevated px-1">{configFile ?? "next.config.*"}</code>
-        와 Dockerfile만 수정합니다 (GitHub repo는 그대로).
+        <code className="mx-1 rounded bg-bg-elevated px-1">NEXT_PUBLIC_BASE_PATH</code>가
+        필요합니다. 워크스페이스 클론의
+        <code className="mx-1 rounded bg-bg-elevated px-1">{configFile ?? "next.config.*"}</code>와
+        Dockerfile만 수정합니다 (GitHub repo는 그대로).
       </p>
       {patchErr ? (
         <div className="mt-2 rounded-md border border-danger/40 bg-danger/10 p-2 text-[11px] text-danger">
@@ -457,21 +426,27 @@ function BasePathPatchSection({
               <CheckCircle2 className="mr-1 inline h-3 w-3 text-success" />
               패치 적용:{" "}
               {patchResult.patched_files.map((f) => (
-                <code key={f} className="mr-1 rounded bg-bg-elevated px-1">{f}</code>
+                <code key={f} className="mr-1 rounded bg-bg-elevated px-1">
+                  {f}
+                </code>
               ))}
             </p>
           ) : null}
           {patchResult.skipped.length > 0 ? (
             <ul className="space-y-0.5">
               {patchResult.skipped.map((s, i) => (
-                <li key={i} className="text-fg-subtle">· {s}</li>
+                <li key={i} className="text-fg-subtle">
+                  · {s}
+                </li>
               ))}
             </ul>
           ) : null}
           {patchResult.next_steps.length > 0 ? (
             <ul className="mt-1 space-y-0.5 border-t border-border/40 pt-1.5">
               {patchResult.next_steps.map((s, i) => (
-                <li key={i} className="text-fg-muted">→ {s}</li>
+                <li key={i} className="text-fg-muted">
+                  → {s}
+                </li>
               ))}
             </ul>
           ) : null}
@@ -480,7 +455,6 @@ function BasePathPatchSection({
     </section>
   );
 }
-
 
 function Row({
   label,

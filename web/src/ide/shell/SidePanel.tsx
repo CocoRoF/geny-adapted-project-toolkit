@@ -59,11 +59,7 @@ export function SidePanel({
         ) : view === "search" ? (
           <SearchPlaceholder />
         ) : view === "git" ? (
-          <GitPanel
-            workspaceId={workspaceId}
-            projectId={projectId}
-            onOpenDiff={onOpenDiff}
-          />
+          <GitPanel workspaceId={workspaceId} projectId={projectId} onOpenDiff={onOpenDiff} />
         ) : view === "tests" ? (
           <TestRunnerPanel workspaceId={workspaceId} />
         ) : view === "env" ? (
@@ -82,8 +78,8 @@ function SearchPlaceholder() {
       <Search className="h-6 w-6 text-fg-subtle" strokeWidth={1.5} />
       <p className="text-[12px] font-medium text-fg-muted">In-workspace search</p>
       <p className="text-[11px] text-fg-subtle">
-        Coming soon. For now, use the editor's <kbd className="rounded bg-bg px-1">Ctrl+F</kbd>
-        {" "}or the terminal's <code>grep</code>.
+        Coming soon. For now, use the editor's <kbd className="rounded bg-bg px-1">Ctrl+F</kbd> or
+        the terminal's <code>grep</code>.
       </p>
     </div>
   );

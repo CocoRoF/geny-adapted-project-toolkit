@@ -75,9 +75,7 @@ export interface RehydrateResponse {
   detail: string | null;
 }
 
-export const rehydrateWorkspace = (
-  workspaceId: string,
-): Promise<RehydrateResponse> =>
+export const rehydrateWorkspace = (workspaceId: string): Promise<RehydrateResponse> =>
   apiPost<RehydrateResponse>(`/_gapt/api/workspaces/${workspaceId}/rehydrate`);
 
 // Phase C.2.d — cap stats. `cap=null` means no cap configured.

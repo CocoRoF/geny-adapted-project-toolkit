@@ -1,11 +1,4 @@
-import {
-  type KeyboardEvent,
-  type ReactNode,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/ui/cn";
 
@@ -125,8 +118,7 @@ export function Combobox({
     }
   }
 
-  const showNoMatch =
-    open && !loading && filtered.length === 0 && value.length > 0 && noMatchHint;
+  const showNoMatch = open && !loading && filtered.length === 0 && value.length > 0 && noMatchHint;
 
   return (
     <div ref={containerRef} className="relative">

@@ -170,11 +170,7 @@ export function WorkspaceIde() {
         <CloningOverlay workspaceId={wid} elapsedSec={elapsedSec} />
       ) : null}
       {state === "ready" && workspace?.status === "failed" && wid && pid ? (
-        <FailedOverlay
-          workspaceId={wid}
-          projectId={pid}
-          onRetry={fetchOnce}
-        />
+        <FailedOverlay workspaceId={wid} projectId={pid} onRetry={fetchOnce} />
       ) : null}
       {state === "ready" && workspace?.status === "archived" && pid ? (
         <ArchivedOverlay projectId={pid} />
@@ -199,17 +195,10 @@ export function WorkspaceIde() {
           workspaceId={wid}
           onClose={() => {
             setWizardOpen(false);
-            window.localStorage.setItem(
-              `${WIZARD_DISMISS_KEY_PREFIX}.${wid}`,
-              "1",
-            );
+            window.localStorage.setItem(`${WIZARD_DISMISS_KEY_PREFIX}.${wid}`, "1");
           }}
           onApplied={({ actions }) =>
-            setWizardToast(
-              actions.length > 0
-                ? actions.join(" · ")
-                : "감지 결과를 적용했습니다.",
-            )
+            setWizardToast(actions.length > 0 ? actions.join(" · ") : "감지 결과를 적용했습니다.")
           }
         />
       ) : null}
@@ -264,13 +253,7 @@ function ViewTab({
   );
 }
 
-function CloningOverlay({
-  workspaceId,
-  elapsedSec,
-}: {
-  workspaceId: string;
-  elapsedSec: number;
-}) {
+function CloningOverlay({ workspaceId, elapsedSec }: { workspaceId: string; elapsedSec: number }) {
   const { t } = useI18n();
   const [log, setLog] = useState<string>("");
   const logRef = useRef<HTMLPreElement>(null);
@@ -308,12 +291,8 @@ function CloningOverlay({
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
           <Loader2 className="h-5 w-5 animate-spin text-accent" />
           <div className="flex-1">
-            <h2 className="text-[14px] font-semibold text-fg">
-              {t("workspace.cloning.title")}
-            </h2>
-            <p className="mt-0.5 text-[11px] text-fg-muted">
-              {t("workspaces.cloning_hint")}
-            </p>
+            <h2 className="text-[14px] font-semibold text-fg">{t("workspace.cloning.title")}</h2>
+            <p className="mt-0.5 text-[11px] text-fg-muted">{t("workspaces.cloning_hint")}</p>
           </div>
           <span className="font-mono text-[11px] text-fg-subtle">
             {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
@@ -328,9 +307,7 @@ function CloningOverlay({
         </pre>
         <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-[11px] text-fg-subtle">
           <span>{t("workspace.cloning.poll").replace("{n}", "2")}</span>
-          <span className="font-mono">
-            {log ? `${log.split("\n").length} lines` : "—"}
-          </span>
+          <span className="font-mono">{log ? `${log.split("\n").length} lines` : "—"}</span>
         </footer>
       </div>
     </div>
@@ -343,12 +320,8 @@ function ArchivedOverlay({ projectId }: { projectId: string }) {
     <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-bg-subtle/40 px-6 py-12">
       <div className="w-full max-w-[480px] rounded-lg border border-border bg-bg-elevated p-6 text-center shadow-sm">
         <Archive className="mx-auto mb-3 h-6 w-6 text-fg-muted" />
-        <h2 className="text-[15px] font-semibold text-fg">
-          {t("workspace.archived.title")}
-        </h2>
-        <p className="mt-1 text-[12px] text-fg-muted">
-          {t("workspace.archived.body")}
-        </p>
+        <h2 className="text-[15px] font-semibold text-fg">{t("workspace.archived.title")}</h2>
+        <p className="mt-1 text-[12px] text-fg-muted">{t("workspace.archived.body")}</p>
         <Link
           to={`/projects/${projectId}`}
           className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg hover:bg-accent/90"
@@ -389,9 +362,7 @@ function FailedOverlay({
     <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-bg-subtle/40 px-6 py-8">
       <div className="w-full max-w-[720px] rounded-lg border border-danger/40 bg-bg-elevated shadow-sm">
         <header className="border-b border-danger/30 px-5 py-4">
-          <h2 className="text-[14px] font-semibold text-danger">
-            {t("workspace.failed.title")}
-          </h2>
+          <h2 className="text-[14px] font-semibold text-danger">{t("workspace.failed.title")}</h2>
           <p className="mt-1 text-[11px] text-fg-muted">{t("workspaces.failed_hint")}</p>
         </header>
         {log ? (

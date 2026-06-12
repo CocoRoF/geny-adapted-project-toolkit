@@ -24,7 +24,8 @@ export const ko: Record<keyof typeof en, string> = {
   "auth.login.continue": "계속하기",
   "auth.login.completing": "로그인 진행 중…",
   "auth.login.invalid": "아이디 또는 비밀번호가 올바르지 않습니다",
-  "auth.login.admin_note": "GAPT_ADMIN_ID / GAPT_ADMIN_PASSWORD 환경변수로 기본값을 바꿀 수 있습니다.",
+  "auth.login.admin_note":
+    "GAPT_ADMIN_ID / GAPT_ADMIN_PASSWORD 환경변수로 기본값을 바꿀 수 있습니다.",
   "auth.logout": "로그아웃",
   "auth.required": "계속하려면 로그인이 필요합니다.",
   "auth.unknown_user": "알 수 없는 사용자.",
@@ -43,7 +44,8 @@ export const ko: Record<keyof typeof en, string> = {
   "projects.archived": "삭제됨",
   "projects.archive": "프로젝트 삭제",
   "projects.archive_confirm.title": "프로젝트를 삭제할까요?",
-  "projects.archive_confirm.body": "\"{name}\" 을(를) 삭제합니다. 목록에서 사라집니다. (감사 로그에는 기록 보존)",
+  "projects.archive_confirm.body":
+    '"{name}" 을(를) 삭제합니다. 목록에서 사라집니다. (감사 로그에는 기록 보존)',
   "projects.archive_confirm.confirm": "삭제",
   "projects.archive_confirm.cancel": "취소",
   "projects.create.title": "프로젝트 만들기",
@@ -78,15 +80,19 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.failed.recheck": "상태 다시 확인",
   "workspace.failed.delete": "삭제 후 재시도",
   "workspace.archived.title": "보관된 워크스페이스입니다",
-  "workspace.archived.body": "보관된 워크스페이스는 감사 로그 보존용으로만 남아 있어 열 수 없습니다. 이 프로젝트를 계속 작업하려면 새 워크스페이스를 만드세요.",
+  "workspace.archived.body":
+    "보관된 워크스페이스는 감사 로그 보존용으로만 남아 있어 열 수 없습니다. 이 프로젝트를 계속 작업하려면 새 워크스페이스를 만드세요.",
   "workspace.archived.back": "프로젝트로 돌아가기",
   "workspaces.loading": "워크스페이스를 불러오는 중…",
   "workspaces.new": "새 워크스페이스",
   "workspaces.quick_open.placeholder": "브랜치 열기 — 브랜치명 입력 후 Enter",
   "workspaces.quick_open.button": "열기",
-  "workspaces.quick_open.hint": "이 브랜치의 워크스페이스를 엽니다 — 없으면 새로 만들고, 살아있으면 재사용.",
-  "workspaces.cap.warning": "워크스페이스 {active}/{cap} 활성. 상한 임박 — 새로 만들기 전에 사용하지 않는 워크스페이스를 중지 또는 보관하세요.",
-  "workspaces.cap.at_cap": "워크스페이스 상한 도달 ({active}/{cap}). 기존 워크스페이스를 중지/보관하거나 GAPT_MAX_ACTIVE_SANDBOXES 값을 올리세요.",
+  "workspaces.quick_open.hint":
+    "이 브랜치의 워크스페이스를 엽니다 — 없으면 새로 만들고, 살아있으면 재사용.",
+  "workspaces.cap.warning":
+    "워크스페이스 {active}/{cap} 활성. 상한 임박 — 새로 만들기 전에 사용하지 않는 워크스페이스를 중지 또는 보관하세요.",
+  "workspaces.cap.at_cap":
+    "워크스페이스 상한 도달 ({active}/{cap}). 기존 워크스페이스를 중지/보관하거나 GAPT_MAX_ACTIVE_SANDBOXES 값을 올리세요.",
   "workspaces.more": "+{n}개 더",
   "workspaces.branch": "브랜치",
   "workspaces.open": "열기",
@@ -98,7 +104,8 @@ export const ko: Record<keyof typeof en, string> = {
   "workspaces.create.creating": "만드는 중…",
   "workspaces.create.branch_loading": "브랜치 가져오는 중…",
   "workspaces.create.branch_default_hint": "기본: {branch}",
-  "workspaces.create.branch_fallback_hint": "원격 브랜치를 가져오지 못했습니다 — 직접 입력하면 그 이름으로 만듭니다.",
+  "workspaces.create.branch_fallback_hint":
+    "원격 브랜치를 가져오지 못했습니다 — 직접 입력하면 그 이름으로 만듭니다.",
   "workspaces.create.branch_refresh": "새로고침",
   "workspaces.create.branch_no_match": "일치 없음 — Enter 누르면 이 이름 그대로 사용",
   // Phase H — 통합 환경 에디터
@@ -121,7 +128,8 @@ export const ko: Record<keyof typeof en, string> = {
   "env_editor.section.routing": "프리뷰 라우팅",
   "env_editor.section.upstream": "Upstream",
   "env_editor.section.remote_ssh": "Remote SSH",
-  "env_editor.section.remote_ssh_hint": "Phase H 에서는 폼만 — remote-ssh deploy 실행은 후속 cycle.",
+  "env_editor.section.remote_ssh_hint":
+    "Phase H 에서는 폼만 — remote-ssh deploy 실행은 후속 cycle.",
   "env_editor.section.webhook": "Webhook",
   "env_editor.section.webhook_hint": "Phase H 에서는 폼만 — webhook deploy 실행은 후속 cycle.",
   "env_editor.compose_path": "Compose 파일",
@@ -141,7 +149,8 @@ export const ko: Record<keyof typeof en, string> = {
   "env_editor.upstream_tls_insecure.on": "On (내부 도메인 → 공인 cert 케이스에 사용)",
   "env_editor.upstream_tls_insecure.off": "Off",
   "env_editor.upstream_host_header": "Upstream Host 헤더 override",
-  "env_editor.upstream_host_header_hint": "비우면 passthrough. 내부 nginx 가 server_name 으로 라우팅하면 설정.",
+  "env_editor.upstream_host_header_hint":
+    "비우면 passthrough. 내부 nginx 가 server_name 으로 라우팅하면 설정.",
   "env_editor.build": "배포 시 이미지 빌드",
   "env_editor.build_hint": "Off = 미리 빌드된 이미지만 pull.",
   "env_editor.build.on": "On",
@@ -150,28 +159,36 @@ export const ko: Record<keyof typeof en, string> = {
   "env_editor.port": "Port",
   "env_editor.user": "User",
   "env_editor.key_secret_ref": "SSH 키 (프로젝트 secret)",
-  "env_editor.key_secret_ref_hint": "프로젝트 스코프 Secret 에 저장된 private key. 비우면 host-agent 키 사용.",
+  "env_editor.key_secret_ref_hint":
+    "프로젝트 스코프 Secret 에 저장된 private key. 비우면 host-agent 키 사용.",
   "env_editor.webhook_url": "URL",
   "env_editor.webhook_url_hint": "http:// 또는 https:// 로 시작하는 fully-qualified URL.",
   "env_editor.webhook_secret_ref": "HMAC secret (프로젝트 secret)",
   "env_editor.webhook_secret_ref_hint": "수신측이 페이로드 진위 검증에 사용.",
   "env_editor.env_keys": "전달할 env 키 (CSV)",
   "env_editor.env_keys_hint": "webhook 페이로드 body 에 복사할 프로젝트 secret 이름들.",
-  "env_editor.remote_ssh_form_only_notice": "참고: SSH-mode 배포 실행 경로는 아직 미구현 — 폼 저장은 되지만 Deploy 는 동작 안 함.",
-  "env_editor.webhook_form_only_notice": "참고: webhook-mode 배포 실행 경로는 아직 미구현 — 폼 저장은 되지만 Deploy 는 URL 호출 안 함.",
+  "env_editor.remote_ssh_form_only_notice":
+    "참고: SSH-mode 배포 실행 경로는 아직 미구현 — 폼 저장은 되지만 Deploy 는 동작 안 함.",
+  "env_editor.webhook_form_only_notice":
+    "참고: webhook-mode 배포 실행 경로는 아직 미구현 — 폼 저장은 되지만 Deploy 는 URL 호출 안 함.",
   "env_editor.k8s_unsupported.title": "Kubernetes 는 v1 에서 미지원.",
-  "env_editor.k8s_unsupported.body": "GAPT v1 은 single-admin self-hosted Docker compose 가 대상. K8s 는 v1 범위 밖 (M4).",
+  "env_editor.k8s_unsupported.body":
+    "GAPT v1 은 single-admin self-hosted Docker compose 가 대상. K8s 는 v1 범위 밖 (M4).",
   "env_editor.preset.current": "현재",
   "env_editor.preset.nextjs_dev": "Next.js dev",
-  "env_editor.preset.nextjs_dev_hint": "path mode + /preview 제거 + http upstream → npm run dev :3000 패턴",
+  "env_editor.preset.nextjs_dev_hint":
+    "path mode + /preview 제거 + http upstream → npm run dev :3000 패턴",
   "env_editor.preset.nextjs_prod_basepath": "Next.js prod (basePath)",
-  "env_editor.preset.nextjs_prod_basepath_hint": "path mode, /preview 유지 (앱 자체가 basePath 인식)",
+  "env_editor.preset.nextjs_prod_basepath_hint":
+    "path mode, /preview 유지 (앱 자체가 basePath 인식)",
   "env_editor.preset.tls_terminator": "TLS terminator (nginx)",
-  "env_editor.preset.tls_terminator_hint": "스택이 자체 HTTPS nginx → Caddy 가 https + skip-verify + Host rewrite",
+  "env_editor.preset.tls_terminator_hint":
+    "스택이 자체 HTTPS nginx → Caddy 가 https + skip-verify + Host rewrite",
   "env_editor.preset.subdomain": "Subdomain mode",
   "env_editor.preset.subdomain_hint": "<slug>.preview-domain — 와일드카드 DNS + TLS 필요",
   "env_editor.extras": "기타 config 키 (에디터가 모르는 키)",
-  "env_editor.extras_hint": "스키마 외부의 레거시 / 운영자 설정 키. 그대로 저장됨. 칩을 누르면 제거.",
+  "env_editor.extras_hint":
+    "스키마 외부의 레거시 / 운영자 설정 키. 그대로 저장됨. 칩을 누르면 제거.",
   "env_editor.extras_remove": "제거",
   "env_editor.secret_none": "(없음)",
   "env_editor.create.title": "새 환경",
@@ -183,7 +200,8 @@ export const ko: Record<keyof typeof en, string> = {
   "workspaces.actions.start": "시작",
   "workspaces.actions.delete": "워크스페이스 삭제",
   "workspaces.delete_confirm.title": "워크스페이스를 삭제할까요?",
-  "workspaces.delete_confirm.body": "\"{branch}\" 워크스페이스를 삭제합니다. 샌드박스를 정리하고 보관 처리합니다. 디스크의 작업트리 파일은 남아 있습니다.",
+  "workspaces.delete_confirm.body":
+    '"{branch}" 워크스페이스를 삭제합니다. 샌드박스를 정리하고 보관 처리합니다. 디스크의 작업트리 파일은 남아 있습니다.',
   "workspaces.delete_confirm.confirm": "삭제",
   "workspaces.delete_confirm.cancel": "취소",
   "workspaces.last_activity": "마지막 활동",
@@ -219,7 +237,8 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.col.mem": "메모리",
   "performance.col.io": "네트워크 · 디스크",
   "performance.empty": "이 호스트에 GAPT 컨테이너가 아직 없습니다.",
-  "performance.poll_hint": "{n}초마다 자동 갱신. 행을 클릭하면 정체성/제한/실시간 통계 상세를 볼 수 있습니다.",
+  "performance.poll_hint":
+    "{n}초마다 자동 갱신. 행을 클릭하면 정체성/제한/실시간 통계 상세를 볼 수 있습니다.",
   "performance.disk": "디스크",
   "performance.detail.identity": "정체성",
   "performance.detail.limits": "자원 제한",
@@ -253,10 +272,12 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.env.stopped": "중지됨",
   "performance.env.last_deploy": "최근",
   "performance.env.last_url": "최근 바인딩된 URL — 스택이 내려가 있으면 502 가 날 수 있습니다.",
-  "performance.env.stopped_hint": "스택이 내려가 있습니다. 이 프로젝트의 환경 페이지에서 다시 배포하세요.",
+  "performance.env.stopped_hint":
+    "스택이 내려가 있습니다. 이 프로젝트의 환경 페이지에서 다시 배포하세요.",
   "performance.project.archived": "보관됨",
   "performance.project.archived_hint": "{n}개 컨테이너가 남아있음 — Orphan 정리 실행",
-  "performance.project.archived_hint_title": "이 프로젝트는 보관 처리됐지만 컨테이너 / 서비스 / Caddy 라우트가 완전히 정리되지 않았습니다. 대시보드 상단의 Orphan 정리 버튼으로 해제하세요.",
+  "performance.project.archived_hint_title":
+    "이 프로젝트는 보관 처리됐지만 컨테이너 / 서비스 / Caddy 라우트가 완전히 정리되지 않았습니다. 대시보드 상단의 Orphan 정리 버튼으로 해제하세요.",
   "performance.unlimited_short": "무제한",
   "performance.of_host": "호스트 대비",
   "performance.action.logs": "로그",
@@ -264,7 +285,8 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.action.stop": "정상 종료 (SIGTERM → SIGKILL)",
   "performance.action.kill": "강제 종료 (SIGKILL)",
   "performance.confirm.stop": "{name}을(를) 정상 종료할까요?",
-  "performance.confirm.kill": "{name}을(를) 강제 종료할까요? SIGKILL — 실행 중인 프로세스에 정리할 기회를 주지 않습니다.",
+  "performance.confirm.kill":
+    "{name}을(를) 강제 종료할까요? SIGKILL — 실행 중인 프로세스에 정리할 기회를 주지 않습니다.",
   "performance.confirm.restart": "{name}을(를) 재시작할까요?",
   "performance.gpu.title": "GPU",
   "performance.gpu.util": "사용률",
@@ -279,32 +301,40 @@ export const ko: Record<keyof typeof en, string> = {
   "performance.view.other": "기타",
   "performance.view_empty": "이 분류에 해당하는 컨테이너가 없습니다.",
   "performance.orphan.header": "Orphan 프로젝트",
-  "performance.orphan.hint": "DB 에 더 이상 매칭되는 프로젝트/워크스페이스/환경 row 가 없는 컨테이너 (보관됨, 삭제, 혹은 기록되지 않음). 살펴보고 정리하기 안전합니다.",
+  "performance.orphan.hint":
+    "DB 에 더 이상 매칭되는 프로젝트/워크스페이스/환경 row 가 없는 컨테이너 (보관됨, 삭제, 혹은 기록되지 않음). 살펴보고 정리하기 안전합니다.",
   "performance.stream.live": "실시간",
   "performance.stream.paused": "일시중지 (탭 가려짐)",
   "performance.stream.connecting": "연결 중…",
   "performance.stream.reconnecting": "재연결 중…",
-  "performance.stream_hint": "SSE 푸시 방식 — 이 탭이 보이는 동안에만 서버가 샘플링합니다. 다른 탭으로 가면 연결이 끊기고, 돌아오면 자동 재연결. 행을 클릭하면 정체성/제한/실시간 통계 상세를 볼 수 있습니다.",
+  "performance.stream_hint":
+    "SSE 푸시 방식 — 이 탭이 보이는 동안에만 서버가 샘플링합니다. 다른 탭으로 가면 연결이 끊기고, 돌아오면 자동 재연결. 행을 클릭하면 정체성/제한/실시간 통계 상세를 볼 수 있습니다.",
   "performance.orphan.cleanup": "전부 정리",
   "performance.cleanup.title": "Orphan 컨테이너 정리",
   "performance.cleanup.loading": "정리 계획을 만드는 중…",
-  "performance.cleanup.intro": "아래 작업은 서버에서 실행됩니다. orphan 집합은 실시간 docker + DB 상태로 다시 계산하므로, 미리보기와 확인 사이에 부활한 워크스페이스는 건드리지 않습니다.",
+  "performance.cleanup.intro":
+    "아래 작업은 서버에서 실행됩니다. orphan 집합은 실시간 docker + DB 상태로 다시 계산하므로, 미리보기와 확인 사이에 부활한 워크스페이스는 건드리지 않습니다.",
   "performance.cleanup.section.containers": "중지 + 제거할 컨테이너",
   "performance.cleanup.section.caddy": "삭제할 Caddy preview 라우트",
   "performance.cleanup.section.worktrees": "호스트 워크트리 디렉토리",
   "performance.cleanup.section.archived_projects": "보관된 프로젝트 (DB 삭제)",
-  "performance.cleanup.empty.archived_projects": "없음 — 삭제할 준비가 된 보관 프로젝트가 없습니다.",
-  "performance.cleanup.archived_projects.hint": "다음 보관 프로젝트들은 실행 중인 컨테이너 / 라우트가 모두 정리된 상태입니다. 정리하면 DB 에서 삭제되며, FK cascade 로 워크스페이스 / 환경 / 배포 이력도 함께 삭제됩니다. 감사 로그는 그대로 보존됩니다.",
-  "performance.cleanup.archived_projects.cascade": "→ cascade: 워크스페이스 {ws}개 · 환경 {env}개 · 배포 이력 {run}개",
+  "performance.cleanup.empty.archived_projects":
+    "없음 — 삭제할 준비가 된 보관 프로젝트가 없습니다.",
+  "performance.cleanup.archived_projects.hint":
+    "다음 보관 프로젝트들은 실행 중인 컨테이너 / 라우트가 모두 정리된 상태입니다. 정리하면 DB 에서 삭제되며, FK cascade 로 워크스페이스 / 환경 / 배포 이력도 함께 삭제됩니다. 감사 로그는 그대로 보존됩니다.",
+  "performance.cleanup.archived_projects.cascade":
+    "→ cascade: 워크스페이스 {ws}개 · 환경 {env}개 · 배포 이력 {run}개",
   "performance.cleanup.report.projects_purged": "DB 에서 삭제된 보관 프로젝트: {n}개",
   "performance.cleanup.report.project_purge_errors": "DB 삭제 오류",
   "performance.cleanup.empty.containers": "Orphan 컨테이너 없음 — 제거할 대상 없음.",
   "performance.cleanup.empty.caddy": "오래된 Caddy preview 라우트 없음.",
   "performance.cleanup.empty.worktrees": "감지된 워크트리 디렉토리 없음.",
   "performance.cleanup.worktrees.toggle": "호스트의 워크트리 디렉토리도 함께 삭제",
-  "performance.cleanup.worktrees.warning": "파괴적 작업입니다. 각 경로를 `rm -rf` 합니다. 안에 있는 미커밋 파일은 모두 사라집니다. 대부분의 경우 OFF 로 두는 게 안전합니다 — 컨테이너만 정리되어도 충분합니다.",
+  "performance.cleanup.worktrees.warning":
+    "파괴적 작업입니다. 각 경로를 `rm -rf` 합니다. 안에 있는 미커밋 파일은 모두 사라집니다. 대부분의 경우 OFF 로 두는 게 안전합니다 — 컨테이너만 정리되어도 충분합니다.",
   "performance.cleanup.no_orphans": "정리할 대상이 없습니다",
-  "performance.cleanup.no_orphans_hint": "모든 컨테이너가 살아 있는 프로젝트/워크스페이스/환경 row 에 매칭됩니다.",
+  "performance.cleanup.no_orphans_hint":
+    "모든 컨테이너가 살아 있는 프로젝트/워크스페이스/환경 row 에 매칭됩니다.",
   "performance.cleanup.escape_hint": "ESC 키로 취소",
   "performance.cleanup.cancel": "취소",
   "performance.cleanup.confirm": "전부 삭제",
@@ -353,23 +383,29 @@ export const ko: Record<keyof typeof en, string> = {
   "deploy.in_progress": "진행 중",
   "deploy.click_to_view_logs": "클릭해서 로그 + 스택 제어 보기",
   "deploy.idle_empty": "아직 배포 없음. 아래 버튼으로 시작.",
-  "deploy.idle_after_stop": "스택이 중지됨 — 이전 run 은 이력 탭으로 이동했어요. [배포] 로 다시 올리세요.",
+  "deploy.idle_after_stop":
+    "스택이 중지됨 — 이전 run 은 이력 탭으로 이동했어요. [배포] 로 다시 올리세요.",
   "deploy.stopped": "중지됨",
-  "deploy.stopped_hint": "스택이 중지된 상태. 클릭해서 마지막 run 상세 보기, 또는 아래 [배포] 로 다시 올리기.",
+  "deploy.stopped_hint":
+    "스택이 중지된 상태. 클릭해서 마지막 run 상세 보기, 또는 아래 [배포] 로 다시 올리기.",
   "deploy.stop_stack": "스택 중지",
   "deploy.redeploy": "재배포",
-  "deploy.redeploy_hint": "새 배포 트리거 — 현재 실행 중 스택을 교체. 깨끗하게 시작하려면 먼저 중지를 고려.",
+  "deploy.redeploy_hint":
+    "새 배포 트리거 — 현재 실행 중 스택을 교체. 깨끗하게 시작하려면 먼저 중지를 고려.",
   "deploy.confirm_stop.title": "실행 중인 스택을 중지할까요?",
-  "deploy.confirm_stop.body": "이 env 의 compose 스택 컨테이너가 전부 중지 + 제거됩니다. Volume 은 유지. 재배포 전까지 preview URL 이 응답 안 함.",
+  "deploy.confirm_stop.body":
+    "이 env 의 compose 스택 컨테이너가 전부 중지 + 제거됩니다. Volume 은 유지. 재배포 전까지 preview URL 이 응답 안 함.",
   "deploy.confirm_redeploy.title": "실행 중인 스택 위에 재배포할까요?",
-  "deploy.confirm_redeploy.body": "현재 스택이 교체됩니다 — `docker compose up` 이 이미지 재pull + 컨테이너 재생성. 짧은 downtime 정상. 깨끗한 teardown 원하면 취소 후 스택 중지 사용.",
+  "deploy.confirm_redeploy.body":
+    "현재 스택이 교체됩니다 — `docker compose up` 이 이미지 재pull + 컨테이너 재생성. 짧은 downtime 정상. 깨끗한 teardown 원하면 취소 후 스택 중지 사용.",
   "deploy.confirm.cancel": "취소",
   "deploy.detail.live_logs": "라이브 스택 로그",
   "deploy.detail.live_logs.streaming": "(3초마다 자동 갱신)",
   "deploy.detail.live_logs.paused": "(일시정지)",
   "deploy.detail.live_logs.pause": "일시정지",
   "deploy.detail.live_logs.resume": "재개",
-  "deploy.detail.live_logs.empty": "아직 로그 출력 없음 — 다음 갱신을 기다리거나 스택 실행 중인지 확인.",
+  "deploy.detail.live_logs.empty":
+    "아직 로그 출력 없음 — 다음 갱신을 기다리거나 스택 실행 중인지 확인.",
   "deploy.detail.viewing": "과거 배포",
   "deploy.detail.back": "라이브로 돌아가기",
   "deploy.detail.run": "실행",
@@ -381,25 +417,35 @@ export const ko: Record<keyof typeof en, string> = {
   "deploy.detail.log_hint": "영속 스냅샷 — stdout+stderr 마지막 ~4 KiB.",
   "deploy.detail.log_empty": "이 배포에 캡처된 출력이 없습니다.",
   "deploy.detail.stack_down.badge": "스택 다운",
-  "deploy.detail.stack_down.title": "이 배포는 과거에 성공했지만, 현재 스택은 실행 중이 아닙니다. 아래 URL 은 스택이 다시 올라오기 전까지 502 또는 404 가 납니다 — [배포] 를 눌러 이 버전을 다시 배포하세요.",
+  "deploy.detail.stack_down.title":
+    "이 배포는 과거에 성공했지만, 현재 스택은 실행 중이 아닙니다. 아래 URL 은 스택이 다시 올라오기 전까지 502 또는 404 가 납니다 — [배포] 를 눌러 이 버전을 다시 배포하세요.",
   "deploy.detail.stack_partial.badge": "스택 일부 {r}/{t}",
-  "deploy.detail.stack_partial.title": "이 배포의 일부 컨테이너가 더 이상 실행되지 않습니다. URL 이 stale 하거나 깨진 응답을 줄 수 있습니다.",
+  "deploy.detail.stack_partial.title":
+    "이 배포의 일부 컨테이너가 더 이상 실행되지 않습니다. URL 이 stale 하거나 깨진 응답을 줄 수 있습니다.",
   "deploy.detail.url.live": "스택이 실행 중입니다 — 새 탭에서 프리뷰 열기.",
-  "deploy.detail.url.stack_down": "스택이 다운된 상태입니다 — 이 URL 은 응답하지 않습니다. 다시 배포해서 살리세요.",
+  "deploy.detail.url.stack_down":
+    "스택이 다운된 상태입니다 — 이 URL 은 응답하지 않습니다. 다시 배포해서 살리세요.",
   "deploy.stack.title": "스택 컨테이너",
   "deploy.stack.restart": "스택 재시작",
   "deploy.stack.down": "스택 중지",
-  "deploy.stack.confirm.down": "{name}의 모든 컨테이너를 중지하고 제거할까요? 컨테이너와 compose 네트워크는 사라지고, 명명된 볼륨은 유지됩니다.",
-  "deploy.stack.confirm.restart": "{name}의 모든 컨테이너를 재시작할까요? 각 서비스가 그 자리에서 바운스됩니다.",
+  "deploy.stack.confirm.down":
+    "{name}의 모든 컨테이너를 중지하고 제거할까요? 컨테이너와 compose 네트워크는 사라지고, 명명된 볼륨은 유지됩니다.",
+  "deploy.stack.confirm.restart":
+    "{name}의 모든 컨테이너를 재시작할까요? 각 서비스가 그 자리에서 바운스됩니다.",
   "deploy.stack.failed.down": "스택 중지 실패:",
   "deploy.stack.failed.restart": "스택 재시작 실패:",
-  "deploy.stack.empty": "이 compose 프로젝트에 컨테이너가 없습니다. 이미 중지되었거나 한 번도 올라오지 않았습니다.",
-  "deploy.stack.empty_after_success": "스택이 내려가 있는 것 같습니다. 다시 배포하려면 [배포] 를 누르세요.",
+  "deploy.stack.empty":
+    "이 compose 프로젝트에 컨테이너가 없습니다. 이미 중지되었거나 한 번도 올라오지 않았습니다.",
+  "deploy.stack.empty_after_success":
+    "스택이 내려가 있는 것 같습니다. 다시 배포하려면 [배포] 를 누르세요.",
   "deploy.stack.reroute": "라우트 갱신",
-  "deploy.stack.reroute.title": "현재 실행 중인 주 컨테이너로 Caddy preview 라우트를 다시 등록합니다 — 라우팅 정책 변경 후 URL 이 404 나면 이 버튼을 누르세요.",
-  "deploy.stack.confirm.reroute": "{name} 의 Caddy preview 라우트를 다시 등록할까요? 실행 중인 주 컨테이너 + 현재 라우팅 정책 (path / strip_prefix) 을 적용합니다.",
+  "deploy.stack.reroute.title":
+    "현재 실행 중인 주 컨테이너로 Caddy preview 라우트를 다시 등록합니다 — 라우팅 정책 변경 후 URL 이 404 나면 이 버튼을 누르세요.",
+  "deploy.stack.confirm.reroute":
+    "{name} 의 Caddy preview 라우트를 다시 등록할까요? 실행 중인 주 컨테이너 + 현재 라우팅 정책 (path / strip_prefix) 을 적용합니다.",
   "deploy.stack.failed.reroute": "라우트 갱신 실패:",
-  "deploy.stack.confirm.reroute_overrides": "{name} 을 아래 오버라이드 값으로 다시 라우팅할까요? 입력한 값이 현재 저장된 주 upstream / scheme / Host 헤더 / TLS / strip-prefix 설정을 대체합니다.",
+  "deploy.stack.confirm.reroute_overrides":
+    "{name} 을 아래 오버라이드 값으로 다시 라우팅할까요? 입력한 값이 현재 저장된 주 upstream / scheme / Host 헤더 / TLS / strip-prefix 설정을 대체합니다.",
   "deploy.stack.overrides.title": "주 Upstream 오버라이드",
   "deploy.stack.overrides.primary_service": "주 서비스",
   "deploy.stack.overrides.primary_port": "주 포트",
@@ -408,17 +454,24 @@ export const ko: Record<keyof typeof en, string> = {
   "deploy.stack.overrides.tls_insecure": "TLS 검증",
   "deploy.stack.overrides.strip_prefix": "/preview/<slug> 제거",
   "deploy.stack.overrides.preview_mode": "라우팅 전략",
-  "deploy.stack.overrides.hint": "비워두거나 \"inherit\" 로 두면 저장된 값을 그대로 사용합니다. **라우팅 전략:** path 모드는 아펙스를 GAPT 와 공유합니다 (`/projects` 같은 root-relative URL 이 충돌; short-TTL 쿠키 고정 + Referer fallback 으로 완화). Subdomain 모드는 앱에 고유 호스트를 부여해 앱이 발행하는 모든 URL 이 그대로 동작 — preview 도메인의 와일드카드 DNS + Caddy on-demand TLS 가 필요 (Caddyfile.prod 에 이미 wired). **Upstream:** 사용자 스택이 공개 도메인의 TLS 만 듣는 자체 nginx/traefik 를 앞에 두고 있다면 HTTPS + 검증 건너뛰기 + Host 재작성을 함께 사용하세요.",
+  "deploy.stack.overrides.hint":
+    '비워두거나 "inherit" 로 두면 저장된 값을 그대로 사용합니다. **라우팅 전략:** path 모드는 아펙스를 GAPT 와 공유합니다 (`/projects` 같은 root-relative URL 이 충돌; short-TTL 쿠키 고정 + Referer fallback 으로 완화). Subdomain 모드는 앱에 고유 호스트를 부여해 앱이 발행하는 모든 URL 이 그대로 동작 — preview 도메인의 와일드카드 DNS + Caddy on-demand TLS 가 필요 (Caddyfile.prod 에 이미 wired). **Upstream:** 사용자 스택이 공개 도메인의 TLS 만 듣는 자체 nginx/traefik 를 앞에 두고 있다면 HTTPS + 검증 건너뛰기 + Host 재작성을 함께 사용하세요.',
   "deploy.stack.help.button_label": "도움말",
-  "deploy.stack.help.button_title": "전체 가이드 열기 — Re-route 가 무엇을 하는지, path vs subdomain 모드, 7개 오버라이드 필드, 시나리오별 권장 설정.",
+  "deploy.stack.help.button_title":
+    "전체 가이드 열기 — Re-route 가 무엇을 하는지, path vs subdomain 모드, 7개 오버라이드 필드, 시나리오별 권장 설정.",
   "deploy.stack.help.title": "Preview 라우팅 & Re-route — 전체 가이드",
-  "deploy.stack.help.subtitle": "배포된 스택이 어떻게 공개 URL 에 묶이는지, 각 오버라이드가 무엇을 하는지, 언제 무엇을 써야 하는지.",
+  "deploy.stack.help.subtitle":
+    "배포된 스택이 어떻게 공개 URL 에 묶이는지, 각 오버라이드가 무엇을 하는지, 언제 무엇을 써야 하는지.",
   "deploy.stack.help.close": "확인",
   "deploy.stack.mode.label": "Preview 라우팅 전략",
-  "deploy.stack.mode.path.title": "Path 모드 — apex/preview/<slug>/* (공유 도메인, navigation 은 쿠키 고정 사용. 추가 DNS 없이 동작).",
-  "deploy.stack.mode.subdomain.title": "Subdomain 모드 — <slug>.<preview-domain>/* (격리된 host, 쿠키/TTL 무관. 와일드카드 DNS *.<preview-domain> + on-demand TLS 필요).",
-  "deploy.stack.mode.confirm_to_subdomain": "\"{name}\" 을 SUBDOMAIN 모드로 전환할까요? URL 이 <slug>.<preview-domain>/* 형태가 됩니다. 와일드카드 DNS 가 필요 — 설정 안 되어 있으면 DNS 추가 전까지 URL 이 동작하지 않습니다. env config 에 영속됩니다.",
-  "deploy.stack.mode.confirm_to_path": "\"{name}\" 을 PATH 모드로 되돌릴까요? URL 이 apex/preview/<slug>/* 형태가 됩니다. Navigation 은 24h 쿠키 + Sec-Fetch-Dest=document 307 리다이렉트에 의존 — 추가 DNS 없이 동작하지만 멀티 탭 / 공유 링크에서는 덜 robust 합니다.",
+  "deploy.stack.mode.path.title":
+    "Path 모드 — apex/preview/<slug>/* (공유 도메인, navigation 은 쿠키 고정 사용. 추가 DNS 없이 동작).",
+  "deploy.stack.mode.subdomain.title":
+    "Subdomain 모드 — <slug>.<preview-domain>/* (격리된 host, 쿠키/TTL 무관. 와일드카드 DNS *.<preview-domain> + on-demand TLS 필요).",
+  "deploy.stack.mode.confirm_to_subdomain":
+    '"{name}" 을 SUBDOMAIN 모드로 전환할까요? URL 이 <slug>.<preview-domain>/* 형태가 됩니다. 와일드카드 DNS 가 필요 — 설정 안 되어 있으면 DNS 추가 전까지 URL 이 동작하지 않습니다. env config 에 영속됩니다.',
+  "deploy.stack.mode.confirm_to_path":
+    '"{name}" 을 PATH 모드로 되돌릴까요? URL 이 apex/preview/<slug>/* 형태가 됩니다. Navigation 은 24h 쿠키 + Sec-Fetch-Dest=document 307 리다이렉트에 의존 — 추가 DNS 없이 동작하지만 멀티 탭 / 공유 링크에서는 덜 robust 합니다.',
   "deploy.stack.busy.down": "스택 중지 중…",
   "deploy.stack.busy.restart": "스택 재시작 중…",
   "deploy.stack.busy.reroute": "라우트 갱신 중…",
@@ -456,7 +509,8 @@ export const ko: Record<keyof typeof en, string> = {
   "ide.editor.saved": "저장됨",
   "ide.editor.area.no_selection": "선택된 파일 없음",
   "ide.editor.area.close": "에디터 닫기 (Chat이 공간 차지)",
-  "ide.editor.area.empty_hint": "탐색기에서 파일을 선택하거나, 소스 컨트롤에서 변경된 파일을 클릭하세요. ×로 이 컬럼을 닫으면 Chat이 전체 너비를 차지합니다.",
+  "ide.editor.area.empty_hint":
+    "탐색기에서 파일을 선택하거나, 소스 컨트롤에서 변경된 파일을 클릭하세요. ×로 이 컬럼을 닫으면 Chat이 전체 너비를 차지합니다.",
   "ide.file_diff.loading": "diff 불러오는 중…",
   "ide.file_diff.no_changes": "이 경로에 변경 사항 없음.",
   "ide.file_diff.refresh": "diff 다시 가져오기",
@@ -501,8 +555,10 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.mode.plan": "Plan",
   "chat.mode.act": "Act",
   "chat.mode.plan_hint": "Plan 모드 — 에이전트가 변경 전에 계획을 설명합니다.",
-  "chat.mode.plan.tooltip": "Plan 모드 — 서버에서 강제: gapt_edit, gapt_git, gapt_pr 차단. 읽기 전용 도구는 사용 가능.",
-  "chat.mode.act.tooltip": "Act 모드 — 모든 도구 활성. 변경 위험 없이 브레인스토밍할 때 Plan 으로 전환하세요.",
+  "chat.mode.plan.tooltip":
+    "Plan 모드 — 서버에서 강제: gapt_edit, gapt_git, gapt_pr 차단. 읽기 전용 도구는 사용 가능.",
+  "chat.mode.act.tooltip":
+    "Act 모드 — 모든 도구 활성. 변경 위험 없이 브레인스토밍할 때 Plan 으로 전환하세요.",
   "chat.tool.running": "실행 중…",
   "chat.tool.ok": "성공",
   "chat.tool.error": "실패",
@@ -704,12 +760,13 @@ export const ko: Record<keyof typeof en, string> = {
   "git.diff.placeholder": "파일을 클릭하면 diff 가 표시됩니다.",
   "git.diff.close": "diff 닫기",
   "git.discard.title": "이 파일의 워크트리 변경 사항 폐기",
-  "git.discard.confirm": "{path} 의 로컬 변경 사항을 폐기할까요? 커밋 안 된 수정은 되돌릴 수 없습니다.",
+  "git.discard.confirm":
+    "{path} 의 로컬 변경 사항을 폐기할까요? 커밋 안 된 수정은 되돌릴 수 없습니다.",
   "git.discard.done": "폐기 완료.",
   "git.discard.partial": "일부 폐기:",
   "git.commit": "커밋",
   "git.commit.placeholder": "커밋 메시지 (첫 줄 = 제목)…",
-  "git.commit.placeholder_branch": "메시지 (Ctrl+Enter 로 \"{branch}\" 에 커밋)",
+  "git.commit.placeholder_branch": '메시지 (Ctrl+Enter 로 "{branch}" 에 커밋)',
   "git.commit.include_on": "이 파일을 커밋에 포함",
   "git.commit.include_off": "이 파일을 커밋에서 제외",
   "git.commit.need_message": "커밋 메시지를 입력하세요.",
@@ -739,8 +796,10 @@ export const ko: Record<keyof typeof en, string> = {
   "git.branch.create_title": "현재 HEAD 에서 브랜치 생성",
   "git.branch.checkout_remote_hint": "체크아웃",
   "git.branch.delete_title": "브랜치 삭제",
-  "git.branch.delete_confirm": "\"{name}\" 브랜치를 삭제할까요? 머지되지 않은 커밋이 있으면 거부되며, 강제 삭제 확인 prompt 가 뜹니다.",
-  "git.branch.force_confirm": "\"{name}\" 브랜치에 머지되지 않은 커밋이 있습니다. 강제 삭제 (-D) 할까요? 되돌릴 수 없습니다.",
+  "git.branch.delete_confirm":
+    '"{name}" 브랜치를 삭제할까요? 머지되지 않은 커밋이 있으면 거부되며, 강제 삭제 확인 prompt 가 뜹니다.',
+  "git.branch.force_confirm":
+    '"{name}" 브랜치에 머지되지 않은 커밋이 있습니다. 강제 삭제 (-D) 할까요? 되돌릴 수 없습니다.',
   "git.branch.deleted": "삭제됨",
   "git.branch.delete_failed": "브랜치 삭제 실패",
   "git.checkout.done": "전환:",
@@ -761,36 +820,52 @@ export const ko: Record<keyof typeof en, string> = {
 
   // ─── env settings panel ───
   "env_settings.help": "도움말",
-  "env_settings.help_title": "전체 가이드 열기 — Re-route 문서 8섹션 (path/subdomain, 모든 override, 시나리오 레시피, 트러블슈팅).",
+  "env_settings.help_title":
+    "전체 가이드 열기 — Re-route 문서 8섹션 (path/subdomain, 모든 override, 시나리오 레시피, 트러블슈팅).",
   "env_settings.section.presets": "빠른 채움 — 본인 스택에 맞는 시나리오 선택",
-  "env_settings.section.presets_hint": "각 프리셋은 known-good 조합으로 폼을 채웁니다. 적용 후 개별 필드 미세 조정 가능. 현재 상태와 일치하는 프리셋은 highlight.",
+  "env_settings.section.presets_hint":
+    "각 프리셋은 known-good 조합으로 폼을 채웁니다. 적용 후 개별 필드 미세 조정 가능. 현재 상태와 일치하는 프리셋은 highlight.",
   "env_settings.preset.current": "현재",
   "env_settings.preset.nextjs_dev": "Next.js dev (basePath 없음)",
-  "env_settings.preset.nextjs_dev_hint": "`next dev` 가 basePath 없이 떠 있음. Path 모드 + prefix 제거 → 앱이 / 위에서 동작. 대부분의 로컬 전용 / 테스트 환경.",
+  "env_settings.preset.nextjs_dev_hint":
+    "`next dev` 가 basePath 없이 떠 있음. Path 모드 + prefix 제거 → 앱이 / 위에서 동작. 대부분의 로컬 전용 / 테스트 환경.",
   "env_settings.preset.nextjs_prod_basepath": "Next.js prod (basePath 빌드)",
-  "env_settings.preset.nextjs_prod_basepath_hint": "NEXT_PUBLIC_BASE_PATH=/preview/<slug> 로 빌드된 앱. Prefix 유지; 앱이 prefix 포함 URL emit. favicon.png 같은 asset 누수는 Referer fallback 이 catch.",
+  "env_settings.preset.nextjs_prod_basepath_hint":
+    "NEXT_PUBLIC_BASE_PATH=/preview/<slug> 로 빌드된 앱. Prefix 유지; 앱이 prefix 포함 URL emit. favicon.png 같은 asset 누수는 Referer fallback 이 catch.",
   "env_settings.preset.tls_terminator": "TLS terminator nginx (Cloudflare origin cert)",
-  "env_settings.preset.tls_terminator_hint": "Prod 스택이 자체 nginx 로 공개 도메인용 origin cert 보유 + HTTPS 강제. scheme=https, 검증건너뛰기, port=443, primary=nginx — Host header 에 공개 도메인 입력.",
+  "env_settings.preset.tls_terminator_hint":
+    "Prod 스택이 자체 nginx 로 공개 도메인용 origin cert 보유 + HTTPS 강제. scheme=https, 검증건너뛰기, port=443, primary=nginx — Host header 에 공개 도메인 입력.",
   "env_settings.preset.subdomain": "Subdomain 모드 (production-grade)",
-  "env_settings.preset.subdomain_hint": "각 preview 가 <slug>.<preview-domain>. 쿠키 무관, TTL 무관, URL 영구. 와일드카드 DNS *.<preview-domain> + Caddy on-demand TLS 필요.",
+  "env_settings.preset.subdomain_hint":
+    "각 preview 가 <slug>.<preview-domain>. 쿠키 무관, TTL 무관, URL 영구. 와일드카드 DNS *.<preview-domain> + Caddy on-demand TLS 필요.",
   "env_settings.section.subdomain_setup": "Subdomain 모드 셋업 — 필수 단계",
-  "env_settings.section.subdomain_setup_hint": "세 가지 prerequisite 가 다 충족돼야 URL 이 작동합니다. 하단의 진단 버튼으로 현재 어느 단계가 막혀있는지 확인하세요.",
+  "env_settings.section.subdomain_setup_hint":
+    "세 가지 prerequisite 가 다 충족돼야 URL 이 작동합니다. 하단의 진단 버튼으로 현재 어느 단계가 막혀있는지 확인하세요.",
   "env_settings.section.subdomain_setup_ready": "Subdomain 모드 셋업 — 준비 완료",
-  "env_settings.section.subdomain_setup_ready_hint": "Cloudflare provider 가 설정되었고 터널이 remote-managed + wildcard ingress 가 있는 상태 — GAPT 가 모든 preview 의 DNS + 터널 라우팅을 자동 처리합니다.",
+  "env_settings.section.subdomain_setup_ready_hint":
+    "Cloudflare provider 가 설정되었고 터널이 remote-managed + wildcard ingress 가 있는 상태 — GAPT 가 모든 preview 의 DNS + 터널 라우팅을 자동 처리합니다.",
   "env_settings.subdomain.ready.title": "DNS + tunnel ingress 를 Cloudflare provider 가 처리 중",
   "env_settings.subdomain.ready.dns": "Wildcard DNS 가 설정된 zone 으로 정상 resolves.",
-  "env_settings.subdomain.ready.tunnel": "터널이 remote-managed 모드이고 `*.<preview-domain>` ingress 가 적용됨.",
-  "env_settings.subdomain.ready.env": "서버에 `GAPT_CADDY_PREVIEW_DOMAIN` 설정되었고 Caddy 도달 가능.",
-  "env_settings.subdomain.ready.cert_warning": "남은 수동 단계 하나: Cloudflare Universal SSL 은 wildcard 미커버. `*.<preview-domain>` 에 대한 Advanced Certificate 발급 (또는 Total TLS 활성화) 필요 — 안 그러면 HTTPS handshake 실패.",
+  "env_settings.subdomain.ready.tunnel":
+    "터널이 remote-managed 모드이고 `*.<preview-domain>` ingress 가 적용됨.",
+  "env_settings.subdomain.ready.env":
+    "서버에 `GAPT_CADDY_PREVIEW_DOMAIN` 설정되었고 Caddy 도달 가능.",
+  "env_settings.subdomain.ready.cert_warning":
+    "남은 수동 단계 하나: Cloudflare Universal SSL 은 wildcard 미커버. `*.<preview-domain>` 에 대한 Advanced Certificate 발급 (또는 Total TLS 활성화) 필요 — 안 그러면 HTTPS handshake 실패.",
   "env_settings.subdomain.step1.title": "Cloudflare 에 와일드카드 DNS 레코드 추가",
-  "env_settings.subdomain.step1.body": "Cloudflare → DNS → Add record. 기존 GAPT 도메인과 동일한 target (cloudflared tunnel 의 CNAME 이거나 edge IP 의 A). orange-cloud proxy 켜기 — Cloudflare edge 가 받음.",
-  "env_settings.subdomain.step2.title": "(Cloudflare Tunnel 사용 시) cloudflared ingress 에 와일드카드 추가",
-  "env_settings.subdomain.step2.body": "`~/.cloudflared/config.yml` 편집 — `*.<domain>` hostname 항목을 같은 로컬 Caddy 포트 (38080) 로 보내도록 추가. cloudflared 재시작.",
+  "env_settings.subdomain.step1.body":
+    "Cloudflare → DNS → Add record. 기존 GAPT 도메인과 동일한 target (cloudflared tunnel 의 CNAME 이거나 edge IP 의 A). orange-cloud proxy 켜기 — Cloudflare edge 가 받음.",
+  "env_settings.subdomain.step2.title":
+    "(Cloudflare Tunnel 사용 시) cloudflared ingress 에 와일드카드 추가",
+  "env_settings.subdomain.step2.body":
+    "`~/.cloudflared/config.yml` 편집 — `*.<domain>` hostname 항목을 같은 로컬 Caddy 포트 (38080) 로 보내도록 추가. cloudflared 재시작.",
   "env_settings.subdomain.step3.title": "GAPT 서버 환경변수 확인",
-  "env_settings.subdomain.step3.body": "서버는 `GAPT_CADDY_PREVIEW_DOMAIN` 으로 cert 발급 대상 suffix 를 알고, `GAPT_CADDY_ADMIN_URL` 로 Caddy 와 통신합니다. 서버 시작 시 둘 다 설정돼 있어야 합니다.",
+  "env_settings.subdomain.step3.body":
+    "서버는 `GAPT_CADDY_PREVIEW_DOMAIN` 으로 cert 발급 대상 suffix 를 알고, `GAPT_CADDY_ADMIN_URL` 로 Caddy 와 통신합니다. 서버 시작 시 둘 다 설정돼 있어야 합니다.",
   "env_settings.subdomain.diagnose.title": "현재 상태 진단",
   "env_settings.subdomain.diagnose.run": "진단 실행",
-  "env_settings.subdomain.diagnose.idle": "\"진단 실행\" 을 누르면 DNS + Caddy + 환경변수 상태를 점검해 어느 단계가 막혀있는지 알려줍니다.",
+  "env_settings.subdomain.diagnose.idle":
+    '"진단 실행" 을 누르면 DNS + Caddy + 환경변수 상태를 점검해 어느 단계가 막혀있는지 알려줍니다.',
   "env_settings.subdomain.check.env": "GAPT_CADDY_PREVIEW_DOMAIN",
   "env_settings.subdomain.check.dns": "DNS resolves {host}",
   "env_settings.subdomain.check.caddy_admin": "Caddy admin API 접근 가능",
@@ -810,39 +885,51 @@ export const ko: Record<keyof typeof en, string> = {
   "env_settings.subdomain.cta.configuring": "설정 중…",
   "env_settings.subdomain.cta.fix_cert": "Wildcard SSL 인증서 해결",
   "cert_guide.title": "Wildcard SSL 인증서 — HTTPS handshake 해결",
-  "cert_guide.intro": "Cloudflare Universal SSL 은 `*.<preview-domain>` 을 커버하지 않습니다. Wildcard 를 커버하는 인증서 없으면 요청이 Caddy 에 닿기도 전에 HTTPS handshake 실패.",
-  "cert_guide.intro_with_alt": "현재 preview 도메인 `{preview}` 는 2단계 wildcard 라서 Cloudflare 가 Advanced Certificate Manager (ACM, zone 당 월 $10) 를 요구합니다. 두 가지 경로 — 본인 상황에 맞는 거 선택:",
+  "cert_guide.intro":
+    "Cloudflare Universal SSL 은 `*.<preview-domain>` 을 커버하지 않습니다. Wildcard 를 커버하는 인증서 없으면 요청이 Caddy 에 닿기도 전에 HTTPS handshake 실패.",
+  "cert_guide.intro_with_alt":
+    "현재 preview 도메인 `{preview}` 는 2단계 wildcard 라서 Cloudflare 가 Advanced Certificate Manager (ACM, zone 당 월 $10) 를 요구합니다. 두 가지 경로 — 본인 상황에 맞는 거 선택:",
   "cert_guide.path_a.title": "A. `{preview}` 유지 + ACM 구독",
-  "cert_guide.path_a.body": "이 zone 에 Advanced Certificate Manager 구독. 활성화되면 Total TLS (서브도메인 자동 발급) 또는 직접 Advanced Certificate 발급으로 wildcard 커버. URL 은 지금과 완전히 동일하게 유지.",
+  "cert_guide.path_a.body":
+    "이 zone 에 Advanced Certificate Manager 구독. 활성화되면 Total TLS (서브도메인 자동 발급) 또는 직접 Advanced Certificate 발급으로 wildcard 커버. URL 은 지금과 완전히 동일하게 유지.",
   "cert_guide.path_a.cost": "비용: zone 당 월 $10",
   "cert_guide.path_a.button": "Cloudflare 대시보드에서 ACM 구독",
   "cert_guide.path_b.title": "B. preview 도메인을 `{alt}` 로 변경 — 무료",
-  "cert_guide.path_b.body": "`{preview}` 대신 `{alt}` (zone apex) 사용. preview 가 `<slug>.{alt}` 로 발급되어 기존 무료 `*.{alt}` Universal SSL 이 그대로 커버. 트레이드오프: 기존 preview URL 들이 다 바뀜, 서버 env var 변경 + 실행 중 env re-route 필요.",
+  "cert_guide.path_b.body":
+    "`{preview}` 대신 `{alt}` (zone apex) 사용. preview 가 `<slug>.{alt}` 로 발급되어 기존 무료 `*.{alt}` Universal SSL 이 그대로 커버. 트레이드오프: 기존 preview URL 들이 다 바뀜, 서버 env var 변경 + 실행 중 env re-route 필요.",
   "cert_guide.path_b.cost": "비용: 무료 (기존 인증서 재활용)",
   "cert_guide.path_b.button": "변경 절차 보기",
   "cert_guide.status.label": "현재 상태",
   "cert_guide.option0.title": "기존 wildcard 인증서 재사용 (권장 — 무료, ACM 불필요)",
-  "cert_guide.option0.body": "Zone 에 이미 활성 `{apex_wildcard}` 인증서가 있습니다 (무료 Universal SSL). preview 도메인을 `{alt}` 로 변경하면 각 preview 가 `<slug>.{alt}` 로 발급되어 기존 인증서가 그대로 커버. 메인 GAPT 앱은 현재 호스트 그대로 유지.",
+  "cert_guide.option0.body":
+    "Zone 에 이미 활성 `{apex_wildcard}` 인증서가 있습니다 (무료 Universal SSL). preview 도메인을 `{alt}` 로 변경하면 각 preview 가 `<slug>.{alt}` 로 발급되어 기존 인증서가 그대로 커버. 메인 GAPT 앱은 현재 호스트 그대로 유지.",
   "cert_guide.option0.before": "현재 (작동 안 함)",
   "cert_guide.option0.after": "변경 후 (작동)",
   "cert_guide.option0.step1": "서버 환경변수 설정 (docker-compose / systemd unit 에서)",
   "cert_guide.option0.step2": "GAPT 서버 재시작 (새 도메인 적용)",
   "cert_guide.option0.step3": "기존 subdomain 모드 env 들 re-route 해서 새 URL 반영",
-  "cert_guide.option0.cost_note": "✓ 무료 — 기존 Universal SSL 인증서 재활용. ACM 불필요, 월 사용료 없음. 현재 경로 (`*.gapt.hrletsgo.me`) 는 ACM ($10/mo) 필요한데, 이건 안 그래도 됨.",
+  "cert_guide.option0.cost_note":
+    "✓ 무료 — 기존 Universal SSL 인증서 재활용. ACM 불필요, 월 사용료 없음. 현재 경로 (`*.gapt.hrletsgo.me`) 는 ACM ($10/mo) 필요한데, 이건 안 그래도 됨.",
   "cert_guide.existing_certs": "이 zone 의 활성 인증서",
   "cert_guide.option1.title": "Total TLS (서브도메인별 자동 발급)",
-  "cert_guide.option1.body": "Cloudflare 관리형 — 활성화하면 zone 내 모든 서브도메인에 자동 발급. 몇 분 내 적용됨.",
-  "cert_guide.option1.body_needs_acm": "Cloudflare 관리형 — 모든 서브도메인에 자동 발급. Free 플랜에서는 Advanced Certificate Manager (zone 당 월 $10) 필요 — 현재 preview 도메인이 2단계 wildcard 라서. ACM 포함된 유료 플랜이면 그대로 동작.",
-  "cert_guide.option1.acm_blocked": "여기서 활성화 못 합니다 — 이 zone 의 Total TLS 가 깊은 wildcard 발급하려면 ACM 필요. 대시보드 링크로 ACM 구매 진행, 또는 위 Option 0 으로 비용 없이 해결.",
+  "cert_guide.option1.body":
+    "Cloudflare 관리형 — 활성화하면 zone 내 모든 서브도메인에 자동 발급. 몇 분 내 적용됨.",
+  "cert_guide.option1.body_needs_acm":
+    "Cloudflare 관리형 — 모든 서브도메인에 자동 발급. Free 플랜에서는 Advanced Certificate Manager (zone 당 월 $10) 필요 — 현재 preview 도메인이 2단계 wildcard 라서. ACM 포함된 유료 플랜이면 그대로 동작.",
+  "cert_guide.option1.acm_blocked":
+    "여기서 활성화 못 합니다 — 이 zone 의 Total TLS 가 깊은 wildcard 발급하려면 ACM 필요. 대시보드 링크로 ACM 구매 진행, 또는 위 Option 0 으로 비용 없이 해결.",
   "cert_guide.option1.enable_button": "지금 Total TLS 활성화",
   "cert_guide.option1.enabling": "활성화 중…",
   "cert_guide.option1.dashboard_link": "Cloudflare 대시보드 열기",
-  "cert_guide.option1.scope_missing": "토큰에 Zone:SSL and Certificates:Edit scope 가 없음 — 대시보드 링크 사용하거나, 해당 scope 추가해서 토큰 재발급.",
+  "cert_guide.option1.scope_missing":
+    "토큰에 Zone:SSL and Certificates:Edit scope 가 없음 — 대시보드 링크 사용하거나, 해당 scope 추가해서 토큰 재발급.",
   "cert_guide.option2.title": "Advanced Certificate (Zone 당 월 $10)",
-  "cert_guide.option2.body": "대시보드에서 일회성 수동 발급. 지정한 wildcard 패턴을 정확히 커버. CA + 유효기간 명시적 제어가 필요할 때 적합.",
+  "cert_guide.option2.body":
+    "대시보드에서 일회성 수동 발급. 지정한 wildcard 패턴을 정확히 커버. CA + 유효기간 명시적 제어가 필요할 때 적합.",
   "cert_guide.option2.dashboard_link": "SSL/TLS → Edge Certificates 열기",
   "cert_guide.option3.title": "Custom Hostnames (Enterprise)",
-  "cert_guide.option3.body": "SaaS 스타일 테넌트별 인증서. 일반 셋업에는 과함 — 완전성 차원에서 언급만.",
+  "cert_guide.option3.body":
+    "SaaS 스타일 테넌트별 인증서. 일반 셋업에는 과함 — 완전성 차원에서 언급만.",
   "cert_guide.no_zone": "Provider 설정에 zone 미선택 — zone 선택 후 deep-link 표시.",
   "cert_guide.verify.button": "인증서 상태 재확인",
   "cert_guide.verify.running": "재확인 중…",
@@ -850,54 +937,70 @@ export const ko: Record<keyof typeof en, string> = {
   "env_settings.button": "설정",
   "env_settings.button_title": "환경 설정 열기 — 라우팅 전략, upstream 설정, 빌드 옵션.",
   "env_settings.title": "환경 설정",
-  "env_settings.subtitle": "모든 deploy 옵션을 한 곳에서. \"저장\" 은 env config 에 영속, \"저장 + 즉시 라우트 갱신\" 은 추가로 Caddy 라우트를 새 값으로 재등록 — 현재 실행 중인 스택에 재배포 없이 적용.",
+  "env_settings.subtitle":
+    '모든 deploy 옵션을 한 곳에서. "저장" 은 env config 에 영속, "저장 + 즉시 라우트 갱신" 은 추가로 Caddy 라우트를 새 값으로 재등록 — 현재 실행 중인 스택에 재배포 없이 적용.',
   "env_settings.close": "닫기",
   "env_settings.save": "저장",
   "env_settings.save_and_reroute": "저장 + 즉시 라우트 갱신",
-  "env_settings.save_and_reroute_title": "영속 + 실행 중인 스택에 즉시 Caddy preview 라우트 재등록.",
+  "env_settings.save_and_reroute_title":
+    "영속 + 실행 중인 스택에 즉시 Caddy preview 라우트 재등록.",
   "env_settings.saved": "저장됨.",
   "env_settings.saved_and_rerouted": "저장 + 라우트 갱신 완료.",
   "env_settings.reroute_failed": "저장은 됐지만 reroute 실패:",
   "env_settings.inherit": "— inherit —",
   "env_settings.section.routing": "라우팅 전략",
-  "env_settings.section.routing_hint": "Preview URL 의 모양을 결정합니다. Path 모드는 apex 도메인을 공유 (DNS 변경 불필요, 앱 내 navigation 은 24h 쿠키 + 307 redirect 의존). Subdomain 모드는 각 preview 에 고유 host 부여 (production-grade 격리, 와일드카드 DNS + on-demand TLS 필요).",
-  "env_settings.mode.path.short": "apex/preview/<slug>/* — 추가 DNS 없이 동작, 쿠키 기반 navigation.",
-  "env_settings.mode.subdomain.short": "<slug>.<preview-domain>/* — 격리된 host, 쿠키 무관, 와일드카드 DNS 필요.",
-  "env_settings.mode.subdomain.dns_warning": "⚠ Subdomain 모드는 와일드카드 DNS (*.<preview-domain>) + Caddy on-demand TLS 가 필요합니다. DNS 가 없으면 URL 이 작동하지 않습니다. 쿠키/TTL/Sec-Fetch-Dest fallback 은 이 모드에서 사용되지 않습니다.",
+  "env_settings.section.routing_hint":
+    "Preview URL 의 모양을 결정합니다. Path 모드는 apex 도메인을 공유 (DNS 변경 불필요, 앱 내 navigation 은 24h 쿠키 + 307 redirect 의존). Subdomain 모드는 각 preview 에 고유 host 부여 (production-grade 격리, 와일드카드 DNS + on-demand TLS 필요).",
+  "env_settings.mode.path.short":
+    "apex/preview/<slug>/* — 추가 DNS 없이 동작, 쿠키 기반 navigation.",
+  "env_settings.mode.subdomain.short":
+    "<slug>.<preview-domain>/* — 격리된 host, 쿠키 무관, 와일드카드 DNS 필요.",
+  "env_settings.mode.subdomain.dns_warning":
+    "⚠ Subdomain 모드는 와일드카드 DNS (*.<preview-domain>) + Caddy on-demand TLS 가 필요합니다. DNS 가 없으면 URL 이 작동하지 않습니다. 쿠키/TTL/Sec-Fetch-Dest fallback 은 이 모드에서 사용되지 않습니다.",
   "env_settings.strip_prefix": "Forward 전에 /preview/<slug> 제거",
-  "env_settings.strip_prefix_hint": "ON: 앱이 / 위에서 동작 (basePath 미설정 빌드용). OFF: 앱이 prefix 포함 URL 인식 (basePath-aware 빌드용). Path 모드 한정.",
+  "env_settings.strip_prefix_hint":
+    "ON: 앱이 / 위에서 동작 (basePath 미설정 빌드용). OFF: 앱이 prefix 포함 URL 인식 (basePath-aware 빌드용). Path 모드 한정.",
   "env_settings.section.upstream": "Upstream 설정",
-  "env_settings.section.upstream_hint": "Caddy 가 어느 컨테이너로 forward 하는지 + 어떤 transport 로. 비우면 자동 감지 (reverse-proxy 서비스 우선 → frontend → 첫 published port).",
+  "env_settings.section.upstream_hint":
+    "Caddy 가 어느 컨테이너로 forward 하는지 + 어떤 transport 로. 비우면 자동 감지 (reverse-proxy 서비스 우선 → frontend → 첫 published port).",
   "env_settings.primary_service": "주 서비스",
   "env_settings.primary_service_hint": "compose service 이름. 비우면 자동.",
   "env_settings.primary_port": "주 포트",
   "env_settings.primary_port_hint": "컨테이너 내부 포트 (host port 아님).",
   "env_settings.upstream_scheme": "Upstream scheme",
-  "env_settings.upstream_scheme_hint": "Upstream 이 TLS terminator 이면 https (자체 nginx + Cloudflare origin cert 같은 경우).",
+  "env_settings.upstream_scheme_hint":
+    "Upstream 이 TLS terminator 이면 https (자체 nginx + Cloudflare origin cert 같은 경우).",
   "env_settings.upstream_tls_insecure": "TLS 검증 건너뛰기",
-  "env_settings.upstream_tls_insecure_hint": "Self-signed / 도메인 불일치 cert 면 ON (GAPT 가 docker DNS 이름으로 dial 하는데 cert 는 공개 도메인용일 때).",
+  "env_settings.upstream_tls_insecure_hint":
+    "Self-signed / 도메인 불일치 cert 면 ON (GAPT 가 docker DNS 이름으로 dial 하는데 cert 는 공개 도메인용일 때).",
   "env_settings.upstream_host_header": "Host 헤더 재작성",
-  "env_settings.upstream_host_header_hint": "Upstream nginx 가 server_name 매칭으로 라우팅하면 — 그 공개 도메인을 입력. 비우면 passthrough.",
+  "env_settings.upstream_host_header_hint":
+    "Upstream nginx 가 server_name 매칭으로 라우팅하면 — 그 공개 도메인을 입력. 비우면 passthrough.",
   "env_settings.section.deploy": "배포 동작",
   "env_settings.section.deploy_hint": "`compose up` 실행 방식을 바꾸는 옵션.",
   "env_settings.build": "배포 시 빌드",
-  "env_settings.build_hint": "docker compose up 에 --build 전달. `build: .` 서비스를 매 배포마다 다시 빌드하고 싶을 때.",
+  "env_settings.build_hint":
+    "docker compose up 에 --build 전달. `build: .` 서비스를 매 배포마다 다시 빌드하고 싶을 때.",
   "env_settings.require_2fa": "2FA 필수",
   "env_settings.require_2fa_hint": "Deploy 가 유효한 2FA 코드 없이는 거부됩니다.",
   "env_settings.cost_multiplier": "비용 배수",
   "env_settings.cost_multiplier_hint": "이 env 의 비용 리포트에 곱하기. 보통 1.",
   "env_settings.preview_slug": "Preview slug",
-  "env_settings.preview_slug_hint": "두 모드 모두에서 URL slug — path 모드 `/preview/<slug>/*`, subdomain 모드 `<slug>.<preview-domain>`. 영문 소문자 a-z, 0-9, 하이픈만; 1-63자; 양끝 하이픈 불가. 비우면 자동 생성 (`{default}`).",
+  "env_settings.preview_slug_hint":
+    "두 모드 모두에서 URL slug — path 모드 `/preview/<slug>/*`, subdomain 모드 `<slug>.<preview-domain>`. 영문 소문자 a-z, 0-9, 하이픈만; 1-63자; 양끝 하이픈 불가. 비우면 자동 생성 (`{default}`).",
   "settings.providers.heading": "인프라 Providers",
   "settings.gpu.heading": "워크스페이스 GPU",
   "settings.gpu.title": "GPU 정책",
-  "settings.gpu.description": "새 워크스페이스 컨테이너 (`gapt-ws-<wid>`) 에 GPU 를 매핑할지 결정. 다음 워크스페이스 부팅부터 적용. 기존 컨테이너는 재시작 전까지 기존 매핑 유지.",
+  "settings.gpu.description":
+    "새 워크스페이스 컨테이너 (`gapt-ws-<wid>`) 에 GPU 를 매핑할지 결정. 다음 워크스페이스 부팅부터 적용. 기존 컨테이너는 재시작 전까지 기존 매핑 유지.",
   "settings.gpu.refresh": "GPU 재탐지",
   "settings.gpu.loading": "호스트 GPU 탐색 중…",
   "settings.gpu.policy.cpu_only": "CPU 전용",
   "settings.gpu.applied.label": "적용된 정책",
-  "settings.gpu.applied.hint_on": "다음 워크스페이스 부팅 시 `docker run --gpus <value>` 옵션이 추가됩니다.",
-  "settings.gpu.applied.hint_off": "`--gpus` 옵션이 추가되지 않습니다. 워크스페이스는 CPU 전용으로 부팅됩니다.",
+  "settings.gpu.applied.hint_on":
+    "다음 워크스페이스 부팅 시 `docker run --gpus <value>` 옵션이 추가됩니다.",
+  "settings.gpu.applied.hint_off":
+    "`--gpus` 옵션이 추가되지 않습니다. 워크스페이스는 CPU 전용으로 부팅됩니다.",
   "settings.gpu.host.label": "호스트 GPU",
   "settings.gpu.host.count": "nvidia-smi 로 {n}개 디바이스 감지.",
   "settings.gpu.host.absent": "NVIDIA GPU 없음 (또는 `nvidia-smi` 미설치).",
@@ -905,20 +1008,24 @@ export const ko: Record<keyof typeof en, string> = {
   "settings.gpu.change.label": "변경 방법",
   "settings.gpu.change.body": "아래 env var 를 설정하고 서버 재시작. 인식되는 형식:",
   "settings.gpu.change.unset": "(미설정 = CPU 전용)",
-  "settings.gpu.change.restart_hint": "호스트에 NVIDIA Container Toolkit 필요. 신규 값 적용은 서버 재시작 후.",
+  "settings.gpu.change.restart_hint":
+    "호스트에 NVIDIA Container Toolkit 필요. 신규 값 적용은 서버 재시작 후.",
   "settings.llm_backends.heading": "LLM 백엔드",
   "settings.llm_backends.title": "프로바이더 상태",
-  "settings.llm_backends.description": "프로바이더별 인증 + 가용성. 행 클릭으로 자격증명 설정/교체. Claude Code CLI는 4가지 인증 방식이 있는 전용 모달.",
+  "settings.llm_backends.description":
+    "프로바이더별 인증 + 가용성. 행 클릭으로 자격증명 설정/교체. Claude Code CLI는 4가지 인증 방식이 있는 전용 모달.",
   "settings.llm_backends.refresh": "전체 프로바이더 재확인",
   "settings.llm_backends.loading": "프로바이더 상태 확인 중…",
   "settings.llm_backends.row.configure": "설정",
   "settings.llm_backends.row.set_key": "API 키 설정",
   "settings.llm_backends.row.update": "교체",
   "settings.llm_backends.editor.label": "API 키",
-  "settings.llm_backends.editor.hint": "vault에 암호화 저장. 워크스페이스 부팅 시 executor가 `{env}` 환경변수로 주입.",
+  "settings.llm_backends.editor.hint":
+    "vault에 암호화 저장. 워크스페이스 부팅 시 executor가 `{env}` 환경변수로 주입.",
   "settings.llm_backends.editor.hint_no_env": "vault에 암호화 저장.",
   "settings.llm_backends.editor.save": "저장",
-  "settings.llm_backends.editor.delete_confirm": "저장된 API 키를 삭제할까요? 이후 부팅되는 워크스페이스는 새 키를 입력하기 전까지 이 프로바이더를 사용할 수 없습니다.",
+  "settings.llm_backends.editor.delete_confirm":
+    "저장된 API 키를 삭제할까요? 이후 부팅되는 워크스페이스는 새 키를 입력하기 전까지 이 프로바이더를 사용할 수 없습니다.",
   "claude_auth.modal.title": "Claude Code (CLI) — 인증",
   "claude_auth.modal.close": "닫기",
   "claude_auth.modal.refresh": "`claude auth status` 재확인",
@@ -930,103 +1037,146 @@ export const ko: Record<keyof typeof en, string> = {
   "claude_auth.modal.test_hint": "`claude --print ping` 으로 인증 검증.",
   "claude_auth.modal.test_ok": "응답 수신.",
   "claude_auth.modal.logout": "로그아웃",
-  "claude_auth.modal.logout_confirm": "호스트의 Claude 인증을 해제할까요? CLI 사용하려면 다시 인증해야 합니다.",
-  "claude_auth.modal.sse_lost": "실시간 스트림이 끊겼습니다. 새로고침하거나 로그인을 다시 시작하세요.",
+  "claude_auth.modal.logout_confirm":
+    "호스트의 Claude 인증을 해제할까요? CLI 사용하려면 다시 인증해야 합니다.",
+  "claude_auth.modal.sse_lost":
+    "실시간 스트림이 끊겼습니다. 새로고침하거나 로그인을 다시 시작하세요.",
   "claude_auth.modal.mode.heading": "인증 방식",
   "claude_auth.modal.mode.host_mount.label": "호스트 마운트 (기본)",
-  "claude_auth.modal.mode.host_mount.blurb": "호스트의 `~/.claude` 를 그대로 사용. GAPT 가 워크스페이스 컨테이너에 bind-mount 합니다. 호스트에 구독이 살아있으면 추가 작업 불필요.",
+  "claude_auth.modal.mode.host_mount.blurb":
+    "호스트의 `~/.claude` 를 그대로 사용. GAPT 가 워크스페이스 컨테이너에 bind-mount 합니다. 호스트에 구독이 살아있으면 추가 작업 불필요.",
   "claude_auth.modal.mode.device_login.label": "모달에서 로그인",
-  "claude_auth.modal.mode.device_login.blurb": "백엔드 컨테이너에서 `claude auth login` 실행. 디바이스 코드 URL 표시 후, 받은 auth code 를 여기에 붙여넣기.",
+  "claude_auth.modal.mode.device_login.blurb":
+    "백엔드 컨테이너에서 `claude auth login` 실행. 디바이스 코드 URL 표시 후, 받은 auth code 를 여기에 붙여넣기.",
   "claude_auth.modal.mode.setup_token.label": "Setup 토큰 붙여넣기",
-  "claude_auth.modal.mode.setup_token.blurb": "`claude setup-token` 으로 발급한 장기 토큰. 암호화 저장되며 executor 가 `ANTHROPIC_API_KEY` 로 export.",
+  "claude_auth.modal.mode.setup_token.blurb":
+    "`claude setup-token` 으로 발급한 장기 토큰. 암호화 저장되며 executor 가 `ANTHROPIC_API_KEY` 로 export.",
   "claude_auth.modal.mode.api_key.label": "API 키 (Console)",
-  "claude_auth.modal.mode.api_key.blurb": "Anthropic Console API 키 — 토큰 단위 과금. setup-token 과 동일 슬롯에 저장됨 (CLI 가 읽는 env var 가 같음).",
-  "claude_auth.modal.host_mount.body": "GAPT 가 호스트의 `~/.claude` 디렉토리 + `~/.claude.json` 설정 파일을 워크스페이스 컨테이너에 bind-mount 합니다. 위 배지에 \"로그인됨\" 이 보이면 추가 작업 불필요.",
-  "claude_auth.modal.device_login.preamble": "계정 종류에 맞는 경로를 선택하세요: Claude.ai 구독 (권장) 또는 Anthropic Console (API 과금).",
+  "claude_auth.modal.mode.api_key.blurb":
+    "Anthropic Console API 키 — 토큰 단위 과금. setup-token 과 동일 슬롯에 저장됨 (CLI 가 읽는 env var 가 같음).",
+  "claude_auth.modal.host_mount.body":
+    'GAPT 가 호스트의 `~/.claude` 디렉토리 + `~/.claude.json` 설정 파일을 워크스페이스 컨테이너에 bind-mount 합니다. 위 배지에 "로그인됨" 이 보이면 추가 작업 불필요.',
+  "claude_auth.modal.device_login.preamble":
+    "계정 종류에 맞는 경로를 선택하세요: Claude.ai 구독 (권장) 또는 Anthropic Console (API 과금).",
   "claude_auth.modal.device_login.start_subscription": "구독 로그인 시작",
   "claude_auth.modal.device_login.start_console": "Console 로그인",
   "claude_auth.modal.device_login.visit_url": "이 URL 에서 인증을 완료하세요",
   "claude_auth.modal.device_login.open": "열기",
   "claude_auth.modal.device_login.auth_code_label": "Auth code",
-  "claude_auth.modal.device_login.auth_code_hint": "URL 에서 받은 code 를 붙여넣기. 제출하면 CLI 가 로그인을 완료합니다.",
+  "claude_auth.modal.device_login.auth_code_hint":
+    "URL 에서 받은 code 를 붙여넣기. 제출하면 CLI 가 로그인을 완료합니다.",
   "claude_auth.modal.device_login.submit_code": "제출",
   "claude_auth.modal.device_login.console": "CLI 실시간 출력",
   "claude_auth.modal.device_login.cancel": "로그인 취소",
   "claude_auth.modal.device_login.finished": "로그인 서브프로세스 종료.",
   "claude_auth.modal.setup_token.label": "Setup 토큰",
-  "claude_auth.modal.setup_token.hint": "신뢰하는 머신에서 `claude setup-token` 실행 후 출력값을 여기에 붙여넣기. GAPT vault 에 암호화 저장.",
+  "claude_auth.modal.setup_token.hint":
+    "신뢰하는 머신에서 `claude setup-token` 실행 후 출력값을 여기에 붙여넣기. GAPT vault 에 암호화 저장.",
   "claude_auth.modal.setup_token.save": "토큰 저장",
   "claude_auth.modal.api_key.label": "API 키",
   "claude_auth.modal.api_key.hint": "console.anthropic.com → API Keys 에서 생성. 암호화 저장.",
   "claude_auth.modal.api_key.save": "키 저장",
   "settings.providers.cloudflare.title": "Cloudflare",
-  "settings.providers.cloudflare.description": "Cloudflare API 토큰을 등록하면 GAPT 가 subdomain 모드용 wildcard *.<preview-domain> ingress 를 자동 관리합니다. 토큰은 vault 에 암호화 저장.",
+  "settings.providers.cloudflare.description":
+    "Cloudflare API 토큰을 등록하면 GAPT 가 subdomain 모드용 wildcard *.<preview-domain> ingress 를 자동 관리합니다. 토큰은 vault 에 암호화 저장.",
   "settings.providers.cloudflare.badge.configured": "설정됨",
   "settings.providers.cloudflare.badge.not_set": "미설정",
   "settings.providers.cloudflare.token.label": "API 토큰",
-  "settings.providers.cloudflare.token.hint_new": "Cloudflare → My Profile → API Tokens 에서 생성. 최소 권한: Account:Cloudflare Tunnel:Edit. 붙여넣기 — 값은 암호화 저장되며 다시는 표시되지 않습니다.",
-  "settings.providers.cloudflare.token.hint_rotate": "저장된 토큰은 암호화. 새 값을 붙여넣으면 rotate, 비워두면 기존 값 유지 + 아래 선택만 갱신.",
+  "settings.providers.cloudflare.token.hint_new":
+    "Cloudflare → My Profile → API Tokens 에서 생성. 최소 권한: Account:Cloudflare Tunnel:Edit. 붙여넣기 — 값은 암호화 저장되며 다시는 표시되지 않습니다.",
+  "settings.providers.cloudflare.token.hint_rotate":
+    "저장된 토큰은 암호화. 새 값을 붙여넣으면 rotate, 비워두면 기존 값 유지 + 아래 선택만 갱신.",
   "settings.providers.cloudflare.account.label": "Account",
-  "settings.providers.cloudflare.account.hint": "터널을 소유한 Cloudflare 계정. Verify 누르면 자동 채움.",
+  "settings.providers.cloudflare.account.hint":
+    "터널을 소유한 Cloudflare 계정. Verify 누르면 자동 채움.",
   "settings.providers.cloudflare.tunnel.label": "Tunnel",
-  "settings.providers.cloudflare.tunnel.hint": "GAPT 가 수정할 cloudflared 터널. Account 선택 + Verify 후 자동 채움.",
+  "settings.providers.cloudflare.tunnel.hint":
+    "GAPT 가 수정할 cloudflared 터널. Account 선택 + Verify 후 자동 채움.",
   "settings.providers.cloudflare.zone.label": "Zone (선택)",
-  "settings.providers.cloudflare.zone.hint": "추후 DNS 레코드 자동화에 사용. 선택사항 — wildcard ingress 만으론 불필요.",
+  "settings.providers.cloudflare.zone.hint":
+    "추후 DNS 레코드 자동화에 사용. 선택사항 — wildcard ingress 만으론 불필요.",
   "settings.providers.cloudflare.preview_domain.label": "Preview 도메인",
-  "settings.providers.cloudflare.preview_domain.hint": "GAPT 가 preview 를 발급할 hostname suffix. 서버의 `GAPT_CADDY_PREVIEW_DOMAIN` 과 일치해야 함.",
+  "settings.providers.cloudflare.preview_domain.hint":
+    "GAPT 가 preview 를 발급할 hostname suffix. 서버의 `GAPT_CADDY_PREVIEW_DOMAIN` 과 일치해야 함.",
   "settings.providers.cloudflare.upstream.label": "Upstream URL",
-  "settings.providers.cloudflare.upstream.hint": "Wildcard ingress 가 forward 할 대상. 기본 `http://localhost:38080` (GAPT Caddy 포트).",
+  "settings.providers.cloudflare.upstream.hint":
+    "Wildcard ingress 가 forward 할 대상. 기본 `http://localhost:38080` (GAPT Caddy 포트).",
   "settings.providers.cloudflare.save": "저장",
   "settings.providers.cloudflare.verify": "토큰 검증",
   "settings.providers.cloudflare.snapshot": "터널 상태 조회",
   "settings.providers.cloudflare.ensure_wildcard": "Wildcard ingress 자동 설정",
-  "settings.providers.cloudflare.verified": "토큰 검증 완료 — 아래 선택지가 실제 데이터로 채워졌습니다.",
+  "settings.providers.cloudflare.verified":
+    "토큰 검증 완료 — 아래 선택지가 실제 데이터로 채워졌습니다.",
   "settings.providers.cloudflare.tunnel_mode": "터널 모드",
-  "settings.providers.cloudflare.local_config_warning": "터널이 로컬 config.yml 모드 — Cloudflare API 쓰기가 무시됩니다. 원격 관리 모드로 마이그레이션 후 사용 가능 (Phase 2).",
+  "settings.providers.cloudflare.local_config_warning":
+    "터널이 로컬 config.yml 모드 — Cloudflare API 쓰기가 무시됩니다. 원격 관리 모드로 마이그레이션 후 사용 가능 (Phase 2).",
   "settings.providers.cloudflare.ingress": "현재 ingress",
   "settings.providers.cloudflare.last_verified": "마지막 검증",
   "settings.providers.cloudflare.delete_title": "Cloudflare provider 제거",
-  "settings.providers.cloudflare.delete_description": "저장된 API 토큰 + 선택 정보를 삭제합니다. GAPT 는 수동 스니펫 가이드로 폴백. 터널 자체는 건드리지 않음.",
+  "settings.providers.cloudflare.delete_description":
+    "저장된 API 토큰 + 선택 정보를 삭제합니다. GAPT 는 수동 스니펫 가이드로 폴백. 터널 자체는 건드리지 않음.",
   "settings.providers.cloudflare.guide.title": "Cloudflare API 토큰 발급 방법",
   "settings.providers.cloudflare.guide.step1.intro": "Cloudflare API 토큰 페이지 열기:",
-  "settings.providers.cloudflare.guide.step1.link_label": "dash.cloudflare.com → My Profile → API Tokens",
-  "settings.providers.cloudflare.guide.step1.detail": "\"Create Token\" 클릭 → \"Get started\" (Custom token — 템플릿은 Cloudflare Tunnel scope 미포함이므로 사용 안 함).",
-  "settings.providers.cloudflare.guide.step2.intro": "권한을 정확히 다음과 같이 설정 (Edit 권한이 있어야 ingress 쓰기 가능):",
-  "settings.providers.cloudflare.guide.step2.detail": "Account Settings:Read 는 선택사항 — 없어도 GAPT 가 Zone:Zone:Read 응답에 들어있는 account.id 로 account 를 자동 derive 합니다. \"Account Resources\" 는 단일 account 로 제한 가능. \"Zone Resources\" 는 ingress 만 변경할 거면 \"All zones\" 로.",
-  "settings.providers.cloudflare.guide.step3.intro": "\"Account Resources\" 에서 터널이 속한 account 선택. TTL 과 IP 제한은 선택사항 — 정책 없으면 비워둠.",
-  "settings.providers.cloudflare.guide.step3.detail": "\"Continue to summary\" 클릭 → scope 확인 → \"Create Token\".",
-  "settings.providers.cloudflare.guide.step4.intro": "Cloudflare 가 한 번만 보여주는 토큰 값을 복사.",
-  "settings.providers.cloudflare.guide.step4.detail": "아래 입력란에 붙여넣고 Save → \"Verify token\" 으로 GAPT 가 API 에 접근 + 터널 발견 가능한지 확인.",
-  "settings.providers.cloudflare.guide.security_note": "토큰은 GAPT vault 에 암호화 저장됩니다. 비밀번호처럼 취급 — 노출 시 같은 페이지의 … 메뉴에서 Roll/Delete.",
+  "settings.providers.cloudflare.guide.step1.link_label":
+    "dash.cloudflare.com → My Profile → API Tokens",
+  "settings.providers.cloudflare.guide.step1.detail":
+    '"Create Token" 클릭 → "Get started" (Custom token — 템플릿은 Cloudflare Tunnel scope 미포함이므로 사용 안 함).',
+  "settings.providers.cloudflare.guide.step2.intro":
+    "권한을 정확히 다음과 같이 설정 (Edit 권한이 있어야 ingress 쓰기 가능):",
+  "settings.providers.cloudflare.guide.step2.detail":
+    'Account Settings:Read 는 선택사항 — 없어도 GAPT 가 Zone:Zone:Read 응답에 들어있는 account.id 로 account 를 자동 derive 합니다. "Account Resources" 는 단일 account 로 제한 가능. "Zone Resources" 는 ingress 만 변경할 거면 "All zones" 로.',
+  "settings.providers.cloudflare.guide.step3.intro":
+    '"Account Resources" 에서 터널이 속한 account 선택. TTL 과 IP 제한은 선택사항 — 정책 없으면 비워둠.',
+  "settings.providers.cloudflare.guide.step3.detail":
+    '"Continue to summary" 클릭 → scope 확인 → "Create Token".',
+  "settings.providers.cloudflare.guide.step4.intro":
+    "Cloudflare 가 한 번만 보여주는 토큰 값을 복사.",
+  "settings.providers.cloudflare.guide.step4.detail":
+    '아래 입력란에 붙여넣고 Save → "Verify token" 으로 GAPT 가 API 에 접근 + 터널 발견 가능한지 확인.',
+  "settings.providers.cloudflare.guide.security_note":
+    "토큰은 GAPT vault 에 암호화 저장됩니다. 비밀번호처럼 취급 — 노출 시 같은 페이지의 … 메뉴에서 Roll/Delete.",
   "settings.providers.cloudflare.migration.title": "Remote-managed 모드로 마이그레이션",
-  "settings.providers.cloudflare.migration.intro": "터널이 --config /etc/cloudflared/config.yml 로 실행 중이면 Cloudflare API ingress 쓰기가 런타임에 무시됩니다. 이 위저드가 로컬 config 를 읽고, Cloudflare 원격 저장소로 ingress 를 push 한 후, systemd 를 remote-managed 모드로 전환하는 sudo 스크립트를 한 번에 생성합니다.",
+  "settings.providers.cloudflare.migration.intro":
+    "터널이 --config /etc/cloudflared/config.yml 로 실행 중이면 Cloudflare API ingress 쓰기가 런타임에 무시됩니다. 이 위저드가 로컬 config 를 읽고, Cloudflare 원격 저장소로 ingress 를 push 한 후, systemd 를 remote-managed 모드로 전환하는 sudo 스크립트를 한 번에 생성합니다.",
   "settings.providers.cloudflare.migration.step.inspect": "조사",
   "settings.providers.cloudflare.migration.step.push": "Push",
   "settings.providers.cloudflare.migration.step.cutover": "전환",
   "settings.providers.cloudflare.migration.step.verify": "검증",
   "settings.providers.cloudflare.migration.back": "이전",
-  "settings.providers.cloudflare.migration.inspect.detail": "GAPT 가 /etc/cloudflared/config.yml (GAPT_CLOUDFLARED_CONFIG_PATH 로 override 가능) 을 읽고 tunnel id + ingress 배열을 파싱합니다. 변경 없음.",
+  "settings.providers.cloudflare.migration.inspect.detail":
+    "GAPT 가 /etc/cloudflared/config.yml (GAPT_CLOUDFLARED_CONFIG_PATH 로 override 가능) 을 읽고 tunnel id + ingress 배열을 파싱합니다. 변경 없음.",
   "settings.providers.cloudflare.migration.inspect.button": "로컬 config 읽기",
   "settings.providers.cloudflare.migration.push.read_from": "출처:",
-  "settings.providers.cloudflare.migration.push.need_verify": "Account 를 먼저 선택해야 합니다 (위 Verify token 실행) — Cloudflare API 가 터널을 찾으려면 account id 가 필요합니다.",
+  "settings.providers.cloudflare.migration.push.need_verify":
+    "Account 를 먼저 선택해야 합니다 (위 Verify token 실행) — Cloudflare API 가 터널을 찾으려면 account id 가 필요합니다.",
   "settings.providers.cloudflare.migration.push.button": "Cloudflare 로 ingress push",
-  "settings.providers.cloudflare.migration.cutover.pushed_ok": "Cloudflare 원격 config 에 ingress 반영 완료",
-  "settings.providers.cloudflare.migration.cutover.detail": "GAPT 가 systemd drop-in 스크립트를 생성. drop-in 이 ExecStart 에서 --config 를 제거해서 cloudflared 가 재시작 후 원격 config 를 fetch 하도록 합니다. 원본 unit 파일은 건드리지 않음 (drop-in 이 런타임에 우선).",
+  "settings.providers.cloudflare.migration.cutover.pushed_ok":
+    "Cloudflare 원격 config 에 ingress 반영 완료",
+  "settings.providers.cloudflare.migration.cutover.detail":
+    "GAPT 가 systemd drop-in 스크립트를 생성. drop-in 이 ExecStart 에서 --config 를 제거해서 cloudflared 가 재시작 후 원격 config 를 fetch 하도록 합니다. 원본 unit 파일은 건드리지 않음 (drop-in 이 런타임에 우선).",
   "settings.providers.cloudflare.migration.cutover.autorun_label": "옵션 1 — GAPT 가 자동 실행",
-  "settings.providers.cloudflare.migration.cutover.autorun_hint": "GAPT 가 호스트에서 `sudo -S` 로 스크립트 실행. sudo 비밀번호 입력 — 이 명령에만 사용, 저장 안 됨. GAPT 가 호스트에 직접 설치된 경우만 동작 (컨테이너 환경 X).",
+  "settings.providers.cloudflare.migration.cutover.autorun_hint":
+    "GAPT 가 호스트에서 `sudo -S` 로 스크립트 실행. sudo 비밀번호 입력 — 이 명령에만 사용, 저장 안 됨. GAPT 가 호스트에 직접 설치된 경우만 동작 (컨테이너 환경 X).",
   "settings.providers.cloudflare.migration.cutover.autorun_button": "sudo 로 실행",
-  "settings.providers.cloudflare.migration.cutover.password_disclosure": "비밀번호는 HTTPS 로 전송되어 sudo 의 stdin 으로 한 번만 전달되고, 명령 종료 후 메모리에서 즉시 폐기. 로그/저장소 어디에도 남기지 않음.",
+  "settings.providers.cloudflare.migration.cutover.password_disclosure":
+    "비밀번호는 HTTPS 로 전송되어 sudo 의 stdin 으로 한 번만 전달되고, 명령 종료 후 메모리에서 즉시 폐기. 로그/저장소 어디에도 남기지 않음.",
   "settings.providers.cloudflare.migration.cutover.run_label": "옵션 2 — 호스트에서 수동 실행",
-  "settings.providers.cloudflare.migration.cutover.write_hint": "먼저 호스트의 /tmp/gapt-cloudflared-migrate.sh 로 스크립트 내용을 저장한 후, 위 sudo 명령 실행.",
-  "settings.providers.cloudflare.migration.cutover.run_hint": "GAPT 호스트에서 터미널 열고 아래 명령 실행. 스크립트가 /etc/systemd/system 편집 + cloudflared 재시작을 위해 sudo 필요.",
+  "settings.providers.cloudflare.migration.cutover.write_hint":
+    "먼저 호스트의 /tmp/gapt-cloudflared-migrate.sh 로 스크립트 내용을 저장한 후, 위 sudo 명령 실행.",
+  "settings.providers.cloudflare.migration.cutover.run_hint":
+    "GAPT 호스트에서 터미널 열고 아래 명령 실행. 스크립트가 /etc/systemd/system 편집 + cloudflared 재시작을 위해 sudo 필요.",
   "settings.providers.cloudflare.migration.cutover.continue": "스크립트 실행 완료 — 계속",
-  "settings.providers.cloudflare.migration.verify.detail": "Cloudflare 에서 터널을 재조회하고 remote-managed 모드 전환 여부 + connector 수를 보고합니다.",
+  "settings.providers.cloudflare.migration.verify.detail":
+    "Cloudflare 에서 터널을 재조회하고 remote-managed 모드 전환 여부 + connector 수를 보고합니다.",
   "settings.providers.cloudflare.migration.verify.button": "마이그레이션 검증",
   "settings.providers.cloudflare.migration.dryrun.button": "스크립트 미리보기 (dry-run)",
-  "settings.providers.cloudflare.migration.dryrun.hint": "예정된 cutover 를 실행 없이 history 에 기록. before-snapshot 과 실제 실행될 스크립트를 사전 검토용으로 사용.",
-  "settings.providers.cloudflare.migration.dryrun.banner": "Dry-run 전용 — 호스트에서 아무것도 실행되지 않았습니다. Audit row 만 기록됨.",
+  "settings.providers.cloudflare.migration.dryrun.hint":
+    "예정된 cutover 를 실행 없이 history 에 기록. before-snapshot 과 실제 실행될 스크립트를 사전 검토용으로 사용.",
+  "settings.providers.cloudflare.migration.dryrun.banner":
+    "Dry-run 전용 — 호스트에서 아무것도 실행되지 않았습니다. Audit row 만 기록됨.",
   "settings.providers.cloudflare.migration.history.title": "마이그레이션 이력",
-  "settings.providers.cloudflare.migration.history.hint": "이 GAPT 설치에서 시도된 과거 cutover. Revert 로 저장된 ingress 복원 + systemd drop-in 제거.",
+  "settings.providers.cloudflare.migration.history.hint":
+    "이 GAPT 설치에서 시도된 과거 cutover. Revert 로 저장된 ingress 복원 + systemd drop-in 제거.",
   "settings.providers.cloudflare.migration.history.empty": "기록된 마이그레이션 없음.",
   "settings.providers.cloudflare.migration.history.refresh": "새로고침",
   "settings.providers.cloudflare.migration.history.status.ok": "ok",
@@ -1046,9 +1196,12 @@ export const ko: Record<keyof typeof en, string> = {
   "settings.providers.cloudflare.migration.history.detail.before": "이전 스냅샷",
   "settings.providers.cloudflare.migration.history.detail.after": "이후 스냅샷",
   "settings.providers.cloudflare.migration.history.detail.close": "닫기",
-  "settings.providers.cloudflare.migration.history.revert.confirm_title": "이 마이그레이션을 되돌릴까요?",
-  "settings.providers.cloudflare.migration.history.revert.confirm_body": "GAPT 가 systemd drop-in 을 제거하고 원본 ingress 를 Cloudflare 로 PUT 합니다. cloudflared 가 local-config 모드로 돌아갑니다. 되돌리기 가능 — 추후 cutover 위저드 재실행 가능.",
-  "settings.providers.cloudflare.migration.history.revert.password_label": "sudo 비밀번호 (NOPASSWD 면 비워둠)",
+  "settings.providers.cloudflare.migration.history.revert.confirm_title":
+    "이 마이그레이션을 되돌릴까요?",
+  "settings.providers.cloudflare.migration.history.revert.confirm_body":
+    "GAPT 가 systemd drop-in 을 제거하고 원본 ingress 를 Cloudflare 로 PUT 합니다. cloudflared 가 local-config 모드로 돌아갑니다. 되돌리기 가능 — 추후 cutover 위저드 재실행 가능.",
+  "settings.providers.cloudflare.migration.history.revert.password_label":
+    "sudo 비밀번호 (NOPASSWD 면 비워둠)",
   "settings.providers.cloudflare.migration.history.revert.run": "되돌리기",
 
   // ── Phase M.5 — sessions history + detail i18n (was hardcoded ko) ─

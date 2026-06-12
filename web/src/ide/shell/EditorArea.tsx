@@ -52,9 +52,7 @@ export function EditorArea({
     return (
       <section className="flex h-full min-h-0 flex-col bg-bg">
         <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-2 text-[12px]">
-          <span className="flex-1 text-fg-subtle">
-            {t("ide.editor.area.no_selection")}
-          </span>
+          <span className="flex-1 text-fg-subtle">{t("ide.editor.area.no_selection")}</span>
           <button
             type="button"
             onClick={onCloseColumn}
@@ -116,13 +114,7 @@ export function EditorArea({
   );
 }
 
-function TabBody({
-  workspaceId,
-  tab,
-}: {
-  workspaceId: string;
-  tab: EditorTab;
-}) {
+function TabBody({ workspaceId, tab }: { workspaceId: string; tab: EditorTab }) {
   if (tab.kind === "preview") {
     return <PreviewTabContent initialUrl={tab.url} />;
   }

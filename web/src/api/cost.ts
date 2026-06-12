@@ -46,5 +46,7 @@ export function getProjectCostDaily(
   projectId: string,
   window: CostWindow = {},
 ): Promise<DailyCostRow[]> {
-  return apiGet<DailyCostRow[]>(`/_gapt/api/projects/${projectId}/cost/daily${buildWindow(window)}`);
+  return apiGet<DailyCostRow[]>(
+    `/_gapt/api/projects/${projectId}/cost/daily${buildWindow(window)}`,
+  );
 }

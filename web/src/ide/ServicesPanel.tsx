@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
+import { parseJsonObject } from "@/lib/json";
 import {
   deleteService,
   exposeService,
@@ -170,20 +171,22 @@ function NewServiceForm({
 
   return (
     <form
-      onSubmit={async (e) => {
+      onSubmit={(e) => {
         e.preventDefault();
         if (!label.trim() || !cmd.trim()) return;
-        setBusy(true);
-        try {
-          const p = port.trim() === "" ? null : Number(port);
-          await onSubmit({
-            label: label.trim(),
-            cmd: cmd.trim(),
-            port: Number.isFinite(p) && p !== null ? (p as number) : null,
-          });
-        } finally {
-          setBusy(false);
-        }
+        void (async () => {
+          setBusy(true);
+          try {
+            const p = port.trim() === "" ? null : Number(port);
+            await onSubmit({
+              label: label.trim(),
+              cmd: cmd.trim(),
+              port: Number.isFinite(p) && p !== null ? p : null,
+            });
+          } finally {
+            setBusy(false);
+          }
+        })();
       }}
       className="mb-2 rounded-md border border-border bg-bg-elevated p-2.5"
     >
@@ -246,22 +249,24 @@ function ServiceRow({
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
-  const run = (fn: () => Promise<unknown>) => async () => {
-    setBusy(true);
-    setActionErr(null);
-    try {
-      await fn();
-      await onChanged();
-    } catch (e) {
-      // Without this, a failed expose (e.g. Caddy admin down, or the
-      // service bound localhost-only) was an unhandled rejection with
-      // ZERO feedback — the button just un-spun.
-      setActionErr(
-        e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e),
-      );
-    } finally {
-      setBusy(false);
-    }
+  // Returns a SYNC (void) handler so it sits on onClick directly;
+  // the async work runs in a self-owned IIFE with full error capture
+  // — a failed expose (e.g. Caddy admin down, or the service bound
+  // localhost-only) surfaces as a per-row message instead of an
+  // unhandled rejection with zero feedback.
+  const run = (fn: () => Promise<unknown>) => () => {
+    void (async () => {
+      setBusy(true);
+      setActionErr(null);
+      try {
+        await fn();
+        await onChanged();
+      } catch (e) {
+        setActionErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    })();
   };
 
   const isAlive = service.state === "running" || service.state === "starting";
@@ -270,9 +275,7 @@ function ServiceRow({
   // detected one is real.
   const effectivePort = service.auto_port ?? service.port;
   const portDrift =
-    service.port !== null &&
-    service.auto_port !== null &&
-    service.port !== service.auto_port;
+    service.port !== null && service.auto_port !== null && service.port !== service.auto_port;
 
   return (
     <div className="mb-1.5 rounded-md border border-border bg-bg-elevated">
@@ -443,9 +446,7 @@ function ServiceRow({
         </p>
       ) : null}
 
-      {tailing ? (
-        <ServiceLogTail workspaceId={workspaceId} logPath={service.log_path} />
-      ) : null}
+      {tailing ? <ServiceLogTail workspaceId={workspaceId} logPath={service.log_path} /> : null}
     </div>
   );
 }
@@ -472,13 +473,7 @@ function stateTone(state: ServiceState): "neutral" | "success" | "warn" | "dange
 
 /** Tiny SSE log tail inline in the panel. Reconnects with the last
  * byte offset so a brief drop doesn't replay the entire history. */
-function ServiceLogTail({
-  workspaceId,
-  logPath,
-}: {
-  workspaceId: string;
-  logPath: string;
-}) {
+function ServiceLogTail({ workspaceId, logPath }: { workspaceId: string; logPath: string }) {
   const [lines, setLines] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const scrollRef = useRef<HTMLPreElement | null>(null);
@@ -490,7 +485,8 @@ function ServiceLogTail({
     const src = new EventSource(url, { withCredentials: true });
     src.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data) as Record<string, unknown>;
+        const data = parseJsonObject(ev.data);
+        if (!data) return;
         const text = typeof data["text"] === "string" ? data["text"] : "";
         if (text) {
           setLines((prev) => prev.concat(text).slice(-1000));

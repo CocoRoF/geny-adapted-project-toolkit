@@ -21,11 +21,7 @@ import { Link, useParams } from "react-router-dom";
 import { Archive, ChevronLeft, History, Loader2 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
-import {
-  type AgentSessionStatus,
-  type SessionResponse,
-  listSessions,
-} from "@/api/sessions";
+import { type AgentSessionStatus, type SessionResponse, listSessions } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Card, CardContent } from "@/ui/Card";
@@ -52,21 +48,14 @@ export function SessionsHistory() {
     listSessions(projectId, { includeArchived: filter !== "active" })
       .then(setRows)
       .catch((e: unknown) => {
-        setErr(
-          e instanceof ApiError
-            ? e.reason
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        );
+        setErr(e instanceof ApiError ? e.reason : e instanceof Error ? e.message : String(e));
       })
       .finally(() => setLoading(false));
   }, [projectId, filter]);
 
   const filtered = useMemo(() => {
     if (filter === "active") return rows.filter((r) => r.status === "active");
-    if (filter === "archived")
-      return rows.filter((r) => r.status === "archived");
+    if (filter === "archived") return rows.filter((r) => r.status === "archived");
     return rows;
   }, [rows, filter]);
 
@@ -88,9 +77,7 @@ export function SessionsHistory() {
           <h1 className="text-[20px] font-semibold tracking-tight text-fg">
             {t("sessions_history.title")}
           </h1>
-          <p className="text-[12px] text-fg-muted">
-            {t("sessions_history.subtitle")}
-          </p>
+          <p className="text-[12px] text-fg-muted">{t("sessions_history.subtitle")}</p>
         </div>
       </header>
 
@@ -127,13 +114,7 @@ export function SessionsHistory() {
   );
 }
 
-function FilterChips({
-  filter,
-  onChange,
-}: {
-  filter: Filter;
-  onChange: (next: Filter) => void;
-}) {
+function FilterChips({ filter, onChange }: { filter: Filter; onChange: (next: Filter) => void }) {
   const { t } = useI18n();
   const opts: { value: Filter; label: string }[] = [
     { value: "all", label: t("sessions_history.filter.all") },
@@ -150,9 +131,7 @@ function FilterChips({
           onClick={() => onChange(o.value)}
           className={cn(
             "rounded px-3 py-1 text-[12px] font-medium transition-colors",
-            filter === o.value
-              ? "bg-bg text-fg shadow-sm"
-              : "text-fg-muted hover:text-fg",
+            filter === o.value ? "bg-bg text-fg shadow-sm" : "text-fg-muted hover:text-fg",
           )}
         >
           {o.label}
@@ -162,19 +141,12 @@ function FilterChips({
   );
 }
 
-function SessionCard({
-  projectId,
-  session,
-}: {
-  projectId: string;
-  session: SessionResponse;
-}) {
+function SessionCard({ projectId, session }: { projectId: string; session: SessionResponse }) {
   const { t } = useI18n();
   const snippet = session.first_user_message ?? null;
   const turns = session.turn_count ?? 0;
-  const turnLabel = (turns === 1
-    ? t("sessions_history.card.turns_one")
-    : t("sessions_history.card.turns_other")
+  const turnLabel = (
+    turns === 1 ? t("sessions_history.card.turns_one") : t("sessions_history.card.turns_other")
   ).replace("{count}", String(turns));
   return (
     <Link
@@ -213,17 +185,13 @@ function SessionCard({
           <p className="font-mono text-[11px] text-accent tabular-nums">
             ${session.cost_usd.toFixed(4)}
           </p>
-          <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">
-            {turnLabel}
-          </p>
+          <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">{turnLabel}</p>
           <p className="mt-0.5 text-[10.5px] text-fg-subtle tabular-nums">
             ↑{session.input_tokens} ↓{session.output_tokens}
             {/* Phase K.2 — only show cache when non-zero to keep the
                 card from getting noisy for tool-heavy turns. */}
             {(session.cache_write_tokens ?? 0) > 0 ? (
-              <span title="cache_write tokens">
-                {" "}⊕{session.cache_write_tokens}
-              </span>
+              <span title="cache_write tokens"> ⊕{session.cache_write_tokens}</span>
             ) : null}
           </p>
         </div>
@@ -257,7 +225,7 @@ function StatusBadge({ status }: { status: AgentSessionStatus }) {
 /** Tiny relative timestamp without pulling in dayjs/luxon. Takes `t`
  *  as a parameter (not a hook call) so it can be invoked from inside
  *  render flows without a wrapper component. */
-function formatRelative(iso: string, t: (key: string) => string): string {
+function formatRelative(iso: string, t: ReturnType<typeof useI18n>["t"]): string {
   const ts = new Date(iso).getTime();
   if (Number.isNaN(ts)) return iso;
   const delta = Date.now() - ts;
