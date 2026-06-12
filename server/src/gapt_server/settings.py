@@ -188,6 +188,13 @@ class Settings(BaseSettings):
     # preview-subdomain endpoints return 412 `preview.disabled` so the
     # UI can render a "configure Caddy" hint.
     caddy_admin_url: str | None = None
+    # Base URL at which WORKSPACE CONTAINERS can reach the GAPT API —
+    # used to point the in-sandbox agent's MCP client at the
+    # self-introspection endpoint (`<base>/_gapt/api/mcp/mcp`). The
+    # containers share gapt-net with Caddy, so the Caddy container
+    # address is the natural value (e.g. `http://gapt-dev-caddy-1:8080`).
+    # None disables agent self-introspection entirely.
+    agent_self_mcp_base_url: str | None = None
     # Wildcard domain — workspaces resolve to
     # `{workspace_slug}.{caddy_preview_domain}/`. Required when
     # `caddy_admin_url` is set.

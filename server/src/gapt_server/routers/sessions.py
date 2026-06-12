@@ -381,14 +381,25 @@ def _build_runtime_from_handle(  # noqa: PLR0915 — inline closure builders (co
         d_in = acc.input_tokens - _last["input"]
         d_out = acc.output_tokens - _last["output"]
         d_cost = acc.cost_usd - _last["cost"]
-        if d_in:
+        # Counters are monotonic (Prometheus semantics). A NEGATIVE
+        # delta is legal at the accumulator level — e.g. a rehydrated
+        # runtime starts from 0 while `_last` was seeded with the DB
+        # cumulative, or a provider reports per-turn totals that reset
+        # — so resync the watermark WITHOUT inc'ing. Pre-fix the
+        # negative inc raised ValueError inside the cost callback and
+        # took the whole turn down as `exec.session.crashed` (after
+        # the answer had already streamed).
+        if d_in > 0:
             input_tokens_counter(_reg).inc(d_in, _project_label)
+        if d_in:
             _last["input"] = acc.input_tokens
-        if d_out:
+        if d_out > 0:
             output_tokens_counter(_reg).inc(d_out, _project_label)
+        if d_out:
             _last["output"] = acc.output_tokens
-        if d_cost:
+        if d_cost > 0:
             cost_counter(_reg).inc(d_cost, _project_label)
+        if d_cost:
             _last["cost"] = acc.cost_usd
         if container.session_factory is not None and (d_in or d_out or d_cost):
             async with container.session_factory() as bg_db:
@@ -521,8 +532,26 @@ async def _runtime_or_rehydrate(
         pass
 
     try:
+        session_row = (
+            await db.execute(
+                select(models.AgentSession).where(models.AgentSession.id == session_id)
+            )
+        ).scalar_one_or_none()
+        rehydrate_mcp = (
+            _self_mcp_config(
+                container.settings,
+                workspace_id=session_row.workspace_id,
+                project_id=session_row.project_id,
+            )
+            if session_row is not None and session_row.workspace_id
+            else None
+        )
         handle = await manager.rehydrate_session(
-            db, user=user, session_id=session_id, vault=vault
+            db,
+            user=user,
+            session_id=session_id,
+            vault=vault,
+            mcp_config=rehydrate_mcp,
         )
     except ProjectError as exc:
         raise http_from_project_error(exc) from exc
@@ -638,6 +667,44 @@ async def _runtime_or_404(registry: SessionRegistry, session_id: str) -> Session
         ) from exc
 
 
+
+
+def _self_mcp_config(
+    settings: Settings, *, workspace_id: str, project_id: str
+) -> dict[str, Any] | None:
+    """Per-session `--mcp-config` pointing the in-sandbox Claude Code
+    CLI at GAPT's self-introspection MCP (`/_gapt/api/mcp/mcp`).
+
+    The base URL must be reachable FROM the workspace container —
+    workspace containers share gapt-net with Caddy, so the Caddy
+    container address is the natural value. None (default) disables
+    the whole feature. The bearer token scopes the tools to exactly
+    this workspace+project and is HMAC-signed, so a curious process
+    inside the sandbox can read state about ITS OWN workspace and
+    nothing else."""
+    base = settings.agent_self_mcp_base_url
+    if not base:
+        return None
+    from gapt_server.agent.introspect_mcp import (  # noqa: PLC0415
+        mint_introspect_token,
+    )
+
+    token = mint_introspect_token(
+        workspace_id=workspace_id,
+        project_id=project_id,
+        secret=settings.session_secret,
+    )
+    return {
+        "mcpServers": {
+            "gapt": {
+                "type": "http",
+                "url": f"{base.rstrip('/')}/_gapt/api/mcp/mcp",
+                "headers": {"Authorization": f"Bearer {token}"},
+            }
+        }
+    }
+
+
 # ─────────────────────────────────────────────────── endpoints ──
 
 
@@ -686,6 +753,23 @@ async def create_session(
             thinking_budget_tokens=payload.thinking_budget_tokens,
         )
 
+    # Self-introspection MCP — wired before create so the CLI client
+    # is constructed with the --mcp-config baked in.
+    ws_row = (
+        await db.execute(
+            select(models.Workspace).where(models.Workspace.id == payload.workspace_id)
+        )
+    ).scalar_one_or_none()
+    mcp_config = (
+        _self_mcp_config(
+            container.settings,
+            workspace_id=payload.workspace_id,
+            project_id=ws_row.project_id,
+        )
+        if ws_row is not None
+        else None
+    )
+
     try:
         handle = await manager.create_session(
             db,
@@ -694,6 +778,7 @@ async def create_session(
             env_id=payload.env_id,
             vault=vault,
             session_overrides=session_overrides,
+            mcp_config=mcp_config,
         )
         await db.commit()
     except ProjectError as exc:

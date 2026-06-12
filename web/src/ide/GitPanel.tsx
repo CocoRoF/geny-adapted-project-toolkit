@@ -971,7 +971,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                   </span>
                 ) : null}
               </Button>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-1">
                 {/* Push button enable logic:
                   * no branch    → disable (detached HEAD or empty repo)
                   * no upstream  → ENABLE (first push will -u set upstream)
@@ -1314,7 +1314,7 @@ function BranchMenu({
   const remotes = branches.filter((b) => b.kind === "remote");
   return (
     <div className="absolute left-3 right-3 top-[calc(100%-2px)] z-10 max-h-[70vh] overflow-y-auto rounded-md border border-border bg-bg-elevated shadow-xl">
-      <div className="flex items-center gap-1 border-b border-border bg-bg-subtle/40 px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border bg-bg-subtle/40 px-2 py-1.5">
         <input
           autoFocus
           value={newBranchInput}

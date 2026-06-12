@@ -278,13 +278,17 @@ function ServiceRow({
     service.port !== null && service.auto_port !== null && service.port !== service.auto_port;
 
   return (
-    <div className="mb-1.5 rounded-md border border-border bg-bg-elevated">
+    <div className="@container mb-1.5 rounded-md border border-border bg-bg-elevated">
       <div className="flex items-center gap-2 px-2.5 py-1.5">
         <StateDot state={service.state} />
         <strong className="font-mono text-[12px] text-fg">{service.label}</strong>
-        <span className="truncate font-mono text-[11px] text-fg-subtle" title={service.cmd}>
+        <span
+          className="hidden min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle @[280px]:inline"
+          title={service.cmd}
+        >
           {service.cmd}
         </span>
+        <span className="min-w-0 flex-1 @[280px]:hidden" aria-hidden />
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {portDrift ? (
             <Badge
@@ -299,14 +303,18 @@ function ServiceRow({
               :{effectivePort}
             </Badge>
           ) : null}
-          <Badge tone={stateTone(service.state)} className="text-[10px]">
+          <Badge
+            tone={stateTone(service.state)}
+            className="hidden text-[10px] @[220px]:inline-flex"
+            title={service.state}
+          >
             {service.state}
           </Badge>
         </span>
       </div>
 
       {service.bound_url ? (
-        <div className="flex items-center gap-2 border-t border-border bg-bg-subtle px-2.5 py-1">
+        <div className="flex items-center gap-1.5 border-t border-border bg-bg-subtle px-2.5 py-1">
           <Globe className="h-3 w-3 shrink-0 text-accent" />
           {onOpenPreview ? (
             // Phase N.3 — the URL text itself is the primary "open
@@ -323,7 +331,7 @@ function ServiceRow({
                 }
               }}
               title="Open in IDE preview tab"
-              className="truncate text-left text-[11px] text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-accent"
+              className="min-w-0 flex-1 truncate text-left text-[11px] text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-accent"
             >
               {service.bound_url}
             </button>
@@ -334,7 +342,7 @@ function ServiceRow({
               href={service.bound_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="truncate text-[11px] text-accent hover:underline"
+              className="min-w-0 flex-1 truncate text-[11px] text-accent hover:underline"
             >
               {service.bound_url}
             </a>
@@ -372,7 +380,7 @@ function ServiceRow({
         </div>
       ) : null}
 
-      <div className="flex items-center gap-1.5 border-t border-border px-2 py-1">
+      <div className="flex items-center gap-1 border-t border-border px-2 py-1">
         <Button
           variant="ghost"
           size="sm"
@@ -380,8 +388,8 @@ function ServiceRow({
           className="h-7 px-2 text-[11px]"
           title="Show / hide live log"
         >
-          <Eye className={cn("mr-1 h-3 w-3", tailing && "text-accent")} />
-          Logs
+          <Eye className={cn("h-3 w-3 @[260px]:mr-1", tailing && "text-accent")} />
+          <span className="hidden @[260px]:inline">Logs</span>
         </Button>
         {isAlive ? (
           <>
@@ -403,7 +411,8 @@ function ServiceRow({
                   : "Waiting for the service to print its port"
               }
             >
-              <Pencil className="mr-1 h-3 w-3" /> Expose
+              <Pencil className="h-3 w-3 @[260px]:mr-1" />
+              <span className="hidden @[260px]:inline">Expose</span>
             </Button>
             <Button
               variant="ghost"
@@ -413,7 +422,8 @@ function ServiceRow({
               className="h-7 px-2 text-[11px]"
               title="Stop"
             >
-              <Square className="mr-1 h-3 w-3" /> Stop
+              <Square className="h-3 w-3 @[260px]:mr-1" />
+              <span className="hidden @[260px]:inline">Stop</span>
             </Button>
           </>
         ) : (
@@ -425,7 +435,8 @@ function ServiceRow({
             className="h-7 px-2 text-[11px]"
             title="Restart"
           >
-            <RotateCcw className="mr-1 h-3 w-3" /> Restart
+            <RotateCcw className="h-3 w-3 @[260px]:mr-1" />
+            <span className="hidden @[260px]:inline">Restart</span>
           </Button>
         )}
         <Button
@@ -436,7 +447,7 @@ function ServiceRow({
           className="ml-auto h-7 px-2 text-[11px] text-danger hover:text-danger"
           title="Stop + remove"
         >
-          <Trash2 className="mr-1 h-3 w-3" />
+          <Trash2 className="h-3 w-3" />
         </Button>
       </div>
 

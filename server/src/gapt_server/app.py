@@ -270,6 +270,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.info("services.recovered", count=restored)
         except Exception:
             logger.exception("services.recover_failed")
+    # GAPT self-introspection MCP (agent debugging window). The
+    # FastMCP streamable-HTTP transport needs its session manager
+    # running; mounted Starlette sub-apps don't get their lifespan
+    # invoked by FastAPI, so we drive it here.
+    mcp_app = getattr(app.state, "introspect_mcp", None)
+    if mcp_app is not None:
+        from contextlib import AsyncExitStack  # noqa: PLC0415
+
+        async with AsyncExitStack() as mcp_stack:
+            await mcp_stack.enter_async_context(mcp_app.session_manager.run())
+            try:
+                yield
+            finally:
+                reconciler_task.cancel()
+                try:
+                    await reconciler_task
+                except BaseException:
+                    pass
+                if caddy_reconciler_task is not None:
+                    caddy_reconciler_task.cancel()
+                    try:
+                        await caddy_reconciler_task
+                    except BaseException:
+                        pass
+                await container.aclose()
+                logger.info("gapt.server.shutdown")
+        return
     try:
         yield
     finally:
@@ -350,6 +377,22 @@ def create_app(
     app.include_router(tests.router)
     app.include_router(providers.router)
     app.include_router(git.router)
+
+    # Agent self-introspection MCP — mounted under the /_gapt/api/*
+    # namespace so it rides the existing Caddy route and is reachable
+    # from workspace containers over gapt-net. Bearer-token gated;
+    # tokens are minted per session (see routers/sessions).
+    try:
+        from gapt_server.agent.introspect_mcp import build_introspect_app  # noqa: PLC0415
+
+        mcp_app = build_introspect_app(container)
+        app.state.introspect_mcp = mcp_app
+        app.mount("/_gapt/api/mcp", mcp_app)
+    except Exception:
+        # MCP SDK missing / transport init failure must never block
+        # the control plane itself.
+        logger.exception("introspect_mcp.mount_failed")
+        app.state.introspect_mcp = None
     return app
 
 
