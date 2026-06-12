@@ -57,6 +57,7 @@ import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { cn } from "@/ui/cn";
+import { confirmToast, toast } from "@/ui/toast";
 
 interface Props {
   workspaceId: string;
@@ -336,34 +337,72 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   );
 
   // ── discard ────────────────────────────────────────
-  const onDiscard = useCallback(
-    async (path: string) => {
-      if (!window.confirm(t("git.discard.confirm").replace("{path}", path))) return;
+  // Shared core for the per-file button and "discard all". The
+  // confirmation lives in a sonner action-toast (non-blocking, themed)
+  // instead of window.confirm.
+  const runDiscard = useCallback(
+    async (paths: string[], opts: { includeStaged: boolean; doneText: string }) => {
       setBusy("discard");
       try {
-        const r = await gitDiscard(workspaceId, [path], selectedRepoId);
-        setFlash(
-          r.ok
-            ? { kind: "info", text: t("git.discard.done") }
-            : {
-                kind: "warn",
-                text: `${t("git.discard.partial")} ${r.discarded.length}/${
-                  r.discarded.length + r.skipped.length
-                }`,
-              },
-        );
-        if (activePath === path) {
+        const r = await gitDiscard(workspaceId, paths, selectedRepoId, {
+          includeStaged: opts.includeStaged,
+        });
+        if (r.ok) {
+          toast.success(opts.doneText);
+        } else {
+          toast.warning(
+            `${t("git.discard.partial")} ${r.discarded.length}/${
+              r.discarded.length + r.skipped.length
+            }`,
+          );
+        }
+        if (activePath && paths.includes(activePath)) {
           setActivePath(null);
         }
         await refresh();
       } catch (e) {
-        setFlash({ kind: "error", text: errText(e) });
+        toast.error(errText(e));
       } finally {
         setBusy(null);
       }
     },
     [workspaceId, activePath, refresh, selectedRepoId, t],
   );
+
+  const onDiscard = useCallback(
+    (path: string) => {
+      confirmToast({
+        title: t("git.discard.confirm").replace("{path}", path),
+        confirmLabel: t("git.confirm.discard"),
+        cancelLabel: t("common.cancel"),
+        tone: "danger",
+        onConfirm: () => {
+          void runDiscard([path], { includeStaged: false, doneText: t("git.discard.done") });
+        },
+      });
+    },
+    [runDiscard, t],
+  );
+
+  // "Discard all" — every changed path in the current repo, staged
+  // copies included, so the tree genuinely returns to HEAD.
+  const onDiscardAll = useCallback(() => {
+    const paths = status?.entries.map((e) => e.path) ?? [];
+    if (paths.length === 0) return;
+    confirmToast({
+      title: t("git.discard_all.confirm").replace("{count}", String(paths.length)),
+      description: t("git.discard_all.description"),
+      confirmLabel: t("git.confirm.discard"),
+      cancelLabel: t("common.cancel"),
+      tone: "danger",
+      onConfirm: () => {
+        void runDiscard(paths, {
+          includeStaged: true,
+          doneText: t("git.discard_all.done"),
+        });
+      },
+    });
+  }, [runDiscard, status, t]);
 
   // ── sync trio (fetch / pull / sync) ────────────────
   const runSync = useCallback(
@@ -498,37 +537,29 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     [workspaceId, refresh, selectedRepoId, t],
   );
 
-  const onBranchDelete = useCallback(
-    async (branchName: string) => {
-      if (!window.confirm(t("git.branch.delete_confirm").replace("{name}", branchName))) return;
+  const runBranchDelete = useCallback(
+    async (branchName: string, force: boolean) => {
       setBusy("branch-delete");
       try {
-        const r = await gitBranchDelete(workspaceId, { branch: branchName }, selectedRepoId);
+        const r = await gitBranchDelete(
+          workspaceId,
+          { branch: branchName, ...(force ? { force: true } : {}) },
+          selectedRepoId,
+        );
         if (r.ok) {
-          setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
-        } else {
+          toast.success(`${t("git.branch.deleted")} ${branchName}`);
+        } else if (!force) {
           // Most failures are "not fully merged" — offer force.
-          if (
-            window.confirm(
-              t("git.branch.force_confirm").replace("{name}", branchName) +
-                "\n\n" +
-                (r.error || "").slice(0, 200),
-            )
-          ) {
-            const r2 = await gitBranchDelete(
-              workspaceId,
-              { branch: branchName, force: true },
-              selectedRepoId,
-            );
-            if (r2.ok) {
-              setFlash({ kind: "info", text: `${t("git.branch.deleted")} ${branchName}` });
-            } else {
-              setFlash({
-                kind: "error",
-                text: `${t("git.branch.delete_failed")}: ${(r2.error || "").slice(0, 200)}`,
-              });
-            }
-          }
+          confirmToast({
+            title: t("git.branch.force_confirm").replace("{name}", branchName),
+            description: (r.error || "").slice(0, 200),
+            confirmLabel: t("git.confirm.delete"),
+            cancelLabel: t("common.cancel"),
+            tone: "danger",
+            onConfirm: () => void runBranchDelete(branchName, true),
+          });
+        } else {
+          toast.error(`${t("git.branch.delete_failed")}: ${(r.error || "").slice(0, 200)}`);
         }
         await refresh();
       } catch (e) {
@@ -538,6 +569,19 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       }
     },
     [workspaceId, refresh, selectedRepoId, t],
+  );
+
+  const onBranchDelete = useCallback(
+    (branchName: string) => {
+      confirmToast({
+        title: t("git.branch.delete_confirm").replace("{name}", branchName),
+        confirmLabel: t("git.confirm.delete"),
+        cancelLabel: t("common.cancel"),
+        tone: "danger",
+        onConfirm: () => void runBranchDelete(branchName, false),
+      });
+    },
+    [runBranchDelete, t],
   );
 
   // ── stash ──────────────────────────────────────────
@@ -593,25 +637,28 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
   );
 
   const onStashDrop = useCallback(
-    async (ref: string) => {
-      if (!window.confirm(t("git.stash.drop_confirm").replace("{ref}", ref))) return;
-      setBusy("stash");
-      try {
-        const r = await gitStashDrop(workspaceId, { ref }, selectedRepoId);
-        setFlash(
-          r.ok
-            ? { kind: "info", text: `${t("git.stash.dropped")} ${ref}` }
-            : {
-                kind: "error",
-                text: `${t("git.stash.drop_failed")}: ${(r.error || "").slice(0, 200)}`,
-              },
-        );
-        await refresh();
-      } catch (e) {
-        setFlash({ kind: "error", text: errText(e) });
-      } finally {
-        setBusy(null);
-      }
+    (ref: string) => {
+      confirmToast({
+        title: t("git.stash.drop_confirm").replace("{ref}", ref),
+        confirmLabel: t("git.confirm.drop"),
+        cancelLabel: t("common.cancel"),
+        tone: "danger",
+        onConfirm: () => {
+          void (async () => {
+            setBusy("stash");
+            try {
+              const r = await gitStashDrop(workspaceId, { ref }, selectedRepoId);
+              if (r.ok) toast.success(`${t("git.stash.dropped")} ${ref}`);
+              else toast.error(`${t("git.stash.drop_failed")}: ${(r.error || "").slice(0, 200)}`);
+              await refresh();
+            } catch (e) {
+              setFlash({ kind: "error", text: errText(e) });
+            } finally {
+              setBusy(null);
+            }
+          })();
+        },
+      });
     },
     [workspaceId, refresh, selectedRepoId, t],
   );
@@ -1020,6 +1067,20 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 <span className="ml-auto inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent">
                   {status?.entries.length ?? 0}
                 </span>
+                {dirty ? (
+                  <button
+                    type="button"
+                    data-testid="git-discard-all"
+                    onClick={onDiscardAll}
+                    disabled={busy !== null}
+                    title={t("git.discard_all.button")}
+                    aria-label={t("git.discard_all.button")}
+                    className="grid h-4.5 w-4.5 place-items-center rounded text-fg-subtle hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                    style={{ height: 18, width: 18 }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                ) : null}
                 {dirty ? (
                   <button
                     type="button"

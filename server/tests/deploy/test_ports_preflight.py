@@ -3,6 +3,7 @@ integration through the stub runner (no real docker)."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -179,7 +180,15 @@ async def test_deploy_auto_remaps_conflicting_host_port(tmp_path: Path) -> None:
     assert result.status is DeployStatusKind.SUCCESS
     override = tmp_path / ".gapt" / "ports.override.yml"
     assert override.exists()
-    assert '"published": "3001"' in override.read_text()
+    # The preflight also consults the REAL host's /proc/net listeners,
+    # so the exact replacement port depends on what the test machine
+    # has bound — assert "remapped off 3000, nearby" instead of a
+    # hard-coded 3001.
+    match = re.search(r'"published": "(\d+)"', override.read_text())
+    assert match is not None
+    replacement = int(match.group(1))
+    assert replacement != 3000
+    assert 3000 < replacement <= 3200
     up_argv = next(argv for argv in calls if "up" in argv)
     assert str(override) in up_argv
     assert "host port 3000 is already in use" in result.log

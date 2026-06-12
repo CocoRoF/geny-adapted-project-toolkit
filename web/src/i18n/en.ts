@@ -430,6 +430,9 @@ export const en = {
   "deploy.stack.title": "Stack containers",
   "deploy.stack.restart": "Restart stack",
   "deploy.stack.down": "Stop stack",
+  "deploy.stack.actions.down": "Stop stack",
+  "deploy.stack.actions.restart": "Restart",
+  "deploy.stack.actions.reroute": "Re-route",
   "deploy.stack.confirm.down":
     "Stop and remove every container in {name}? Containers + the implicit compose network go away; named volumes survive.",
   "deploy.stack.confirm.restart":
@@ -572,6 +575,8 @@ export const en = {
   "chat.shortcut.esc": "Press Esc to interrupt.",
   "chat.transcript.download": "Download transcript (.md)",
   "chat.popup.open": "Open chat in a popup window",
+  "chat.attach.add": "Attach images (paste or drag also works)",
+  "chat.attach.drop_hint": "Drop images here to attach",
   "toolbar.more": "Show hidden controls",
   "ide.tabs.list": "List all open tabs",
 
@@ -763,6 +768,15 @@ export const en = {
   "git.diff.placeholder": "Click a file to see its diff.",
   "git.diff.close": "Close diff",
   "git.discard.title": "Discard worktree changes for this file",
+  "git.discard_all.button": "Discard all",
+  "git.discard_all.confirm": "Discard all {count} changed files?",
+  "git.discard_all.description":
+    "Every working-tree and staged change will be lost. This cannot be undone.",
+  "git.discard_all.done": "All changes discarded",
+  "git.confirm.discard": "Discard",
+  "git.confirm.delete": "Delete",
+  "git.confirm.drop": "Drop",
+  "common.cancel": "Cancel",
   "git.discard.confirm":
     "Discard local changes to {path}? This cannot be undone — uncommitted edits will be lost.",
   "git.discard.done": "Discarded.",

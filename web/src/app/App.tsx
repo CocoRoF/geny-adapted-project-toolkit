@@ -8,6 +8,7 @@ import { AuthProvider } from "@/app/providers/AuthProvider";
 import { I18nProvider } from "@/app/providers/I18nProvider";
 import { PaletteProvider } from "@/app/providers/PaletteProvider";
 import { ThemeProvider } from "@/app/providers/ThemeProvider";
+import { AppToaster } from "@/ui/AppToaster";
 
 import { ROUTER_BASENAME } from "@/app/basename";
 
@@ -22,6 +23,7 @@ export default function App() {
               <ProjectsPaletteActions />
               <CommandPalette />
               <AppRouter />
+              <AppToaster />
             </PaletteProvider>
           </AuthProvider>
         </I18nProvider>

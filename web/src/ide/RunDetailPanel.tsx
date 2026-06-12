@@ -33,6 +33,7 @@ import { StackRerouteHelpModal } from "@/ide/StackRerouteHelpModal";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 import { cn } from "@/ui/cn";
+import { confirmToast } from "@/ui/toast";
 
 interface Props {
   runId: string;
@@ -361,8 +362,17 @@ function StackSection({
     return () => window.clearInterval(id);
   }, [refresh]);
 
-  const onDown = async () => {
-    if (!window.confirm(t("deploy.stack.confirm.down").replace("{name}", envName))) return;
+  const onDown = () => {
+    confirmToast({
+      title: t("deploy.stack.confirm.down").replace("{name}", envName),
+      confirmLabel: t("deploy.stack.actions.down"),
+      cancelLabel: t("common.cancel"),
+      tone: "danger",
+      onConfirm: () => void runDown(),
+    });
+  };
+
+  const runDown = async () => {
     setBusy("down");
     setActionOutput(null);
     try {
@@ -406,18 +416,22 @@ function StackSection({
     return body;
   };
 
-  const onReroute = async () => {
+  const onReroute = () => {
     const body = buildRerouteBody();
     const hasOverrides = Object.keys(body).length > 0;
-    if (
-      !window.confirm(
-        (hasOverrides
-          ? t("deploy.stack.confirm.reroute_overrides")
-          : t("deploy.stack.confirm.reroute")
-        ).replace("{name}", envName),
-      )
-    )
-      return;
+    confirmToast({
+      title: (hasOverrides
+        ? t("deploy.stack.confirm.reroute_overrides")
+        : t("deploy.stack.confirm.reroute")
+      ).replace("{name}", envName),
+      confirmLabel: t("deploy.stack.actions.reroute"),
+      cancelLabel: t("common.cancel"),
+      onConfirm: () => void runReroute(body),
+    });
+  };
+
+  const runReroute = async (body: ReturnType<typeof buildRerouteBody>) => {
+    const hasOverrides = Object.keys(body).length > 0;
     setBusy("reroute");
     setActionOutput(null);
     try {
@@ -457,14 +471,26 @@ function StackSection({
    * Overrides drawer is open) so production routing strategy is
    * always one click away. */
   const onModeFlip = useCallback(
-    async (target: "path" | "subdomain") => {
+    (target: "path" | "subdomain") => {
       const current = targetConfig.preview_mode === "subdomain" ? "subdomain" : "path";
       if (target === current) return;
       const confirmKey =
         target === "subdomain"
           ? "deploy.stack.mode.confirm_to_subdomain"
           : "deploy.stack.mode.confirm_to_path";
-      if (!window.confirm(t(confirmKey).replace("{name}", envName))) return;
+      confirmToast({
+        title: t(confirmKey).replace("{name}", envName),
+        confirmLabel: t("deploy.stack.actions.reroute"),
+        cancelLabel: t("common.cancel"),
+        onConfirm: () => void runModeFlip(target),
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- delegates to runModeFlip
+    [envName, targetConfig, t],
+  );
+
+  const runModeFlip = useCallback(
+    async (target: "path" | "subdomain") => {
       setBusy("reroute");
       setActionOutput(null);
       try {
@@ -487,11 +513,19 @@ function StackSection({
         setBusy(null);
       }
     },
-    [environmentId, envName, targetConfig, onConfigChange, refresh, t],
+    [environmentId, targetConfig, onConfigChange, refresh, t],
   );
 
-  const onRestart = async () => {
-    if (!window.confirm(t("deploy.stack.confirm.restart").replace("{name}", envName))) return;
+  const onRestart = () => {
+    confirmToast({
+      title: t("deploy.stack.confirm.restart").replace("{name}", envName),
+      confirmLabel: t("deploy.stack.actions.restart"),
+      cancelLabel: t("common.cancel"),
+      onConfirm: () => void runRestart(),
+    });
+  };
+
+  const runRestart = async () => {
     setBusy("restart");
     setActionOutput(null);
     try {

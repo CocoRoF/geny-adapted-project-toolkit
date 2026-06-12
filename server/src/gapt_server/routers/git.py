@@ -1037,6 +1037,11 @@ class GitDiscardRequest(BaseModel):
     fs-delete primitive."""
 
     paths: list[str] = Field(min_length=1)
+    # "Discard all" also unstages: `git restore --staged --worktree`
+    # resets the index copy too, so a fully-staged file doesn't
+    # silently survive the sweep. Default False keeps the per-file
+    # button's long-standing leave-the-index-alone behaviour.
+    include_staged: bool = False
 
 
 class GitDiscardResponse(BaseModel):
@@ -1086,25 +1091,45 @@ async def git_discard(
     # file(s) known to git". Run restore first (tracked branch) then
     # `git clean -f` for whatever's left (untracked branch). Two-pass
     # keeps the user from needing to know the distinction.
+    restore_argv = (
+        ["restore", "--staged", "--worktree", "--", *safe]
+        if payload.include_staged
+        else ["restore", "--worktree", "--", *safe]
+    )
     rc, restore_out, restore_err = await _git_exec_in(
-        sandbox, target, ["restore", "--worktree", "--", *safe], timeout_s=15.0
+        sandbox, target, restore_argv, timeout_s=15.0
     )
     discarded: list[str] = []
     still_present: list[str] = []
     if rc == 0:
         discarded.extend(safe)
     else:
-        # Partial success: parse the failures and try clean -f for
-        # those. The error format is one per line: `error: pathspec
-        # '<p>' did not match any file(s) known to git`.
+        # Unknown-pathspec failure is ALL-OR-NOTHING: git restore
+        # aborts the entire invocation when any path is untracked, so
+        # the tracked paths were NOT restored either. Parse the
+        # unknown set, RE-RUN restore for the tracked remainder, and
+        # route the unknown (untracked) ones to `git clean`.
+        # Pre-fix this branch assumed partial application and marked
+        # tracked paths "discarded" without actually restoring them.
         import re as _re  # noqa: PLC0415
 
         unknown = set(_re.findall(r"pathspec '([^']+)'", restore_err))
-        for p in safe:
-            if p in unknown:
-                still_present.append(p)
+        tracked_retry = [p for p in safe if p not in unknown]
+        still_present = [p for p in safe if p in unknown]
+        if tracked_retry:
+            rc_retry, _, retry_err = await _git_exec_in(
+                sandbox,
+                target,
+                [*restore_argv[: restore_argv.index("--")], "--", *tracked_retry],
+                timeout_s=15.0,
+            )
+            if rc_retry == 0:
+                discarded.extend(tracked_retry)
             else:
-                discarded.append(p)
+                for p in tracked_retry:
+                    skipped.append(
+                        {"path": p, "reason": retry_err.strip()[-160:] or "restore failed"}
+                    )
     if still_present:
         rc, clean_out, clean_err = await _git_exec_in(
             sandbox, target, ["clean", "-f", "--", *still_present], timeout_s=15.0

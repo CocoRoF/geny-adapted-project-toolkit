@@ -86,10 +86,15 @@ export const gitSync = (wid: string, repoId?: string | null) =>
     method: "POST",
   });
 
-export const gitDiscard = (wid: string, paths: string[], repoId?: string | null) =>
+export const gitDiscard = (
+  wid: string,
+  paths: string[],
+  repoId?: string | null,
+  opts?: { includeStaged?: boolean },
+) =>
   apiFetch<GitDiscardResponse>(withRepo(`/_gapt/api/workspaces/${wid}/git/discard`, repoId), {
     method: "POST",
-    json: { paths },
+    json: { paths, ...(opts?.includeStaged ? { include_staged: true } : {}) },
   });
 
 // ─── branches ───────────────────────────────────────────────────────

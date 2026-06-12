@@ -428,6 +428,9 @@ export const ko: Record<keyof typeof en, string> = {
   "deploy.stack.title": "스택 컨테이너",
   "deploy.stack.restart": "스택 재시작",
   "deploy.stack.down": "스택 중지",
+  "deploy.stack.actions.down": "스택 중지",
+  "deploy.stack.actions.restart": "재시작",
+  "deploy.stack.actions.reroute": "라우트 갱신",
   "deploy.stack.confirm.down":
     "{name}의 모든 컨테이너를 중지하고 제거할까요? 컨테이너와 compose 네트워크는 사라지고, 명명된 볼륨은 유지됩니다.",
   "deploy.stack.confirm.restart":
@@ -571,6 +574,8 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.shortcut.esc": "Esc 키로 중단할 수 있습니다.",
   "chat.transcript.download": "전체 대화 markdown 다운로드",
   "chat.popup.open": "채팅을 새 팝업 창으로 열기",
+  "chat.attach.add": "이미지 첨부 (붙여넣기·드래그도 가능)",
+  "chat.attach.drop_hint": "이미지를 여기에 놓으면 첨부됩니다",
   "toolbar.more": "가려진 컨트롤 더 보기",
   "ide.tabs.list": "열린 탭 전체 보기",
 
@@ -760,6 +765,14 @@ export const ko: Record<keyof typeof en, string> = {
   "git.diff.placeholder": "파일을 클릭하면 diff 가 표시됩니다.",
   "git.diff.close": "diff 닫기",
   "git.discard.title": "이 파일의 워크트리 변경 사항 폐기",
+  "git.discard_all.button": "모두 폐기",
+  "git.discard_all.confirm": "변경된 파일 {count}개를 전부 폐기할까요?",
+  "git.discard_all.description": "워킹 트리와 스테이징의 모든 변경이 사라집니다. 되돌릴 수 없어요.",
+  "git.discard_all.done": "모든 변경을 폐기했습니다",
+  "git.confirm.discard": "폐기",
+  "git.confirm.delete": "삭제",
+  "git.confirm.drop": "버리기",
+  "common.cancel": "취소",
   "git.discard.confirm":
     "{path} 의 로컬 변경 사항을 폐기할까요? 커밋 안 된 수정은 되돌릴 수 없습니다.",
   "git.discard.done": "폐기 완료.",

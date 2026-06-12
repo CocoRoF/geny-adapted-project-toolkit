@@ -142,15 +142,26 @@ export interface InvokeOverrides {
   clear?: Array<"model" | "thinking" | "thinking_enabled" | "thinking_budget_tokens"> | null;
 }
 
+/** One composer image attachment — pasted, dropped, or file-picked.
+ * Travels as base64; the server hands it to the executor's
+ * multimodal normalizer so the model actually sees the image. */
+export interface InvokeAttachment {
+  kind: "image";
+  media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  data_base64: string;
+}
+
 export const invokeSession = (
   sessionId: string,
   message: string,
   mode: ChatMode = "act",
   overrides: InvokeOverrides = {},
+  attachments?: InvokeAttachment[],
 ): Promise<{ session_id: string; status: string }> =>
   apiPost<{ session_id: string; status: string }>(`/_gapt/api/sessions/${sessionId}/invoke`, {
     message,
     mode,
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
     ...(overrides.model != null ? { model: overrides.model } : {}),
     ...(overrides.thinking_enabled != null ? { thinking_enabled: overrides.thinking_enabled } : {}),
     ...(overrides.thinking_budget_tokens != null

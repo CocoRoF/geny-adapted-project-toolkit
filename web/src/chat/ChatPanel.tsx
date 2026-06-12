@@ -4,8 +4,11 @@ import {
   Bot,
   ChevronDown,
   Download,
+  ImagePlus,
   Loader2,
+  Paperclip,
   PictureInPicture2,
+  X,
 } from "lucide-react";
 
 import { ApiError } from "@/api/client";
@@ -18,6 +21,7 @@ import {
   createSession,
   reactivateSession,
   interruptSession,
+  type InvokeAttachment,
   invokeSession,
   listSessions,
   patchSessionOverrides,
@@ -35,10 +39,70 @@ import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { TraceStrip } from "@/chat/TraceStrip";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
 import { OverflowToolbar } from "@/ui/OverflowToolbar";
+import { PreviewableImage } from "@/ui/ImageLightbox";
+import { toast } from "@/ui/toast";
 
 type ChatMode = "plan" | "act";
 
 const PLAN_PREFIX = "(Plan mode) Outline the steps without modifying any files:";
+
+// ── composer image attachments ──────────────────────────────────
+// Accepted everywhere Claude accepts them; 5 MB is Claude's decoded
+// per-image API cap, 6 images keeps a turn well under request limits.
+const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_ATTACHMENTS = 6;
+
+interface PendingAttachment {
+  id: string;
+  mediaType: ImageMediaType;
+  dataBase64: string;
+  /** data: URL for the strip / bubble thumbnails. */
+  previewUrl: string;
+  name: string;
+}
+
+function isImageMediaType(v: string): v is ImageMediaType {
+  return (IMAGE_MEDIA_TYPES as readonly string[]).includes(v);
+}
+
+/** File → PendingAttachment (base64 + preview). Rejects with a
+ * user-displayable reason string. */
+function readImageFile(file: File): Promise<PendingAttachment> {
+  return new Promise((resolve, reject) => {
+    if (!isImageMediaType(file.type)) {
+      reject(new Error(`${file.name || "clipboard image"}: PNG/JPEG/GIF/WebP만 첨부할 수 있어요`));
+      return;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      reject(
+        new Error(
+          `${file.name || "clipboard image"}: ${(file.size / 1024 / 1024).toFixed(1)}MB — 이미지당 최대 5MB입니다`,
+        ),
+      );
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`${file.name}: 파일을 읽지 못했습니다`));
+    reader.onload = () => {
+      const url = typeof reader.result === "string" ? reader.result : "";
+      const comma = url.indexOf(",");
+      if (!url.startsWith("data:") || comma < 0) {
+        reject(new Error(`${file.name}: 인코딩 실패`));
+        return;
+      }
+      resolve({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        mediaType: file.type as ImageMediaType,
+        dataBase64: url.slice(comma + 1),
+        previewUrl: url,
+        name: file.name || "image",
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 interface Props {
   projectId: string;
@@ -188,6 +252,13 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
   const { t } = useI18n();
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [message, setMessage] = useState("");
+  // Composer image attachments — pasted (Ctrl+V), dropped onto the
+  // panel, or picked via the paperclip. Sent as base64 with the next
+  // invoke; the executor's multimodal normalizer turns them into
+  // Anthropic image blocks so the model actually sees them.
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Phase N.2.7 — cross-device handoff state. When the user sends a
@@ -465,6 +536,74 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
       .finally(() => setPending(false));
   }, [manifestId, modelOverride, thinkingBudget, projectId, workspaceId]);
 
+  // Mirror of `attachments` for synchronous reads inside the async
+  // add path — avoids putting side effects in a state updater (React
+  // StrictMode runs updaters twice in dev, which was duplicating
+  // every pasted image).
+  const attachmentsCountRef = useRef(0);
+  useEffect(() => {
+    attachmentsCountRef.current = attachments.length;
+  }, [attachments]);
+
+  const addImageFiles = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    void (async () => {
+      const settled = await Promise.allSettled(files.map(readImageFile));
+      const fresh: PendingAttachment[] = [];
+      for (const r of settled) {
+        if (r.status === "fulfilled") fresh.push(r.value);
+        else toast.error(r.reason instanceof Error ? r.reason.message : String(r.reason));
+      }
+      if (fresh.length === 0) return;
+      const room = MAX_ATTACHMENTS - attachmentsCountRef.current;
+      if (room <= 0) {
+        toast.error(`이미지는 한 번에 최대 ${MAX_ATTACHMENTS}장까지 첨부할 수 있어요`);
+        return;
+      }
+      if (fresh.length > room) {
+        toast.warning(`처음 ${room}장만 첨부했어요 (최대 ${MAX_ATTACHMENTS}장)`);
+      }
+      // PURE updater: dedup by content + enforce the cap inside, so a
+      // StrictMode double-call is a harmless no-op the second time.
+      // Content dedup also collapses clipboards that expose the same
+      // screenshot through multiple items.
+      setAttachments((prev) => {
+        const seen = new Set(prev.map((a) => `${a.mediaType}:${a.dataBase64}`));
+        const next = [...prev];
+        for (const att of fresh) {
+          if (next.length >= MAX_ATTACHMENTS) break;
+          const key = `${att.mediaType}:${att.dataBase64}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          next.push(att);
+        }
+        return next.length === prev.length ? prev : next;
+      });
+    })();
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const onComposerPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const files: File[] = [];
+      for (const item of Array.from(e.clipboardData?.items ?? [])) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f && f.type.startsWith("image/")) files.push(f);
+        }
+      }
+      if (files.length > 0) {
+        // Image paste only — text pastes keep default behaviour.
+        e.preventDefault();
+        addImageFiles(files);
+      }
+    },
+    [addImageFiles],
+  );
+
   const send = useCallback(
     (text: string) => {
       if (!session) return;
@@ -487,9 +626,13 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
       if (activeMode === "plan" && outgoing.length > 0) {
         outgoing = `${PLAN_PREFIX}\n\n${outgoing}`;
       }
+      // Capture this turn's attachments and clear the strip — an
+      // image-only turn (no text) is legitimate now.
+      const turnAttachments = attachments;
+      if (turnAttachments.length > 0) setAttachments([]);
       // Pure mode-switch commands with no payload — don't fire an
       // empty invoke.
-      if (outgoing.length === 0) {
+      if (outgoing.length === 0 && turnAttachments.length === 0) {
         setPending(false);
         return;
       }
@@ -502,7 +645,13 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
         {
           seq,
           kind: "text",
-          data: { text: display, role: "user" },
+          data: {
+            text: display,
+            role: "user",
+            ...(turnAttachments.length > 0
+              ? { attachment_previews: turnAttachments.map((a) => a.previewUrl) }
+              : {}),
+          },
           ts: new Date().toISOString(),
         },
       ]);
@@ -535,7 +684,12 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
       if (clearTargets.length > 0) {
         overrideBody.clear = clearTargets;
       }
-      void invokeSession(session.id, outgoing, activeMode, overrideBody)
+      const wireAttachments: InvokeAttachment[] = turnAttachments.map((a) => ({
+        kind: "image",
+        media_type: a.mediaType,
+        data_base64: a.dataBase64,
+      }));
+      void invokeSession(session.id, outgoing, activeMode, overrideBody, wireAttachments)
         .catch((err: unknown) => {
           if (err instanceof ApiError && err.code === "session.already_invoking") {
             // Phase N.2.7 — cross-device handoff: another tab/PC is
@@ -575,7 +729,7 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
         })
         .finally(() => setPending(false));
     },
-    [session, mode, modelOverride, thinkingBudget],
+    [attachments, session, mode, modelOverride, thinkingBudget],
   );
 
   // Phase N.2.7 — "강제로 이어받기" handler. The server's interrupt
@@ -629,7 +783,7 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const trimmed = message.trim();
-    if (!trimmed || !session) return;
+    if ((!trimmed && attachments.length === 0) || !session) return;
     setMessage("");
     send(trimmed);
   }
@@ -740,7 +894,36 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
   );
 
   return (
-    <div data-panel-kind="chat" className="flex h-full flex-col">
+    <div
+      data-panel-kind="chat"
+      className="relative flex h-full flex-col"
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+          e.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        // Only clear when leaving the panel itself, not a child.
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const files = Array.from(e.dataTransfer?.files ?? []).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (files.length > 0) addImageFiles(files);
+      }}
+    >
+      {dragOver ? (
+        <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center rounded-md border-2 border-dashed border-accent bg-accent/10">
+          <p className="flex items-center gap-2 rounded-md bg-bg-elevated px-3 py-2 text-[13px] font-medium text-accent shadow-lg">
+            <ImagePlus className="h-4 w-4" />
+            {t("chat.attach.drop_hint")}
+          </p>
+        </div>
+      ) : null}
       <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
         {/* The control pills live inside an OverflowToolbar: when the
             panel is too narrow for all of them, the tail collapses
@@ -1031,9 +1214,47 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
           </div>
 
           <form onSubmit={onSubmit} className="shrink-0 border-t border-border bg-bg-elevated p-3">
+            {attachments.length > 0 ? (
+              <div
+                data-testid="chat-attachments"
+                className="mb-2 flex flex-wrap items-center gap-2"
+              >
+                {attachments.map((a) => (
+                  <span key={a.id} className="group relative inline-block">
+                    <PreviewableImage
+                      src={a.previewUrl}
+                      alt={a.name}
+                      title={a.name}
+                      className="h-14 w-14 rounded-md border border-border object-cover"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`remove ${a.name}`}
+                      onClick={() => removeAttachment(a.id)}
+                      className="absolute -right-1.5 -top-1.5 grid h-4.5 w-4.5 place-items-center rounded-full border border-border bg-bg-elevated text-fg-muted shadow hover:text-danger"
+                      style={{ height: 18, width: 18 }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={IMAGE_MEDIA_TYPES.join(",")}
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addImageFiles(Array.from(e.currentTarget.files ?? []));
+                e.currentTarget.value = ""; // same file re-pickable
+              }}
+            />
             <textarea
               value={message}
               onChange={(e) => setMessage(e.currentTarget.value)}
+              onPaste={onComposerPaste}
               placeholder={t("chat.placeholder")}
               rows={3}
               aria-label={t("chat.placeholder")}
@@ -1041,16 +1262,28 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (message.trim().length === 0) return;
+                  if (message.trim().length === 0 && attachments.length === 0) return;
                   setMessage("");
                   send(message.trim());
                 }
               }}
             />
             <div className="mt-2 flex items-center justify-between gap-2">
-              <p data-testid="chat-shortcut" className="text-[10px] text-fg-subtle">
-                {t("chat.shortcut.esc")}
-              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="chat-attach-button"
+                  onClick={() => fileInputRef.current?.click()}
+                  title={t("chat.attach.add")}
+                  aria-label={t("chat.attach.add")}
+                  className="grid h-7 w-7 place-items-center rounded-md border border-border bg-surface text-fg-muted hover:bg-surface-hover hover:text-fg"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                </button>
+                <p data-testid="chat-shortcut" className="text-[10px] text-fg-subtle">
+                  {t("chat.shortcut.esc")}
+                </p>
+              </div>
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -1068,7 +1301,7 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
                 </button>
                 <button
                   type="submit"
-                  disabled={pending || message.trim().length === 0}
+                  disabled={pending || (message.trim().length === 0 && attachments.length === 0)}
                   className="h-7 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg hover:bg-accent/90 disabled:opacity-50"
                 >
                   {t("chat.send")}
@@ -1667,16 +1900,36 @@ function EventRow({ event, workspaceId }: EventRowProps) {
   // replay path only has the persisted events).
   if (kind === "user_message") {
     const text = asString(event.data["text"]);
-    if (!text) return null;
+    // Persisted events carry attachment META only (media types, no
+    // bytes) — render compact chips. An image-only turn has empty
+    // text but must still show its bubble.
+    const metaRaw = event.data["attachments"];
+    const attachmentMeta = Array.isArray(metaRaw) ? metaRaw : [];
+    if (!text && attachmentMeta.length === 0) return null;
     return (
       <div
         data-event-kind="user_message"
         data-role="user"
         className="ml-auto max-w-[85%] rounded-md border border-accent/30 bg-accent/15 px-3 py-2"
       >
-        <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
-          {text}
-        </pre>
+        {attachmentMeta.length > 0 ? (
+          <div className="mb-1 flex flex-wrap gap-1">
+            {attachmentMeta.map((m, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"
+              >
+                <ImagePlus className="h-3 w-3" />
+                {asString((m as Record<string, unknown>)["media_type"], "image")}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {text ? (
+          <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-fg">
+            {text}
+          </pre>
+        ) : null}
       </div>
     );
   }
@@ -1685,7 +1938,13 @@ function EventRow({ event, workspaceId }: EventRowProps) {
     // used `{chunk: ...}`. Accept both.
     const text = asString(event.data["text"]) || asString(event.data["chunk"]);
     const isUser = asString(event.data["role"]) === "user";
-    if (!text) return null;
+    // Optimistic local echo carries data-URL previews for this turn's
+    // pasted/dropped images — render real thumbnails.
+    const previewsRaw = event.data["attachment_previews"];
+    const previews = Array.isArray(previewsRaw)
+      ? previewsRaw.filter((u): u is string => typeof u === "string")
+      : [];
+    if (!text && previews.length === 0) return null;
     return (
       <div
         data-event-kind="text"
@@ -1696,6 +1955,18 @@ function EventRow({ event, workspaceId }: EventRowProps) {
             : "mr-auto max-w-[95%] rounded-md border border-border bg-bg-subtle px-3 py-2"
         }
       >
+        {previews.length > 0 ? (
+          <div className="mb-1 flex flex-wrap gap-1.5">
+            {previews.map((u, i) => (
+              <PreviewableImage
+                key={i}
+                src={u}
+                alt={`attachment ${i + 1}`}
+                className="h-20 w-20 rounded-md border border-accent/30 object-cover"
+              />
+            ))}
+          </div>
+        ) : null}
         {/* Phase K.1 — assistant responses render as markdown so code
             blocks, inline code, and lists actually look right. User
             echoes stay as raw text — the operator typed it literally,

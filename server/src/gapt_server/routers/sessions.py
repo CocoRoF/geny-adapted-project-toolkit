@@ -31,7 +31,7 @@ import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from gapt_server.agent.hooks import ChatModeRef, build_hook_runner
@@ -149,8 +149,34 @@ class SessionResponse(BaseModel):
         )
 
 
+class InvokeAttachment(BaseModel):
+    """One image attachment for a chat turn — pasted, dropped, or
+    picked in the composer. Travels as base64 and is handed to
+    geny-executor's multimodal input normalizer, which builds the
+    Anthropic image content block so the model actually SEES the
+    image (it is not written into the workspace).
+
+    ~7.5 MB raw per image (10M base64 chars) — over Claude's 5 MB
+    decoded API limit is rejected upstream with a clear error, but
+    the transport cap keeps obviously-wrong payloads out early."""
+
+    kind: Literal["image"] = "image"
+    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
+    data_base64: str = Field(min_length=1, max_length=10_000_000)
+
+
 class InvokeRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=64_000)
+    # min_length=0 (was 1): an image-only turn is legitimate — the
+    # validator below still rejects turns with neither text nor
+    # attachments.
+    message: str = Field(min_length=0, max_length=64_000)
+    attachments: list[InvokeAttachment] | None = Field(default=None, max_length=6)
+
+    @model_validator(mode="after")
+    def _text_or_attachment(self) -> "InvokeRequest":
+        if not self.message.strip() and not self.attachments:
+            raise ValueError("message or attachments required")
+        return self
     # Phase D.1 — Plan/Act mode. When "plan", the per-session policy
     # hook short-circuits every mutating tool (gapt_edit/gapt_git/
     # gapt_pr) to a block. Defaults to "act" so legacy clients keep
@@ -894,8 +920,14 @@ async def invoke_session(
         clear=payload.clear,
     )
 
+    attachments = [
+        {"kind": a.kind, "mime_type": a.media_type, "data": a.data_base64}
+        for a in (payload.attachments or [])
+    ]
     try:
-        await runtime.invoke(payload.message, mode=payload.mode)
+        await runtime.invoke(
+            payload.message, mode=payload.mode, attachments=attachments or None
+        )
     except SessionAlreadyInvoking as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

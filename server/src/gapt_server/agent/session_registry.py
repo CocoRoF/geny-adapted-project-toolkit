@@ -257,6 +257,7 @@ class SessionRuntime:
         *,
         runner: SessionInvokeRunner | None = None,
         mode: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
         """Kick off a background task that runs the pipeline against
         `message` and publishes SSE events. Returns once the task is
@@ -276,6 +277,11 @@ class SessionRuntime:
         self.touch()
         if mode is not None and self.mode_ref is not None and mode in ("plan", "act"):
             self.mode_ref.mode = mode
+        # Stash attachments on the runtime instead of widening the
+        # runner callable — `SessionInvokeRunner` is a public seam
+        # that existing tests stub with a bare `(runtime, message)`
+        # signature. `_drive_pipeline` pops the stash exactly once.
+        self._pending_attachments = list(attachments) if attachments else None
         async with self._lock:
             if self.is_running:
                 raise SessionAlreadyInvoking(f"session {self.session_id} is already invoking")
@@ -284,6 +290,14 @@ class SessionRuntime:
                 _run_with_lifecycle(self, message, actual_runner),
                 name=f"session-invoke-{self.session_id}",
             )
+
+    def take_pending_attachments(self) -> list[dict[str, Any]] | None:
+        """Pop this turn's attachments (exactly-once semantics — a
+        crash-retry of the same runtime must not resend stale
+        images)."""
+        pending = getattr(self, "_pending_attachments", None)
+        self._pending_attachments = None
+        return pending
 
     async def wait_done(self) -> None:
         if self._task is not None:
@@ -343,7 +357,14 @@ async def _run_with_lifecycle(
     # is the right spot (not `invoke()`): we're inside the spawned task,
     # the bus persister is wired, and no executor frames have landed yet
     # so seq ordering reads as user → text → tool → done.
-    await runtime.bus.publish(SessionEventKind.USER_MESSAGE, {"text": message})
+    user_payload: dict[str, object] = {"text": message}
+    pending_meta = getattr(runtime, "_pending_attachments", None)
+    if pending_meta:
+        user_payload["attachments"] = [
+            {"kind": a.get("kind", "image"), "media_type": a.get("mime_type", "")}
+            for a in pending_meta
+        ]
+    await runtime.bus.publish(SessionEventKind.USER_MESSAGE, user_payload)
     try:
         await runner(runtime, message)
     except asyncio.CancelledError:
@@ -446,16 +467,27 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
             kept=len(state.messages),
         )
 
+    # Multimodal turn: the executor's input stage (s01) auto-routes a
+    # dict with an `attachments` key through its MultimodalNormalizer,
+    # which converts the lenient `{kind, mime_type, data}` form into
+    # Anthropic image content blocks — the model genuinely sees the
+    # image. Text-only turns keep passing the bare string so every
+    # legacy test stub stays valid.
+    attachments = runtime.take_pending_attachments()
+    run_input: Any = (
+        {"text": message, "attachments": attachments} if attachments else message
+    )
+
     overrides = runtime.pending_model_overrides()
     if overrides is not None:
         stream = runtime.pipeline.run_stream(
-            message, state=runtime.conversation_state, overrides=overrides
+            run_input, state=runtime.conversation_state, overrides=overrides
         )
     else:
         # No-override calls skip the kwarg entirely so legacy test
         # stubs with a bare `run_stream(message, state=None)` signature
         # keep working.
-        stream = runtime.pipeline.run_stream(message, state=runtime.conversation_state)
+        stream = runtime.pipeline.run_stream(run_input, state=runtime.conversation_state)
 
     async for ev in stream:
         event_type = str(getattr(ev, "type", ""))
