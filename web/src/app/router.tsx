@@ -11,6 +11,7 @@ import { ProjectsIndex } from "@/routes/ProjectsIndex";
 import { SessionDetail } from "@/routes/SessionDetail";
 import { SessionsHistory } from "@/routes/SessionsHistory";
 import { Settings } from "@/routes/Settings";
+import { WorkspaceChatPopup } from "@/routes/WorkspaceChatPopup";
 import { WorkspaceIde } from "@/routes/WorkspaceIde";
 
 /** Single source of truth for paths. `/login` is the only unauth
@@ -67,6 +68,16 @@ export function AppRouter() {
             <AppShellLayout>
               <WorkspaceIde />
             </AppShellLayout>
+          </RequireAuth>
+        }
+      />
+      {/* Devtools-undock style chat popup — chrome-less on purpose
+          (no AppShellLayout): the window IS the chat panel. */}
+      <Route
+        path="/projects/:pid/w/:wid/chat"
+        element={
+          <RequireAuth>
+            <WorkspaceChatPopup />
           </RequireAuth>
         }
       />

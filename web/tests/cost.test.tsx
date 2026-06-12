@@ -22,6 +22,8 @@ describe("deriveCostSnapshot", () => {
       cost_usd: 0,
       input_tokens: 0,
       output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
       tool_calls: 0,
       tool_duration_ms: 0,
       by_tool: {},

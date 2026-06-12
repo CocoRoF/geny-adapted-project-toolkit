@@ -39,8 +39,10 @@ import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gapt_server.domains.deploy import ports as ports_mod
 from gapt_server.domains.deploy.protocol import (
     DeployContext,
     DeployResult,
@@ -420,6 +422,113 @@ class LocalComposeTarget:
         host = await self.subdomain_manager.register(binding)
         return (binding, f"https://{host}")
 
+    def _ports_override_path(self, compose_paths: list[str]) -> Path:
+        """Stable location of the generated ports override — beside
+        the first compose file under the worktree's `.gapt/` dir so
+        the operator can inspect what GAPT changed, and so rollback
+        can deterministically re-include it."""
+        base = Path((compose_paths or ["docker-compose.yml"])[0])
+        return base.parent / ".gapt" / "ports.override.yml"
+
+    async def _preflight_ports(
+        self,
+        *,
+        project: str,
+        request: DeployRequest,
+        env: dict[str, str],
+    ) -> tuple[list[str], list[str]]:
+        """Reconcile host-port publishes before `up` (see
+        `deploy.ports` module docstring). Returns the possibly-
+        extended compose path list + log lines for the run tail.
+        Raises DeployTargetError for strict-policy conflicts; any
+        other failure is the caller's cue to proceed un-reconciled
+        (diagnostics must never block a deploy that might work)."""
+        paths = request.resolved_compose_paths()
+        policy = str(request.target_options.get("ports_policy", "auto")).lower()
+
+        rc, out, err = await self._run(
+            [
+                self._bin(),
+                "compose",
+                "-p",
+                project,
+                *_compose_flags(paths),
+                "config",
+                "--format",
+                "json",
+            ],
+            env,
+        )
+        config: dict[str, Any] | None = None
+        if rc == 0:
+            try:
+                parsed = json.loads(out)
+                config = parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                config = None
+        if config is None:
+            # Older compose emits YAML only (no --format flag).
+            rc2, out2, _ = await self._run(
+                [
+                    self._bin(),
+                    "compose",
+                    "-p",
+                    project,
+                    *_compose_flags(paths),
+                    "config",
+                ],
+                env,
+            )
+            if rc2 == 0:
+                import yaml  # noqa: PLC0415
+
+                parsed2 = yaml.safe_load(out2)
+                config = parsed2 if isinstance(parsed2, dict) else None
+        if config is None:
+            raise RuntimeError(f"compose config unavailable: {err.strip()[:200]}")
+
+        services_ports = ports_mod.parse_compose_ports(config)
+        if not services_ports:
+            return paths, []
+
+        def _read_proc(path: str) -> str:
+            try:
+                return Path(path).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        tcp4 = await asyncio.to_thread(_read_proc, "/proc/net/tcp")
+        tcp6 = await asyncio.to_thread(_read_proc, "/proc/net/tcp6")
+        listening = ports_mod.parse_proc_net_listen_ports(tcp4, tcp6)
+        ps_rc, ps_out, _ = await self._run(
+            [self._bin(), "ps", "--format", "json"], env
+        )
+        ps_text = ps_out if ps_rc == 0 else ""
+        # Our own previous run's docker-proxy listeners must not count
+        # as conflicts — re-deploying onto the same ports is the norm.
+        listening -= ports_mod.docker_project_ports(ps_text, project=project)
+        occupied: dict[int, str] = dict.fromkeys(listening, "")
+        occupied.update(
+            ports_mod.parse_docker_published_ports(ps_text, exclude_project=project)
+        )
+
+        plan = ports_mod.plan_port_overrides(
+            services_ports=services_ports, occupied=occupied, policy=policy
+        )
+        override_path = self._ports_override_path(paths)
+        if plan.override_yaml is None:
+            # Nothing to override this run — drop any stale file so
+            # rollback doesn't resurrect last run's remaps.
+            await asyncio.to_thread(lambda: override_path.unlink(missing_ok=True))
+            return paths, plan.log_lines
+
+        def _write() -> None:
+            override_path.parent.mkdir(parents=True, exist_ok=True)
+            override_path.write_text(plan.override_yaml or "", encoding="utf-8")
+
+        await asyncio.to_thread(_write)
+        return [*paths, str(override_path)], plan.log_lines
+
     async def deploy(self, ctx: DeployContext) -> DeployResult:
         request = ctx.request
         project = self._compose_project(request.project_id)
@@ -430,18 +539,46 @@ class LocalComposeTarget:
         try:
             state.prior_image_digests = await self._snapshot_images(project, env)
 
+            # Host-port preflight — GAPT manages the infra, so a
+            # "port is already allocated" failure is avoidable: remap
+            # (auto), refuse with the holder named (strict), or strip
+            # publishing entirely (unpublish). Routing never depends
+            # on host ports (Caddy dials over gapt-net).
+            compose_paths = request.resolved_compose_paths()
+            try:
+                compose_paths, preflight_lines = await self._preflight_ports(
+                    project=project, request=request, env=env
+                )
+            except DeployTargetError as exc:
+                state.status = DeployStatusKind.FAILED
+                state.exec_code = exc.code
+                state.log_tail = f"[gapt] {exc}\n"
+                state.finished_at = datetime.now(tz=UTC)
+                return DeployResult(
+                    run_id=ctx.run_id,
+                    status=state.status,
+                    log=state.log_tail,
+                    exec_code=state.exec_code,
+                )
+            except Exception as exc:  # noqa: BLE001 — preflight is best-effort
+                preflight_lines = [
+                    f"[gapt] port preflight skipped ({type(exc).__name__}: {exc})"
+                ]
+            for line in preflight_lines:
+                state.log_tail = (state.log_tail + line + "\n")[-2000:]
+
             pull_exit, pull_out, pull_err = await self._run(
                 [
                     self._bin(),
                     "compose",
                     "-p",
                     project,
-                    *_compose_flags(request.resolved_compose_paths()),
+                    *_compose_flags(compose_paths),
                     "pull",
                 ],
                 env,
             )
-            state.log_tail = (pull_out + pull_err)[-2000:]
+            state.log_tail = (state.log_tail + pull_out + pull_err)[-2000:]
             if pull_exit != 0:
                 state.status = DeployStatusKind.FAILED
                 state.exec_code = "deploy.compose_pull_failed"
@@ -458,7 +595,7 @@ class LocalComposeTarget:
                 "compose",
                 "-p",
                 project,
-                *_compose_flags(request.resolved_compose_paths()),
+                *_compose_flags(compose_paths),
                 "up",
                 "-d",
                 "--remove-orphans",
@@ -591,6 +728,13 @@ class LocalComposeTarget:
         project = self._compose_project(request.project_id)
         env = dict(request.env_secrets)
         snapshot = state.prior_image_digests if state else {}
+        # Re-include the port override the failed deploy generated —
+        # rolling back to the original compose alone would re-request
+        # the conflicting host port and fail the rollback too.
+        compose_paths = request.resolved_compose_paths()
+        override_path = self._ports_override_path(compose_paths)
+        if override_path.exists():
+            compose_paths = [*compose_paths, str(override_path)]
         try:
             if to_version:
                 # Single image override — restamp every running service.
@@ -604,7 +748,7 @@ class LocalComposeTarget:
                     "compose",
                     "-p",
                     project,
-                    *_compose_flags(request.resolved_compose_paths()),
+                    *_compose_flags(compose_paths),
                     "up",
                     "-d",
                 ],

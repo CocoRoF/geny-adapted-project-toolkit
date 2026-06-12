@@ -27,7 +27,7 @@ describe("<PreviewTabContent />", () => {
 
   it("navigates to a different URL when the user edits the address bar", () => {
     renderTab("http://localhost:3000");
-    const input = screen.getByLabelText(/URL/) as HTMLInputElement;
+    const input = screen.getByLabelText(/URL/);
     fireEvent.change(input, { target: { value: "http://localhost:5173" } });
     fireEvent.blur(input);
     const frame = screen.getByTestId<HTMLIFrameElement>("preview-iframe");

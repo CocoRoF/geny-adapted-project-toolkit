@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useI18n } from "@/app/providers/i18n-context";
@@ -7,6 +7,12 @@ import { ChatPanel } from "@/chat/ChatPanel";
 import { ActivityBar, type SideView } from "@/ide/shell/ActivityBar";
 import { BottomPanel, type BottomTab } from "@/ide/shell/BottomPanel";
 import { EditorArea } from "@/ide/shell/EditorArea";
+import { type EditorTab, tabIdFor } from "@/ide/shell/editor-tabs";
+import {
+  DEFAULT_LAYOUT,
+  LAYOUT_PRESETS,
+  type LayoutState,
+} from "@/ide/shell/layouts";
 import { SidePanel } from "@/ide/shell/SidePanel";
 import { SplitHandle } from "@/ide/shell/SplitHandle";
 import { StatusBar } from "@/ide/shell/StatusBar";
@@ -20,93 +26,7 @@ interface Props {
   workspaceStatus: string;
 }
 
-/** Phase N.3 — One tab in the editor column.
- *
- * - `file`    : Monaco editor on the workspace file at `path`.
- * - `diff`    : Single-file diff view (working tree vs HEAD) for `path`.
- * - `preview` : Embedded browser-style iframe at `url` (VSCode Simple
- *               Browser parity). Opened from the Services sidebar.
- *
- * `id` is the stable tab identity used for activate/close. For file
- * and diff tabs it's derived from `path` so re-opening the same file
- * activates the existing tab instead of stacking duplicates; for
- * preview tabs it's the URL for the same reason. */
-export type EditorTab =
-  | { id: string; kind: "file"; path: string }
-  | { id: string; kind: "diff"; path: string }
-  | { id: string; kind: "preview"; url: string; label: string };
-
-/** Stable id derivation — caller can compare strings without
- * having to know each kind's identity rule. */
-export function tabIdFor(
-  kind: EditorTab["kind"],
-  key: string,
-): string {
-  return `${kind}:${key}`;
-}
-
 const STORAGE_KEY_PREFIX = "gapt.ide.shell";
-
-interface LayoutState {
-  sideView: SideView | null;
-  sideWidth: number;
-  bottomTab: BottomTab | null;
-  bottomHeight: number;
-  chatOpen: boolean;
-  chatWidth: number;
-  /** Phase F — Editor column visible? When false, the editor area
-   *  hides entirely and the Chat panel grows to fill the freed
-   *  space (or SidePanel + Chat split if Chat is also closed).
-   *  Auto-opens when a file or diff is selected. */
-  editorOpen: boolean;
-}
-
-const DEFAULT_LAYOUT: LayoutState = {
-  sideView: "files",
-  sideWidth: 260,
-  bottomTab: null,
-  bottomHeight: 240,
-  chatOpen: true,
-  chatWidth: 480,
-  editorOpen: true,
-};
-
-/** Phase D.5 — Named layout presets selectable from the palette
- *  (Cmd/Ctrl+K). Each preset is a complete `LayoutState` so
- *  switching is a single set-state call. Operator-saved layouts
- *  (current behaviour: workspace localStorage entry) survive a
- *  preset switch — selecting "default" doesn't wipe the LS value
- *  for OTHER workspaces, only the current one's. */
-const LAYOUT_PRESETS: Record<string, LayoutState> = {
-  default: DEFAULT_LAYOUT,
-  chat_focused: {
-    sideView: null,
-    sideWidth: 260,
-    bottomTab: null,
-    bottomHeight: 240,
-    chatOpen: true,
-    chatWidth: 720,
-    editorOpen: false,
-  },
-  debug: {
-    sideView: "files",
-    sideWidth: 240,
-    bottomTab: "terminal",
-    bottomHeight: 280,
-    chatOpen: true,
-    chatWidth: 420,
-    editorOpen: true,
-  },
-  minimal: {
-    sideView: null,
-    sideWidth: 260,
-    bottomTab: null,
-    bottomHeight: 240,
-    chatOpen: false,
-    chatWidth: 380,
-    editorOpen: true,
-  },
-};
 
 function storageKey(workspaceId: string): string {
   return `${STORAGE_KEY_PREFIX}.${workspaceId}`;
@@ -258,6 +178,36 @@ export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Prop
   const setChatOpen = useCallback((v: boolean) => {
     setLayout((s) => ({ ...s, chatOpen: v }));
   }, []);
+
+  // Pop-out chat = MOVE, not copy (devtools-undock semantics). When
+  // the panel reports a successful window.open we close the docked
+  // column and hold the popup handle; a light poll watches for the
+  // popup closing and brings the docked panel back. Manually
+  // re-toggling chat (activity bar / Ctrl+Shift+A) while the popup
+  // is open stops the watch — the user explicitly chose both.
+  const chatPopupRef = useRef<Window | null>(null);
+  const onChatPoppedOut = useCallback(
+    (win: Window) => {
+      chatPopupRef.current = win;
+      setChatOpen(false);
+    },
+    [setChatOpen],
+  );
+  useEffect(() => {
+    if (layout.chatOpen && chatPopupRef.current) {
+      // Docked chat reopened while the popup is alive — release the
+      // handle so closing the popup later doesn't force the layout.
+      chatPopupRef.current = null;
+    }
+    const id = window.setInterval(() => {
+      const win = chatPopupRef.current;
+      if (win && win.closed) {
+        chatPopupRef.current = null;
+        setChatOpen(true);
+      }
+    }, 700);
+    return () => window.clearInterval(id);
+  }, [layout.chatOpen, setChatOpen]);
   const setChatWidth = useCallback((n: number) => {
     setLayout((s) => ({ ...s, chatWidth: n }));
   }, []);
@@ -423,7 +373,11 @@ export function IdeShell({ workspaceId, projectId, name, workspaceStatus }: Prop
               }
               style={layout.editorOpen ? { width: `${layout.chatWidth}px` } : undefined}
             >
-              <ChatPanel projectId={projectId} workspaceId={workspaceId} />
+              <ChatPanel
+                projectId={projectId}
+                workspaceId={workspaceId}
+                onPoppedOut={onChatPoppedOut}
+              />
             </div>
           </>
         ) : null}

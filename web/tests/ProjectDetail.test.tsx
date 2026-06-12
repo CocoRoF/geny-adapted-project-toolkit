@@ -64,13 +64,65 @@ const PROJECT = {
 const WORKSPACE = {
   id: "w1",
   project_id: "p1",
-  branch: "main",
+  name: "main",
   worktree_path: "/workspace",
   sandbox_id: "sb1",
   status: "running",
   last_activity_at: "2026-05-23T00:00:00Z",
   created_at: "2026-05-23T00:00:00Z",
+  selections: [
+    {
+      repository_id: "r1",
+      subpath: "",
+      display_name: "demo",
+      branch: "main",
+      git_remote_url: "https://example.com/demo.git",
+    },
+  ],
 };
+
+const REPOSITORY = {
+  id: "r1",
+  project_id: "p1",
+  subpath: "",
+  display_name: "demo",
+  git_remote_url: "https://example.com/demo.git",
+  git_provider: "github",
+  default_branch: "main",
+  sort_order: 0,
+};
+
+/** Routes every ProjectDetail mount needs beyond the per-test ones —
+ * the component Promise.all-s project + workspaces + repositories,
+ * and each workspace card lazily pulls its clone log. */
+function baseRoutes(workspaces: unknown[]): Route[] {
+  return [
+    {
+      match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
+      handler: () => jsonResponse(200, ALICE_ME),
+    },
+    {
+      match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
+      handler: () => jsonResponse(200, PROJECT),
+    },
+    {
+      match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
+      handler: () => jsonResponse(200, workspaces),
+    },
+    {
+      match: (input) => pathOf(input) === "/_gapt/api/projects/p1/repositories",
+      handler: () => jsonResponse(200, [REPOSITORY]),
+    },
+    {
+      match: (input) => pathOf(input).startsWith("/_gapt/api/workspaces/w1/clone-log"),
+      handler: () => new Response("cloned.", { status: 200 }),
+    },
+    {
+      match: (input) => pathOf(input).startsWith("/_gapt/api/projects/p1/sessions"),
+      handler: () => jsonResponse(200, []),
+    },
+  ];
+}
 
 function renderProjectDetail() {
   return render(
@@ -97,45 +149,23 @@ afterEach(() => {
 
 describe("<ProjectDetail />", () => {
   it("renders project header and workspace list", async () => {
-    mockFetchRoutes([
-      {
-        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
-        handler: () => jsonResponse(200, ALICE_ME),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
-        handler: () => jsonResponse(200, PROJECT),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
-        handler: () => jsonResponse(200, [WORKSPACE]),
-      },
-    ]);
+    mockFetchRoutes(baseRoutes([WORKSPACE]));
 
     renderProjectDetail();
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
     });
-    expect(screen.getByText(/main/)).toBeInTheDocument();
+    // N.5: "main" appears as both the workspace NAME and the per-repo
+    // branch chip — any occurrence satisfies the assertion.
+    expect(screen.getAllByText(/main/).length).toBeGreaterThan(0);
     const openLink = screen.getByRole("link", { name: /Open|열기/ });
     expect(openLink).toHaveAttribute("href", "/projects/p1/w/w1");
   });
 
   it("stops a running workspace via the action button", async () => {
     mockFetchRoutes([
-      {
-        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
-        handler: () => jsonResponse(200, ALICE_ME),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
-        handler: () => jsonResponse(200, PROJECT),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
-        handler: () => jsonResponse(200, [WORKSPACE]),
-      },
+      ...baseRoutes([WORKSPACE]),
       {
         match: (input, init) =>
           pathOf(input) === "/_gapt/api/workspaces/w1/stop" && init?.method === "POST",
@@ -157,20 +187,7 @@ describe("<ProjectDetail />", () => {
   });
 
   it("shows an empty-state when no workspaces exist", async () => {
-    mockFetchRoutes([
-      {
-        match: (input) => pathOf(input).startsWith("/_gapt/api/auth/me"),
-        handler: () => jsonResponse(200, ALICE_ME),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1",
-        handler: () => jsonResponse(200, PROJECT),
-      },
-      {
-        match: (input) => pathOf(input) === "/_gapt/api/projects/p1/workspaces",
-        handler: () => jsonResponse(200, []),
-      },
-    ]);
+    mockFetchRoutes(baseRoutes([]));
 
     renderProjectDetail();
 

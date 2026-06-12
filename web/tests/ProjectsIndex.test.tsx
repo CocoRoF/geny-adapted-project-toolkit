@@ -170,7 +170,10 @@ describe("<ProjectsIndex />", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New project|새 프로젝트/ })).toBeEnabled();
     });
+    // Phase N.2.6 — "+ 새 프로젝트" is a dropdown now; the git-URL
+    // import modal sits behind the "불러오기" menu item.
     fireEvent.click(screen.getByRole("button", { name: /New project|새 프로젝트/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /불러오기|Import/ }));
 
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(screen.getByLabelText(/Display name|표시 이름/), {

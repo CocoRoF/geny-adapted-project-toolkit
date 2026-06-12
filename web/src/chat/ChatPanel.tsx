@@ -1,7 +1,15 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, ChevronDown, Download, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  ChevronDown,
+  Download,
+  Loader2,
+  PictureInPicture2,
+} from "lucide-react";
 
 import { ApiError } from "@/api/client";
+import { ROUTER_BASENAME } from "@/app/basename";
 import {
   type InvokeOverrides,
   type SessionEventKind,
@@ -26,6 +34,7 @@ import { MarkdownText } from "@/ui/MarkdownText";
 import { pairToolEvents, type ToolPair } from "@/chat/tool-pair";
 import { TraceStrip } from "@/chat/TraceStrip";
 import { type SessionStreamEvent, useSessionStream } from "@/chat/useSessionStream";
+import { OverflowToolbar } from "@/ui/OverflowToolbar";
 
 type ChatMode = "plan" | "act";
 
@@ -34,6 +43,16 @@ const PLAN_PREFIX = "(Plan mode) Outline the steps without modifying any files:"
 interface Props {
   projectId: string;
   workspaceId: string;
+  /** True when the panel IS the whole window (the `/chat` popup
+   *  route). Hides the pop-out button — there's nothing to pop out
+   *  of — everything else behaves identically. */
+  standalone?: boolean;
+  /** Fired after the pop-out window opened successfully. The IDE
+   *  shell uses this to CLOSE the docked panel — popping out MOVES
+   *  the chat (devtools-undock semantics), not copies it — and to
+   *  watch the handle so the docked panel returns when the popup
+   *  closes. Not fired when the browser blocked the popup. */
+  onPoppedOut?: (win: Window) => void;
 }
 
 /** Live chat panel.
@@ -170,7 +189,12 @@ const MODEL_PRESETS: { value: string; label: string }[] = [
   { value: "opus", label: "opus (deepest)" },
 ];
 
-export function ChatPanel({ projectId, workspaceId }: Props) {
+export function ChatPanel({
+  projectId,
+  workspaceId,
+  standalone = false,
+  onPoppedOut,
+}: Props) {
   const { t } = useI18n();
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [message, setMessage] = useState("");
@@ -291,6 +315,26 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
     () => manifests.find((m) => m.id === manifestId) ?? null,
     [manifestId, manifests],
   );
+
+  // Detach the chat into its own browser popup (devtools-undock
+  // style). The popup mounts the standalone `/chat` route — same
+  // session cookie, same SSE stream — and carries the current
+  // session id so it attaches to exactly what the user was looking
+  // at. Named window: re-clicking focuses the existing popup
+  // instead of stacking new ones.
+  const openPopup = useCallback(() => {
+    const query = session ? `?session=${encodeURIComponent(session.id)}` : "";
+    const url = `${ROUTER_BASENAME}/projects/${projectId}/w/${workspaceId}/chat${query}`;
+    const win = window.open(
+      url,
+      `gapt-chat-${workspaceId}`,
+      "popup=yes,width=560,height=800",
+    );
+    if (win) {
+      win.focus();
+      onPoppedOut?.(win);
+    }
+  }, [onPoppedOut, projectId, session, workspaceId]);
 
   const onPickModel = useCallback(
     (value: string | null) => {
@@ -734,55 +778,59 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
 
   return (
     <div data-panel-kind="chat" className="flex h-full flex-col">
-      <header className="flex shrink-0 items-center gap-3 border-b border-border bg-bg-elevated px-3 py-2">
-        {/* Phase G.3 — manifest picker. While a session is active the
-            picker is read-only (the session's pipeline is already
-            committed); before "Start session" the dropdown lets the
-            operator pick a different manifest. */}
-        <ManifestPill
-          session={session}
-          manifests={manifests}
-          selectedId={manifestId}
-          selected={selectedManifest}
-          open={manifestMenuOpen}
-          onToggle={() => setManifestMenuOpen((v) => !v)}
-          onPick={onPickManifest}
-        />
-        {/* Phase L follow-up — model + thinking pills are never
-            locked. The backend mutates `state.model` / `state.thinking_*`
-            on each `/invoke` so changes apply to the NEXT turn of the
-            existing session, no new-session dance required. */}
-        <ModelPill
-          locked={false}
-          selected={modelOverride}
-          manifestModel={selectedManifest?.model ?? null}
-          open={modelMenuOpen}
-          onToggle={() => setModelMenuOpen((v) => !v)}
-          onPick={onPickModel}
-        />
-        <ThinkingPill
-          locked={false}
-          selected={thinkingBudget}
-          open={thinkingMenuOpen}
-          onToggle={() => setThinkingMenuOpen((v) => !v)}
-          onPick={onPickThinking}
-        />
-        {/* Phase L.3 — pick / switch / reactivate sessions. Only shown
-            when there's at least one session for this workspace. */}
-        {workspaceSessions.length > 0 ? (
-          <SessionPicker
-            sessions={workspaceSessions}
-            current={session}
-            open={sessionMenuOpen}
-            onToggle={() => setSessionMenuOpen((v) => !v)}
-            onPick={onSwitchSession}
+      <header className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-elevated px-3 py-2">
+        {/* The control pills live inside an OverflowToolbar: when the
+            panel is too narrow for all of them, the tail collapses
+            into a `…` popover instead of being clipped off-screen
+            (the old behaviour made the session picker / cost button
+            literally unreachable in a narrow chat column). Priority
+            = DOM order: manifest → model → thinking → session →
+            mode → cost → transcript. */}
+        <OverflowToolbar moreLabel={t("toolbar.more")}>
+          {/* Phase G.3 — manifest picker. While a session is active the
+              picker is read-only (the session's pipeline is already
+              committed); before "Start session" the dropdown lets the
+              operator pick a different manifest. */}
+          <ManifestPill
+            session={session}
+            manifests={manifests}
+            selectedId={manifestId}
+            selected={selectedManifest}
+            open={manifestMenuOpen}
+            onToggle={() => setManifestMenuOpen((v) => !v)}
+            onPick={onPickManifest}
           />
-        ) : null}
-        <span className="sr-only">
-          {session ? session.env_manifest_id : ""}
-        </span>
-        {session ? (
-          <>
+          {/* Phase L follow-up — model + thinking pills are never
+              locked. The backend mutates `state.model` / `state.thinking_*`
+              on each `/invoke` so changes apply to the NEXT turn of the
+              existing session, no new-session dance required. */}
+          <ModelPill
+            locked={false}
+            selected={modelOverride}
+            manifestModel={selectedManifest?.model ?? null}
+            open={modelMenuOpen}
+            onToggle={() => setModelMenuOpen((v) => !v)}
+            onPick={onPickModel}
+          />
+          <ThinkingPill
+            locked={false}
+            selected={thinkingBudget}
+            open={thinkingMenuOpen}
+            onToggle={() => setThinkingMenuOpen((v) => !v)}
+            onPick={onPickThinking}
+          />
+          {/* Phase L.3 — pick / switch / reactivate sessions. Only shown
+              when there's at least one session for this workspace. */}
+          {workspaceSessions.length > 0 ? (
+            <SessionPicker
+              sessions={workspaceSessions}
+              current={session}
+              open={sessionMenuOpen}
+              onToggle={() => setSessionMenuOpen((v) => !v)}
+              onPick={onSwitchSession}
+            />
+          ) : null}
+          {session ? (
             <div
               role="group"
               aria-label="chat mode"
@@ -815,22 +863,26 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
                 {t("chat.mode.act")}
               </button>
             </div>
+          ) : null}
+          {session ? (
             <button
               type="button"
               data-testid="chat-cost"
               onClick={() => setShowCostModal(true)}
               aria-haspopup="dialog"
               aria-label={t("cost.open")}
-              className="ml-auto inline-flex items-center gap-2 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] font-mono tabular-nums text-fg-muted hover:bg-surface-hover hover:text-fg"
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-subtle px-2 py-1 text-[11px] font-mono tabular-nums text-fg-muted hover:bg-surface-hover hover:text-fg"
             >
               <span className="text-accent">${cost.cost_usd.toFixed(4)}</span>
               <span>·</span>
               <span>↑{cost.input_tokens}</span>
               <span>↓{cost.output_tokens}</span>
             </button>
-            {/* Phase I.4 — markdown transcript download. Reads
-                session_events DB-side so a server restart never loses
-                history. */}
+          ) : null}
+          {/* Phase I.4 — markdown transcript download. Reads
+              session_events DB-side so a server restart never loses
+              history. */}
+          {session ? (
             <button
               type="button"
               data-testid="chat-transcript-download"
@@ -841,7 +893,23 @@ export function ChatPanel({ projectId, workspaceId }: Props) {
             >
               <Download className="h-3 w-3" />
             </button>
-          </>
+          ) : null}
+        </OverflowToolbar>
+        <span className="sr-only">{session ? session.env_manifest_id : ""}</span>
+        {/* Pop-out lives OUTSIDE the overflow toolbar — pinned and
+            always reachable regardless of how narrow the panel gets.
+            Hidden in the popup itself. */}
+        {!standalone ? (
+          <button
+            type="button"
+            data-testid="chat-popout"
+            onClick={openPopup}
+            aria-label={t("chat.popup.open")}
+            title={t("chat.popup.open")}
+            className="inline-flex shrink-0 items-center rounded-md border border-border bg-bg-subtle p-1.5 text-fg-muted hover:bg-surface-hover hover:text-fg"
+          >
+            <PictureInPicture2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+          </button>
         ) : null}
       </header>
       {session && mode === "plan" ? (

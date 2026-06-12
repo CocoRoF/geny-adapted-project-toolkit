@@ -62,19 +62,39 @@ describe("<App /> router", () => {
     expect(window.location.pathname).toBe(`${APP_BASE}/login`);
   });
 
-  it("renders the projects placeholder once `/me` resolves", async () => {
+  it("renders the projects index once `/me` resolves", async () => {
     window.history.replaceState({}, "", `${APP_BASE}/projects`);
-    mockFetchOnce(() =>
-      jsonResponse(200, { user_id: "u1", email: "alice@example.com", display_name: null }),
-    );
+    // `/projects` mounts ProjectsIndex, which fans out to the
+    // project list + active-workspace overview + capacity stats —
+    // all three need canned responses or the page errors out.
+    mockFetchOnce((input) => {
+      const path = pathOf(input);
+      if (path.startsWith("/_gapt/api/auth/me")) {
+        return jsonResponse(200, {
+          user_id: "admin",
+          email: null,
+          display_name: "alice@example.com",
+        });
+      }
+      if (path.startsWith("/_gapt/api/workspaces/stats")) {
+        return jsonResponse(200, { active: 0, cap: null });
+      }
+      if (path.startsWith("/_gapt/api/workspaces")) {
+        return jsonResponse(200, []);
+      }
+      if (path.startsWith("/_gapt/api/projects")) {
+        return jsonResponse(200, []);
+      }
+      throw new Error(`Unexpected fetch ${path}`);
+    });
 
     render(<App />);
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/Projects|프로젝트/);
     });
-    // The header surfaces the signed-in email beside the sign-out
-    // button. Both are present once `/me` resolves.
+    // The header surfaces the signed-in identity (display_name when
+    // set) beside the sign-out button.
     expect(screen.getByText("alice@example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sign out|로그아웃/ })).toBeInTheDocument();
   });

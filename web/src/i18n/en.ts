@@ -511,6 +511,9 @@ export const en = {
   "chat.tool.args": "Arguments",
   "chat.shortcut.esc": "Press Esc to interrupt.",
   "chat.transcript.download": "Download transcript (.md)",
+  "chat.popup.open": "Open chat in a popup window",
+  "toolbar.more": "Show hidden controls",
+  "ide.tabs.list": "List all open tabs",
 
   // --- Cost panel ---
   "cost.open": "Cost details",

@@ -34,6 +34,10 @@ async def test_deploy_success_snapshots_then_pulls_then_ups() -> None:
         calls.append(argv)
         if "ps" in argv:
             return (0, "", "")  # nothing running yet
+        if "config" in argv:
+            # Port preflight resolves the compose model — a service
+            # with no `ports` keeps the preflight a no-op.
+            return (0, '{"services": {"web": {"image": "x"}}}', "")
         if "pull" in argv:
             return (0, "pulled\n", "")
         if "up" in argv:
@@ -45,14 +49,16 @@ async def test_deploy_success_snapshots_then_pulls_then_ups() -> None:
 
     assert result.status is DeployStatusKind.SUCCESS
     assert result.exec_code is None
-    # The three compose subcommands must have run in order: ps, pull, up.
+    # Compose subcommands in order: ps (snapshot), config (port
+    # preflight), pull, up.
     compose_cmds = [argv for argv in calls if "compose" in argv]
     assert "-p" in compose_cmds[0]
     project_idx = compose_cmds[0].index("-p")
     assert compose_cmds[0][project_idx + 1] == "gapt-prod-01ksxxxxxxxxxxxxxxxxxxxxxx"
     assert "ps" in compose_cmds[0]
-    assert "pull" in compose_cmds[1]
-    assert "up" in compose_cmds[2]
+    assert "config" in compose_cmds[1]
+    assert "pull" in compose_cmds[2]
+    assert "up" in compose_cmds[3]
 
 
 @pytest.mark.asyncio

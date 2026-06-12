@@ -5,7 +5,7 @@ import { FileEditor } from "@/ide/Editor";
 import { FileDiffView } from "@/ide/FileDiffView";
 import { PreviewTabContent } from "@/ide/PreviewTabContent";
 import { EditorTabBar } from "@/ide/shell/EditorTabBar";
-import type { EditorTab } from "@/ide/shell/IdeShell";
+import type { EditorTab } from "@/ide/shell/editor-tabs";
 
 interface Props {
   workspaceId: string;

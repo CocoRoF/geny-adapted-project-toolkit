@@ -514,6 +514,9 @@ export const ko: Record<keyof typeof en, string> = {
   "chat.tool.args": "인자",
   "chat.shortcut.esc": "Esc 키로 중단할 수 있습니다.",
   "chat.transcript.download": "전체 대화 markdown 다운로드",
+  "chat.popup.open": "채팅을 새 팝업 창으로 열기",
+  "toolbar.more": "가려진 컨트롤 더 보기",
+  "ide.tabs.list": "열린 탭 전체 보기",
 
   // --- Cost panel ---
   "cost.open": "비용 세부",
