@@ -288,7 +288,6 @@ function ServiceRow({
         >
           {service.cmd}
         </span>
-        <span className="min-w-0 flex-1 @[280px]:hidden" aria-hidden />
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {portDrift ? (
             <Badge
@@ -365,6 +364,7 @@ function ServiceRow({
               }
             }}
             title="Copy URL"
+            className="hidden @[240px]:inline-flex"
           >
             <Clipboard className="h-3 w-3" />
           </Button>
