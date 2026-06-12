@@ -82,6 +82,16 @@ class SubdomainBinding:
     # bucket since its cert is for the public domain, not the
     # internal docker DNS name.
     upstream_tls_insecure: bool = False
+    # ── caching (path mode only) ──
+    # When True, the PRIMARY preview route stamps `Cache-Control:
+    # no-store` on every response. Dev-server exposes set this: a dev
+    # server's chunk/CSS URLs change across restarts and the apex URL
+    # space is shared between previews, so any browser/CDN caching
+    # turns into the "unstyled page" bug. (The Referer/Cookie fallback
+    # routes are ALWAYS no-store regardless — the same root-relative
+    # URL serves different bytes per preview, making them inherently
+    # uncacheable by URL.)
+    no_store: bool = False
     # ── cookie pinning (path mode only) ──
     # Path mode shares the apex domain with GAPT itself. Since
     # `cfe55b1`'s `/_gapt/*` namespacing, root-relative URLs the
@@ -179,6 +189,18 @@ def _reverse_proxy_handler(binding: SubdomainBinding) -> dict[str, Any]:
     return handler
 
 
+# Response-header handler stamping `Cache-Control: no-store`.
+# `deferred` applies it AFTER the proxied response arrives so it
+# overrides whatever the upstream sent (immutable max-age, etags…).
+_NO_STORE_HANDLER: dict[str, Any] = {
+    "handler": "headers",
+    "response": {
+        "deferred": True,
+        "set": {"Cache-Control": ["no-store"]},
+    },
+}
+
+
 def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
     """Up to three Caddy routes per path-mode preview binding.
 
@@ -234,6 +256,8 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
                 "response": {"set": {"Set-Cookie": [cookie]}},
             }
         )
+    if binding.no_store:
+        primary_handlers.append(_NO_STORE_HANDLER)
     if binding.strip_prefix:
         primary_handlers.append(
             {"handler": "rewrite", "strip_path_prefix": prefix}
@@ -262,7 +286,11 @@ def _path_route_payloads(binding: SubdomainBinding) -> list[dict[str, Any]]:
     #
     # Either way the Referer regex is the same; only the rewrite
     # differs.
-    fallback_handlers: list[dict[str, Any]] = []
+    # Fallback-routed responses live on AMBIGUOUS URLs (`/_next/x.css`
+    # means different bytes per preview): they must never enter any
+    # URL-keyed cache — browser or CDN — or preview B inherits preview
+    # A's assets ("unstyled page" / wrong-app flashes).
+    fallback_handlers: list[dict[str, Any]] = [_NO_STORE_HANDLER]
     if not binding.strip_prefix:
         fallback_handlers.append(
             {"handler": "rewrite", "uri": prefix + "{http.request.uri}"}
@@ -650,12 +678,14 @@ class SubdomainManager:
                         break
         if proxy is None:
             return False
-        # Compare the FULL desired handler, not just the dial.
-        # Dial-only comparison meant any handler-shape change (Host
-        # header override, stream_close_delay, TLS knobs) was treated
-        # as "current" and silently never applied to live routes —
-        # re-exposing after a GAPT upgrade kept serving the old shape.
-        return proxy == _reverse_proxy_handler(binding)
+        # Compare the FULL desired handler CHAIN, not just the proxy
+        # dial. Dial-only comparison meant any handler-shape change
+        # (Host header override, stream_close_delay, no-store caching,
+        # Set-Cookie pinning) was treated as "current" and silently
+        # never applied to live routes — re-exposing after a GAPT
+        # upgrade kept serving the old shape.
+        expected_primary = _path_route_payloads(binding)[0]
+        return route.get("handle") == expected_primary["handle"]
 
     async def _upsert(
         self,
@@ -852,7 +882,7 @@ class SubdomainManager:
             for offset, payload in enumerate(path_payloads):
                 arr.insert(path_anchor + offset, payload)
 
-            # Anchor for the Referer-keyed fallback: directly after
+            # Anchor for the header-keyed fallbacks: directly after
             # the leading `encode` header filter (which has no match
             # and a non-routing handler). When the host doesn't ship
             # an `encode` block at all, this drops to index 0 — also
@@ -863,7 +893,35 @@ class SubdomainManager:
                 if not r.get("match") and "encode" in handlers:
                     referer_anchor = i + 1
                     break
-            for offset, payload in enumerate(referer_payloads):
+            # GLOBAL fallback ordering — re-sort the whole header-only
+            # region (existing routes from earlier registers + this
+            # register's payloads) so every Referer-keyed route comes
+            # before every Cookie-keyed one. Referer identifies the
+            # page actually making the request; the cookie only
+            # remembers the LAST primary route visited. With two
+            # preview tabs open, preview A's asset requests carry
+            # cookie=B — if B's cookie route happens to sit above A's
+            # Referer route (insert order used to decide this), A's
+            # CSS/chunks get proxied to B's upstream and the page
+            # renders unstyled. Sorting by match-kind makes the
+            # accurate signal always win, regardless of expose order.
+            def _matches_header(route: dict[str, Any], header: str) -> bool:
+                m = (route.get("match") or [{}])[0]
+                regexp = m.get("header_regexp")
+                return isinstance(regexp, dict) and header in regexp
+
+            existing_header_only = [
+                r
+                for r in arr
+                if isinstance(r, dict) and _is_header_only(r)
+            ]
+            arr = [r for r in arr if r not in existing_header_only]
+            pool = existing_header_only + referer_payloads
+            ordered = (
+                [r for r in pool if _matches_header(r, "Referer")]
+                + [r for r in pool if not _matches_header(r, "Referer")]
+            )
+            for offset, payload in enumerate(ordered):
                 arr.insert(referer_anchor + offset, payload)
             # Phase N.3 — atomic in-place update via PATCH.
             #

@@ -487,6 +487,28 @@ async def delete_workspace(
         # Best-effort — the workspace row is already archived; a
         # dangling container can be cleaned up via `docker rm`.
         pass
+    # And the Caddy preview routes its exposed services registered —
+    # without this every archived workspace leaves a -dev/-asset/
+    # -cookie route family behind on the apex forever, growing the
+    # fallback-matching pool (and the hijack surface) with dead
+    # upstreams. Best-effort, same rationale as the container stop.
+    try:
+        from gapt_server.routers.services import (  # noqa: PLC0415 — avoid module cycle
+            _build_subdomain_manager,
+            _workspace_slug,
+        )
+        from gapt_server.settings import get_settings  # noqa: PLC0415
+
+        manager = _build_subdomain_manager(get_settings())
+        if manager is not None:
+            for svc_entry in await container.services.list(workspace_id):
+                await manager.unregister(
+                    _workspace_slug(workspace_id, svc_entry.label)
+                )
+    except Exception:
+        # Dangling routes are recoverable via re-expose/unexpose or
+        # the admin API; never block the archive on routing cleanup.
+        pass
     return WorkspaceResponse.from_view(view)
 
 

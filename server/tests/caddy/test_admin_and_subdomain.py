@@ -1270,3 +1270,112 @@ async def test_catchall_lands_after_pre_existing_host_routes() -> None:
         f"blog must precede catch-all (idx_blog={idx_blog}, "
         f"idx_catchall={idx_catchall})"
     )
+
+
+# ───────────────────────── preview cache hardening ──
+
+
+def _payloads(**kwargs: Any) -> list[dict[str, Any]]:
+    from gapt_server.domains.caddy.subdomain import _path_route_payloads
+
+    binding = SubdomainBinding(
+        workspace_slug="01KWS-dev",
+        upstream_host="gapt-ws-01kws",
+        upstream_port=5173,
+        mode=PreviewMode.PATH,
+        strip_prefix=True,
+        **kwargs,
+    )
+    return _path_route_payloads(binding)
+
+
+def _has_no_store(route: dict[str, Any]) -> bool:
+    for h in route["handle"]:
+        if h.get("handler") == "headers" and h.get("response", {}).get("set", {}).get(
+            "Cache-Control"
+        ) == ["no-store"]:
+            return True
+    return False
+
+
+def test_fallback_routes_are_always_no_store() -> None:
+    """Root-relative fallback URLs (`/_next/x.css`) serve different
+    bytes per preview — they must never enter a URL-keyed cache, or
+    preview B renders with preview A's assets (the unstyled-page bug).
+    Applies regardless of the binding's `no_store` flag."""
+    routes = {p["@id"]: p for p in _payloads(no_store=False)}
+    assert _has_no_store(routes["gapt-preview-01kws-dev-asset"])
+    assert _has_no_store(routes["gapt-preview-01kws-dev-cookie"])
+    # Primary URL embeds the slug — cacheable unless no_store opts out.
+    assert not _has_no_store(routes["gapt-preview-01kws-dev"])
+
+
+def test_primary_route_no_store_when_flagged() -> None:
+    routes = {p["@id"]: p for p in _payloads(no_store=True)}
+    assert _has_no_store(routes["gapt-preview-01kws-dev"])
+
+
+@pytest.mark.asyncio
+async def test_upsert_orders_referer_fallbacks_before_all_cookie_routes() -> None:
+    """Two previews open at once: preview A's asset request carries
+    B's cookie (the cookie remembers the LAST primary visited) but
+    A's Referer. The Referer is the accurate signal, so EVERY
+    Referer-keyed route must outrank EVERY cookie route — across
+    slugs, regardless of expose order. Pre-fix the order depended on
+    insert history, so exposing B after A put B's cookie route above
+    A's Referer route and hijacked A's CSS."""
+    calls: list[tuple[str, str, Any]] = []
+    # Existing state: slug B's full family already registered, with
+    # its cookie route sitting ABOVE where new inserts land.
+    existing = [
+        {"handle": [{"handler": "encode"}]},
+        {
+            "@id": "gapt-preview-bbb-cookie",
+            "match": [
+                {
+                    "header_regexp": {"Cookie": {"pattern": "gapt_preview=bbb"}},
+                    "header": {"Sec-Fetch-Site": ["same-origin"]},
+                }
+            ],
+        },
+        {
+            "@id": "gapt-preview-bbb",
+            "match": [{"path": ["/preview/bbb", "/preview/bbb/*"]}],
+            "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "b:1"}]}],
+        },
+    ]
+
+    async def transport(method: str, path: str, body: Any | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return (200, existing)
+        return (200, None)
+
+    client = CaddyAdminClient(transport=transport)
+    manager = SubdomainManager(client=client, preview_domain="gapt.example")
+    await manager.register(
+        SubdomainBinding(
+            workspace_slug="aaa",
+            upstream_host="a",
+            upstream_port=2,
+            mode=PreviewMode.PATH,
+            strip_prefix=True,
+        )
+    )
+    patched = next(c[2] for c in calls if c[0] == "PATCH")
+    ids = [r.get("@id") for r in patched]
+    referer_positions = [
+        i for i, r in enumerate(patched)
+        if isinstance(r.get("match"), list)
+        and r["match"]
+        and "Referer" in (r["match"][0].get("header_regexp") or {})
+    ]
+    cookie_positions = [
+        i for i, r in enumerate(patched)
+        if isinstance(r.get("match"), list)
+        and r["match"]
+        and "Cookie" in (r["match"][0].get("header_regexp") or {})
+        and not r["match"][0].get("path")
+    ]
+    assert referer_positions and cookie_positions, ids
+    assert max(referer_positions) < min(cookie_positions), ids

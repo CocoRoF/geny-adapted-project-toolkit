@@ -490,6 +490,10 @@ async def _register_binding(
         # keep the default `strip_prefix=False` because they build
         # with NEXT_PUBLIC_BASE_PATH baked in.
         strip_prefix=True,
+        # Dev-server responses must never enter URL-keyed caches: chunk
+        # and CSS URLs are reused across restarts/workspaces on the
+        # shared apex, and a stale cache renders the "unstyled page".
+        no_store=True,
         # Dev servers ship DNS-rebinding protection that 403s any
         # request whose Host header isn't local (vite ≥5
         # `server.allowedHosts`, webpack-dev-server `allowedHosts`).

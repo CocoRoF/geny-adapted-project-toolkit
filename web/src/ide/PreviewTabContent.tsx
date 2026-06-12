@@ -1,5 +1,5 @@
 import { ExternalLink, RotateCw } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "@/app/providers/i18n-context";
 
@@ -36,9 +36,27 @@ export function PreviewTabContent({ initialUrl }: Props) {
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
+  // Remounting the iframe alone re-issues the SAME document URL — the
+  // browser may satisfy it (and its subresources) straight from
+  // cache, which is exactly what the user is trying to escape when a
+  // dev preview renders unstyled. A throwaway query param makes the
+  // document URL unique so it always refetches; with the preview
+  // routes now stamping `Cache-Control: no-store`, the fresh document
+  // pulls fresh assets too.
   const refresh = useCallback(() => {
     setReloadKey((k) => k + 1);
   }, []);
+
+  const iframeSrc = useMemo(() => {
+    if (!url || reloadKey === 0) return url;
+    try {
+      const u = new URL(url, window.location.origin);
+      u.searchParams.set("_gapt_reload", String(reloadKey));
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }, [url, reloadKey]);
 
   const commitDraft = useCallback(() => {
     setUrl(draft.trim());
@@ -123,7 +141,7 @@ export function PreviewTabContent({ initialUrl }: Props) {
           <iframe
             key={reloadKey}
             ref={iframeRef}
-            src={url}
+            src={iframeSrc}
             title={t("preview.title")}
             data-testid="preview-iframe"
             style={
