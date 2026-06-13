@@ -232,7 +232,7 @@ class LocalComposeTarget:
         project: str,
         request: DeployRequest,
         env: dict[str, str],
-    ) -> "tuple[Any, str] | None":
+    ) -> tuple[Any, str] | None:
         """Connect the primary service container to gapt-net and
         register a Caddy preview subdomain. Returns
         `(initial_binding, bound_url)` on success — the caller uses
@@ -353,16 +353,16 @@ class LocalComposeTarget:
         # Path mode by default (single apex domain, no wildcard DNS
         # needed). Subdomain mode is opt-in via the env's
         # `target_options.preview_mode`.
-        from gapt_server.domains.caddy.subdomain import (  # noqa: PLC0415
-            PreviewMode,
-            SubdomainBinding,
-        )
-
         # Slug resolution: operator-overridden `preview_slug` in
         # target_options wins (validated DNS-safe regex), else the
         # `prod-<env>-<project>` default. Keeping the regex inline
         # here avoids a circular import with deploy router helpers.
         import re as _re  # noqa: PLC0415
+
+        from gapt_server.domains.caddy.subdomain import (  # noqa: PLC0415
+            PreviewMode,
+            SubdomainBinding,
+        )
 
         _SLUG_RE = _re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
         override = request.target_options.get("preview_slug")
@@ -429,6 +429,12 @@ class LocalComposeTarget:
         can deterministically re-include it."""
         base = Path((compose_paths or ["docker-compose.yml"])[0])
         return base.parent / ".gapt" / "ports.override.yml"
+
+    def _rollback_override_path(self, compose_paths: list[str]) -> Path:
+        """Where the rollback image-pin override is written (sibling of
+        the ports override)."""
+        base = Path((compose_paths or ["docker-compose.yml"])[0])
+        return base.parent / ".gapt" / "rollback.override.yml"
 
     async def _preflight_ports(
         self,
@@ -507,7 +513,12 @@ class LocalComposeTarget:
         # Our own previous run's docker-proxy listeners must not count
         # as conflicts — re-deploying onto the same ports is the norm.
         listening -= ports_mod.docker_project_ports(ps_text, project=project)
-        occupied: dict[int, str] = dict.fromkeys(listening, "")
+        # Host-listener conflicts have no container name to attribute, so
+        # label them "a host process" (not "") — otherwise strict's
+        # message reads "...already in use." with no clue whether the
+        # holder is a container or some host daemon. Docker-published
+        # ports below overwrite this with the real container name.
+        occupied: dict[int, str] = dict.fromkeys(listening, "a host process")
         occupied.update(
             ports_mod.parse_docker_published_ports(ps_text, exclude_project=project)
         )
@@ -560,7 +571,7 @@ class LocalComposeTarget:
                     log=state.log_tail,
                     exec_code=state.exec_code,
                 )
-            except Exception as exc:  # noqa: BLE001 — preflight is best-effort
+            except Exception as exc:
                 preflight_lines = [
                     f"[gapt] port preflight skipped ({type(exc).__name__}: {exc})"
                 ]
@@ -676,7 +687,7 @@ class LocalComposeTarget:
                                 state.log_tail
                                 + f"[gapt] auto-tune persisted to env config: {tuned_options}\n"
                             )[-2000:]
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         logger.warning("deploy.auto_tune_failed", exc_info=exc)
                         state.log_tail = (
                             state.log_tail
@@ -732,16 +743,53 @@ class LocalComposeTarget:
         # rolling back to the original compose alone would re-request
         # the conflicting host port and fail the rollback too.
         compose_paths = request.resolved_compose_paths()
-        override_path = self._ports_override_path(compose_paths)
-        if override_path.exists():
-            compose_paths = [*compose_paths, str(override_path)]
-        try:
-            if to_version:
-                # Single image override — restamp every running service.
-                rerun_env = {**env, **{f"COMPOSE_IMAGE_{k}": to_version for k in snapshot}}
-            else:
-                rerun_env = {**env, **{f"COMPOSE_IMAGE_{k}": v for k, v in snapshot.items()}}
+        ports_override = self._ports_override_path(compose_paths)
+        if ports_override.exists():
+            compose_paths = [*compose_paths, str(ports_override)]
 
+        # Pin images via a generated `image:` override chained as the
+        # last -f. Pre-fix rollback only set `COMPOSE_IMAGE_<svc>` env
+        # vars, which a real compose file never references — so `up`
+        # re-pulled the SAME (broken) tag and rollback was a silent
+        # no-op that still reported ROLLED_BACK. The override actually
+        # forces compose to the captured image refs (mirrors how the
+        # port preflight injects its override).
+        pins: dict[str, str] = {}
+        if to_version:
+            pins = {svc: to_version for svc in snapshot}
+        else:
+            pins = dict(snapshot)
+        rollback_override = self._rollback_override_path(compose_paths)
+        if pins:
+            lines = ["# Generated by GAPT rollback — image pins.", "services:"]
+            for svc in sorted(pins):
+                lines.append(f"  {json.dumps(svc)}:")
+                lines.append(f"    image: {json.dumps(pins[svc])}")
+            try:
+                rollback_override.parent.mkdir(parents=True, exist_ok=True)
+                rollback_override.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                compose_paths = [*compose_paths, str(rollback_override)]
+            except OSError:
+                # Can't write the override (read-only worktree?) — fall
+                # through; the up below will then be a genuine no-op and
+                # we report it honestly via the empty-pin guard.
+                pins = {}
+
+        try:
+            if not pins:
+                # Nothing to restore (no snapshot captured / override
+                # unwritable). Report HONESTLY instead of claiming a
+                # rollback that did nothing.
+                return RollbackResult(
+                    run_id=ctx.run_id,
+                    status=DeployStatusKind.FAILED,
+                    restored_version=to_version or "snapshot",
+                    log=(
+                        "[gapt] rollback could not pin any image (no prior "
+                        "snapshot or override unwritable) — stack left as-is."
+                    ),
+                    exec_code="deploy.rollback_nothing_to_restore",
+                )
             up_exit, up_out, up_err = await self._run(
                 [
                     self._bin(),
@@ -752,7 +800,7 @@ class LocalComposeTarget:
                     "up",
                     "-d",
                 ],
-                rerun_env,
+                env,
             )
             if up_exit != 0:
                 return RollbackResult(

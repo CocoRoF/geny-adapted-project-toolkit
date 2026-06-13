@@ -780,6 +780,23 @@ async def create_session(
             session_overrides=session_overrides,
             mcp_config=mcp_config,
         )
+        # Verify the workspace belongs to the URL's project BEFORE the
+        # commit — otherwise a mismatched request would leave a
+        # committed orphan AgentSession row that the 400 below can no
+        # longer undo. The handle/session row is still uncommitted
+        # here, so a rollback fully discards it.
+        if handle.project_id != project_id:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "session.workspace_project_mismatch",
+                    "reason": (
+                        f"workspace {payload.workspace_id} belongs to project "
+                        f"{handle.project_id!r}, not {project_id!r}"
+                    ),
+                },
+            )
         await db.commit()
     except ProjectError as exc:
         await db.rollback()
@@ -787,19 +804,6 @@ async def create_session(
     except SessionManagerError as exc:
         await db.rollback()
         raise _http_from_session_error(exc) from exc
-
-    # Verify project membership matches the workspace we just bound to.
-    if handle.project_id != project_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "session.workspace_project_mismatch",
-                "reason": (
-                    f"workspace {payload.workspace_id} belongs to project "
-                    f"{handle.project_id!r}, not {project_id!r}"
-                ),
-            },
-        )
 
     runtime = _build_runtime_from_handle(
         handle,

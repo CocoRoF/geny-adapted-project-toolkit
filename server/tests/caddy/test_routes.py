@@ -124,18 +124,35 @@ async def _create_workspace(client: AsyncClient) -> str:
 async def test_register_preview_posts_caddy_route(fx: _Fx) -> None:
     async with AsyncClient(transport=ASGITransport(app=fx.app), base_url="http://test") as client:
         workspace_id = await _create_workspace(client)
+        # upstream_host is constrained to this workspace's own container
+        # (or a gapt-prod-* stack / localhost) so the register can't be
+        # abused to make Caddy proxy to arbitrary internal hosts.
         resp = await client.post(
             f"/_gapt/api/workspaces/{workspace_id}/preview",
-            json={"upstream_host": "10.0.0.5", "upstream_port": 3000},
+            json={
+                "upstream_host": f"gapt-ws-{workspace_id.lower()}",
+                "upstream_port": 3000,
+            },
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["host"].endswith(".preview.gapt.example")
-        # The stub captured exactly one POST to the routes path.
+        # Path mode is the default now: host is `<domain>/preview/<slug>`,
+        # not a `<slug>.<domain>` subdomain.
+        assert body["host"].startswith("preview.gapt.example/preview/")
+        # The register applies routes via an atomic PATCH of the array
+        # (Phase N.3 — replaced the old DELETE+POST that reset live
+        # connections). The upstream dials this workspace's container.
         methods = [m for (m, _, _) in fx.caddy_calls]
-        paths = [p for (_, p, _) in fx.caddy_calls]
-        assert methods == ["POST"]
-        assert paths[0].endswith("/routes/...")
+        assert "PATCH" in methods
+        patched = next(b for (m, _, b) in fx.caddy_calls if m == "PATCH")
+        dials = [
+            u["dial"]
+            for route in patched
+            for h in route.get("handle", [])
+            if h.get("handler") == "reverse_proxy"
+            for u in h.get("upstreams", [])
+        ]
+        assert any(d.startswith(f"gapt-ws-{workspace_id.lower()}:") for d in dials)
 
 
 @pytest.mark.asyncio
@@ -144,8 +161,15 @@ async def test_unregister_preview_deletes_by_id(fx: _Fx) -> None:
         workspace_id = await _create_workspace(client)
         resp = await client.delete(f"/_gapt/api/workspaces/{workspace_id}/preview")
         assert resp.status_code == 204
+        # Unregister GETs the routes array first, then removes the slug's
+        # route family in ONE atomic PATCH (Phase N.3 — was N sequential
+        # DELETE /id/* calls). This workspace never registered a preview,
+        # so there's nothing to remove and the PATCH is correctly skipped
+        # (GET-only, zero Caddy reloads) — the important invariant is no
+        # per-id DELETE calls anymore.
         methods = [m for (m, _, _) in fx.caddy_calls]
-        assert methods == ["DELETE"]
+        assert "DELETE" not in methods
+        assert methods[0] == "GET"
 
 
 @pytest.mark.asyncio

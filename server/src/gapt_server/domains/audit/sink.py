@@ -169,7 +169,22 @@ class PostgresAuditSink:
             try:
                 await self._flush(batch)
             except Exception:
+                # A flush failure (DB blip) used to DROP the whole batch
+                # — silent audit loss. Re-queue the events (best effort,
+                # bounded by queue capacity) so a transient fault retries
+                # on the next tick instead of erasing the trail. Only an
+                # actually-full queue forces an (logged) drop.
                 logger.exception("audit.flush.failed", batch_size=len(batch))
+                dropped = 0
+                for ev in batch:
+                    try:
+                        self._queue.put_nowait(ev)
+                    except asyncio.QueueFull:
+                        dropped += 1
+                if dropped:
+                    logger.error("audit.flush.requeue_dropped", count=dropped)
+                # Back off briefly so we don't hot-loop against a down DB.
+                await asyncio.sleep(self._flush_interval)
 
     async def _collect_batch(self) -> list[AuditEvent]:
         batch: list[AuditEvent] = []

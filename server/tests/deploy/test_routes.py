@@ -78,7 +78,10 @@ async def fx() -> AsyncIterator[_Fx]:
     ) -> tuple[int, dict[str, Any]]:
         return responses[-1]
 
-    def build_target_local(kind, settings):  # type: ignore[no-untyped-def]
+    async def build_target_local(kind, settings, db):  # type: ignore[no-untyped-def]
+        # Mirror the router's current factory signature: async +
+        # (kind, settings, db). The stub used to be sync/2-arg, which
+        # broke with a TypeError after _build_target grew the db param.
         return WebhookTarget(poster=poster)
 
     # Monkey-patch the router's target factory so every kind maps

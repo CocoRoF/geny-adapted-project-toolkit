@@ -139,6 +139,27 @@ def _route_id(workspace_slug: str) -> str:
     return f"gapt-preview-{workspace_slug.lower()}"
 
 
+def _all_handlers(route: dict[str, Any]) -> set[str]:
+    """Flatten a Caddy route's handler names — outer handlers plus any
+    nested inside a `subroute` (Caddyfile-authored blocks compile to a
+    subroute wrapper). Lets the safety-net / IDE-catch-all detection
+    work whether a route was admin-API-injected or Caddyfile-compiled.
+    Module-level so both `_upsert` and the path-mode drift check use
+    one definition."""
+    names: set[str] = set()
+    for h in route.get("handle", []) or []:
+        name = h.get("handler")
+        if name:
+            names.add(name)
+        if name == "subroute":
+            for sub in h.get("routes", []) or []:
+                for ih in sub.get("handle", []) or []:
+                    ihname = ih.get("handler")
+                    if ihname:
+                        names.add(ihname)
+    return names
+
+
 def _find_handler(handles: list[Any], handler_name: str) -> dict[str, Any] | None:
     """Walk a Caddy route's `handle` array and return the FIRST entry
     whose `handler` field matches `handler_name`. Used by the drift-
@@ -685,7 +706,45 @@ class SubdomainManager:
         # never applied to live routes — re-exposing after a GAPT
         # upgrade kept serving the old shape.
         expected_primary = _path_route_payloads(binding)[0]
-        return route.get("handle") == expected_primary["handle"]
+        if route.get("handle") != expected_primary["handle"]:
+            return False
+
+        # Ordering self-heal (mirrors `_subdomain_route_current`): the
+        # primary `/preview/<slug>` route must sit BEFORE the
+        # `/preview/*` safety-net 404 (static_response) and the IDE
+        # catch-all — Caddy evaluates top-down, so if a stale array put
+        # the safety-net first the slug would 404 even though its route
+        # is byte-correct. Without this check the drift short-circuit
+        # would prevent the re-splice that fixes the order.
+        try:
+            arr = await self.client.get(self.routes_path)
+        except CaddyAdminError:
+            return False
+        if not isinstance(arr, list):
+            return False
+        my_idx: int | None = None
+        anchor_idx: int | None = None
+        for i, r in enumerate(arr):
+            if not isinstance(r, dict):
+                continue
+            if r.get("@id") == primary_id:
+                my_idx = i
+            handlers = _all_handlers(r)
+            paths = (r.get("match") or [{}])[0].get("path") or []
+            is_safety_net = (
+                any(isinstance(p, str) and p.startswith("/preview") for p in paths)
+                and "static_response" in handlers
+            )
+            is_ide_catchall = (not r.get("match")) and bool(
+                handlers & {"subroute", "reverse_proxy", "file_server"}
+            )
+            if (is_safety_net or is_ide_catchall) and anchor_idx is None:
+                anchor_idx = i
+        if my_idx is None:
+            return False
+        if anchor_idx is None:
+            return True  # no swallowing anchor present → order can't be wrong
+        return my_idx < anchor_idx
 
     async def _upsert(
         self,
@@ -753,20 +812,6 @@ class SubdomainManager:
             # IDE catch-all are recognised regardless of whether they
             # were registered via the admin API or compiled from the
             # Caddyfile.
-            def _all_handlers(route: dict[str, Any]) -> set[str]:
-                names: set[str] = set()
-                for h in route.get("handle", []) or []:
-                    name = h.get("handler")
-                    if name:
-                        names.add(name)
-                    if name == "subroute":
-                        for sub in h.get("routes", []) or []:
-                            for ih in sub.get("handle", []) or []:
-                                ihname = ih.get("handler")
-                                if ihname:
-                                    names.add(ihname)
-                return names
-
             # Split payloads by routing strategy. Path-matched routes
             # (the primary `/preview/<slug>/*` match) sit just before
             # the safety-net / IDE catch-all — they only need to
@@ -1063,7 +1108,7 @@ async def auto_tune_preview_route(
                 timeout=timeout_s,
             ) as client:
                 resp = await client.head(probe_url)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log_lines.append(f"[auto-tune {attempt}] probe failed: {exc}")
             break
 
@@ -1110,7 +1155,7 @@ async def auto_tune_preview_route(
                 )
                 try:
                     await manager.register(tuned)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log_lines.append(
                         f"[auto-tune] re-register failed: {exc} — keeping original binding"
                     )
@@ -1120,7 +1165,7 @@ async def auto_tune_preview_route(
                 await asyncio.sleep(0.3)
                 continue
             log_lines.append(
-                f"[auto-tune] 3xx Location doesn't match known pattern — giving up"
+                "[auto-tune] 3xx Location doesn't match known pattern — giving up"
             )
             break
 

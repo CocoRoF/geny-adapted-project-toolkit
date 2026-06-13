@@ -632,6 +632,12 @@ class ServiceRegistry:
                 "service registry has no sandbox manager — wire one via "
                 "AppContainer.services before calling start()"
             )
+        marker = f"GAPT_SVC={workspace_id}:{label}"
+        # Reserve the slot under the SAME lock as the existence check —
+        # otherwise two concurrent start()s both pass the check, both
+        # spawn, and one process leaks (TOCTOU). The placeholder makes
+        # the loser see an in-progress entry and raise immediately. On
+        # any failure below we remove it so a failed start is retryable.
         async with self._lock:
             existing = self._entries.get((workspace_id, label))
             if existing is not None and existing.state in {
@@ -641,6 +647,16 @@ class ServiceRegistry:
                 raise ServiceAlreadyExists(
                     f"service {workspace_id}/{label} is {existing.state.value}"
                 )
+            placeholder = Service(
+                workspace_id=workspace_id,
+                label=label,
+                cmd=cmd,
+                worktree_path=worktree_path,
+                log_path="",
+                state=ServiceState.STARTING,
+                _pgrep_marker=marker,
+            )
+            self._entries[(workspace_id, label)] = placeholder
 
         # Log file lives on host (under the bind-mounted worktree)
         # *and* shows up inside the container at the same relative
@@ -654,8 +670,8 @@ class ServiceRegistry:
         # Unique marker for pgrep — gives us a reliable alive-check
         # later (`pgrep -f` matches the full cmdline). The sandbox
         # plants it as $0 on the wrapping `sh` so /proc/PID/cmdline
-        # carries it without polluting the user's cmd.
-        marker = f"GAPT_SVC={workspace_id}:{label}"
+        # carries it without polluting the user's cmd. (Marker computed
+        # above, before the slot reservation.)
 
         service_env = dict(env or {})
         if port is not None and "PORT" not in service_env:
@@ -692,6 +708,11 @@ class ServiceRegistry:
                 marker=marker,
             )
         except WorkspaceSandboxError as exc:
+            # Release the reserved slot so the failed start is retryable
+            # instead of wedging on a STARTING placeholder forever.
+            async with self._lock:
+                if self._entries.get((workspace_id, label)) is placeholder:
+                    del self._entries[(workspace_id, label)]
             raise RuntimeError(f"failed to spawn service {label!r}: {exc}") from exc
 
         svc = Service(

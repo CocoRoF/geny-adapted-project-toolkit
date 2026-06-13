@@ -106,9 +106,7 @@ async def primary_for_project(
     return rows[0] if rows else None
 
 
-async def get(
-    db: AsyncSession, *, repository_id: str
-) -> models.ProjectRepository | None:
+async def get(db: AsyncSession, *, repository_id: str) -> models.ProjectRepository | None:
     return await db.get(models.ProjectRepository, repository_id)
 
 
@@ -151,14 +149,22 @@ async def add(
     return row
 
 
-async def archive(
-    db: AsyncSession, *, repository_id: str
-) -> models.ProjectRepository:
+async def archive(db: AsyncSession, *, repository_id: str) -> models.ProjectRepository:
     """Soft-delete by stamping ``archived_at``. The on-disk worktree
     folder is left alone — the operator can remove it manually if
     they want the space back. Next workspace creation will skip the
-    archived row."""
+    archived row.
+
+    Soft-delete must reproduce what the FK ``ondelete=SET NULL`` would
+    do on a hard delete, otherwise dependent rows keep pointing at a
+    now-invisible repo: a ``WorkspaceRepository`` selection would show
+    stale data, and an ``Environment`` would target a repo that no
+    longer participates. We NULL both so they fall back to their
+    documented defaults (selection → "(archived)" placeholder handled
+    by the read path; env → project-wide primary)."""
     from datetime import UTC, datetime  # noqa: PLC0415 — local import to avoid cycle
+
+    from sqlalchemy import update  # noqa: PLC0415
 
     row = await db.get(models.ProjectRepository, repository_id)
     if row is None:
@@ -169,5 +175,15 @@ async def archive(
     if row.archived_at is not None:
         return row
     row.archived_at = datetime.now(UTC)
+    await db.execute(
+        update(models.WorkspaceRepository)
+        .where(models.WorkspaceRepository.project_repository_id == repository_id)
+        .values(project_repository_id=None)
+    )
+    await db.execute(
+        update(models.Environment)
+        .where(models.Environment.repository_id == repository_id)
+        .values(repository_id=None)
+    )
     await db.flush()
     return row

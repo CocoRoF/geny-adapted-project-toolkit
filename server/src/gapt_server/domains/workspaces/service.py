@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from gapt_server.db import enums, models
 from gapt_server.db.ulid import new_ulid
@@ -605,7 +606,22 @@ class WorkspaceService:
             status=enums.WorkspaceStatus.CREATING,
         )
         db.add(row)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Two requests created the same (project, name) concurrently
+            # and lost the race to the partial unique index. Honour the
+            # same idempotent contract as the existing-row branch above:
+            # roll back our half-built row and hand back the winner.
+            await db.rollback()
+            existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+            if existing is not None:
+                existing_sel = await _selection_views_for(db, workspace_id=existing.id)
+                return _view(existing, existing_sel)
+            raise WorkspaceError(
+                "workspace.create_conflict",
+                f"workspace {name!r} creation conflicted; retry",
+            ) from None
 
         # Phase N.5 — resolve the operator's selections into project
         # repository rows + persist the join. The clone path consumes
@@ -629,6 +645,7 @@ class WorkspaceService:
             ]
         else:
             resolved_inputs = list(selections)
+            seen_repo_ids: set[str] = set()
             for sel in resolved_inputs:
                 pr = repo_rows_by_id.get(sel.repository_id)
                 if pr is None:
@@ -636,6 +653,16 @@ class WorkspaceService:
                         "workspace.unknown_repository",
                         f"repository {sel.repository_id} not in project {project_id}",
                     )
+                # The (workspace, repo) join carries a UNIQUE constraint.
+                # Catch a repeated repository_id here with a clean 4xx
+                # instead of letting the flush below blow up with an
+                # IntegrityError → unhandled 500.
+                if sel.repository_id in seen_repo_ids:
+                    raise WorkspaceError(
+                        "workspace.duplicate_repository",
+                        f"repository {sel.repository_id} selected more than once",
+                    )
+                seen_repo_ids.add(sel.repository_id)
 
         join_rows: list[models.WorkspaceRepository] = []
         for sel in resolved_inputs:

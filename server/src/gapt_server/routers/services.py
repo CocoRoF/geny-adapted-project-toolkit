@@ -242,16 +242,21 @@ async def delete_service(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "service.not_found", "reason": str(exc)},
         ) from exc
+    # Unregister UNCONDITIONALLY (it's idempotent — no-ops when the
+    # route family is absent). A service recovered after a GAPT restart
+    # has bound_host=None even if its Caddy route still exists (recover
+    # doesn't repopulate the binding), so gating on bound_host would
+    # leak the route forever on every delete-after-restart.
+    manager = _build_subdomain_manager(settings)
+    if manager is not None:
+        try:
+            await manager.unregister(_workspace_slug(workspace_id, label))
+        except CaddyAdminError:
+            # Best-effort — a dangling Caddy route is a known mode and
+            # the operator can clean it up via the admin API. Don't
+            # block the delete.
+            pass
     if svc.bound_host is not None:
-        manager = _build_subdomain_manager(settings)
-        if manager is not None:
-            try:
-                await manager.unregister(_workspace_slug(workspace_id, label))
-            except CaddyAdminError:
-                # Best-effort — a dangling Caddy route is a known
-                # mode and the operator can clean it up via the admin
-                # API. Don't block the delete.
-                pass
         await registry.set_bound(workspace_id, label, None, None)
     try:
         await registry.stop(workspace_id, label)
@@ -617,7 +622,7 @@ async def _warm_upstream(*, workspace_id: str, port: int) -> None:
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(proc.wait(), timeout=70.0)
-    except (asyncio.TimeoutError, FileNotFoundError, OSError):
+    except (TimeoutError, FileNotFoundError, OSError):
         return
 
 
@@ -641,15 +646,18 @@ async def unexpose_service(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "service.not_found", "reason": str(exc)},
         ) from exc
-    if svc.bound_host is None:
-        return
+    # Unregister UNCONDITIONALLY (idempotent): a service recovered after
+    # a GAPT restart has bound_host=None yet its Caddy route may still
+    # exist, so an early return on bound_host==None would leave it
+    # dangling. The route unregister no-ops when the family is absent.
     manager = _build_subdomain_manager(settings)
     if manager is not None:
         try:
             await manager.unregister(_workspace_slug(workspace_id, label))
         except CaddyAdminError:
             pass
-    await registry.set_bound(workspace_id, label, None, None)
+    if svc.bound_host is not None:
+        await registry.set_bound(workspace_id, label, None, None)
     # The loopback forwarder (if expose spawned one) serves no one
     # without the route — reap it so the port is freed.
     await registry.kill_forwarder(
