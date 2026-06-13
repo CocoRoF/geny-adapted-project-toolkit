@@ -178,6 +178,22 @@ def _is_gapt_managed_path(path: str) -> bool:
     return path.startswith(".gapt/") or path == ".gapt"
 
 
+def _is_safe_discard_path(p: str) -> bool:
+    """Gate for `git_discard`: only ordinary worktree-relative paths
+    are eligible for the restore/clean sweep. Rejects empty strings,
+    absolute paths, any `..` traversal segment, and `.gapt/`-managed
+    scratch paths so this endpoint can't be turned into a generic
+    fs-delete primitive. Pure predicate — no I/O — so the path-safety
+    contract is testable without a DB/sandbox."""
+    if not p or p.startswith("/"):
+        return False
+    if ".." in p.split("/"):
+        return False
+    if _is_gapt_managed_path(p):
+        return False
+    return True
+
+
 async def _git_exec(
     sandbox: WorkspaceSandbox,
     argv: list[str],
@@ -793,11 +809,18 @@ class GitSyncResponse(BaseModel):
     error: str | None = None
 
 
-async def _git_fetch(sandbox: WorkspaceSandbox, token: str | None) -> tuple[int, str]:
+async def _git_fetch(
+    sandbox: WorkspaceSandbox, target: _RepoTarget, token: str | None
+) -> tuple[int, str]:
     """`git fetch origin` — refreshes remote-tracking refs without
     touching the worktree. Token (when supplied) is injected via the
     same `http.extraHeader` mechanism the clone path uses so private
-    repos work transparently."""
+    repos work transparently.
+
+    `target` is threaded from the caller's `_resolve_repo_target` so
+    the fetch runs in the right repo subdir on multi-repo workspaces —
+    pre-fix this helper referenced an undefined `target`, making every
+    Fetch / Pull / Sync 500 with a NameError."""
     argv = _with_auth_prefix(["fetch", "origin", "--prune"], token)
     rc, out, err = await _git_exec_in(sandbox, target, argv, timeout_s=60.0)
     return rc, (out + err).strip()
@@ -838,7 +861,7 @@ async def git_fetch(
     token = await _read_github_token(
         db, project_id=ws.project_id, actor_id=user.id, vault=vault, container=container
     )
-    rc, output = await _git_fetch(sandbox, token)
+    rc, output = await _git_fetch(sandbox, target, token)
     if rc != 0:
         return GitSyncResponse(
             ok=False, actions=["fetch"], output=output, error=output[-400:]
@@ -875,7 +898,7 @@ async def git_pull(
     )
     actions: list[str] = []
 
-    rc, fetch_out = await _git_fetch(sandbox, token)
+    rc, fetch_out = await _git_fetch(sandbox, target, token)
     actions.append("fetch")
     if rc != 0:
         return GitSyncResponse(
@@ -943,7 +966,7 @@ async def git_sync(
     actions: list[str] = []
     log_parts: list[str] = []
 
-    rc, out = await _git_fetch(sandbox, token)
+    rc, out = await _git_fetch(sandbox, target, token)
     actions.append("fetch")
     log_parts.append(f"$ git fetch\n{out}")
     if rc != 0:
@@ -1079,7 +1102,7 @@ async def git_discard(
     safe: list[str] = []
     skipped: list[dict[str, str]] = []
     for p in payload.paths:
-        if not p or p.startswith("/") or ".." in p.split("/") or _is_gapt_managed_path(p):
+        if not _is_safe_discard_path(p):
             skipped.append({"path": p, "reason": "path rejected by safety filter"})
             continue
         safe.append(p)
