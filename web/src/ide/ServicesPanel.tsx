@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 
+import { useI18n } from "@/app/providers/i18n-context";
 import { ApiError } from "@/api/client";
 import { parseJsonObject } from "@/lib/json";
 import {
@@ -246,6 +247,7 @@ function ServiceRow({
   onToggleTail: () => void;
   onOpenPreview?: (url: string, label: string) => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
@@ -293,7 +295,9 @@ function ServiceRow({
             <Badge
               tone="warn"
               className="text-[10px]"
-              title={`선언 포트 :${service.port}가 사용 중이라 서버가 :${service.auto_port}로 옮겨갔어요. Expose는 감지된 포트를 사용합니다.`}
+              title={t("services.port_drift_tip")
+                .replace("{port}", String(service.port))
+                .replace("{autoPort}", String(service.auto_port))}
             >
               :{service.port}→:{service.auto_port}
             </Badge>

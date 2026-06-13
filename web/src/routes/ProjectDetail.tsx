@@ -128,7 +128,7 @@ export function ProjectDetail() {
   const onAddRepo = useCallback(async () => {
     if (!projectId) return;
     if (!addRepoForm.subpath.trim() || !addRepoForm.display_name.trim()) {
-      setAddRepoErr("subpath + 표시 이름은 필수입니다.");
+      setAddRepoErr(t("project_detail.add_repo.required"));
       return;
     }
     setAddRepoErr(null);
@@ -150,16 +150,12 @@ export function ProjectDetail() {
         setAddRepoErr(err instanceof Error ? err.message : String(err));
       }
     }
-  }, [projectId, addRepoForm, repos.length, refreshRepos]);
+  }, [projectId, addRepoForm, repos.length, refreshRepos, t]);
 
   const onRemoveRepo = useCallback(
     async (repoId: string, displayName: string) => {
       if (!projectId) return;
-      if (
-        !window.confirm(
-          `'${displayName}' 레포지토리를 제거할까요? (워크스페이스의 파일은 그대로 둠)`,
-        )
-      ) {
+      if (!window.confirm(t("project_detail.remove_repo.confirm").replace("{name}", displayName))) {
         return;
       }
       try {
@@ -172,10 +168,10 @@ export function ProjectDetail() {
             : err instanceof Error
               ? err.message
               : String(err);
-        window.alert(`레포지토리 제거 실패: ${msg}`);
+        window.alert(t("project_detail.remove_repo.failed").replace("{msg}", msg));
       }
     },
-    [projectId, refreshRepos],
+    [projectId, refreshRepos, t],
   );
 
   useEffect(() => {
@@ -263,7 +259,7 @@ export function ProjectDetail() {
                 to={`/projects/${project.id}/sessions`}
                 className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
               >
-                세션 히스토리 →
+                {t("project_detail.session_history")} →
               </Link>
               <Link
                 to={`/projects/${project.id}/environments`}
@@ -298,7 +294,7 @@ export function ProjectDetail() {
       <section className="mb-6">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[15px] font-semibold text-fg">
-            레포지토리 {repos.length > 0 ? `(${repos.length})` : ""}
+            {t("project_detail.repositories")} {repos.length > 0 ? `(${repos.length})` : ""}
           </h2>
           <Button
             variant="secondary"
@@ -306,7 +302,7 @@ export function ProjectDetail() {
             disabled={state !== "ready"}
           >
             <Plus className="h-3.5 w-3.5" />
-            레포 추가
+            {t("project_detail.add_repo")}
           </Button>
         </div>
         {showAddRepo ? (
@@ -320,7 +316,9 @@ export function ProjectDetail() {
                   "Cannot read properties of null (reading 'value')".
                   Reading the value into a local first sidesteps that. */}
               <div>
-                <label className="mb-1 block text-[11px] text-fg-muted">서브패스 (폴더명)</label>
+                <label className="mb-1 block text-[11px] text-fg-muted">
+                  {t("project_detail.subpath_label")}
+                </label>
                 <Input
                   value={addRepoForm.subpath}
                   onChange={(e) => {
@@ -331,7 +329,9 @@ export function ProjectDetail() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-fg-muted">표시 이름</label>
+                <label className="mb-1 block text-[11px] text-fg-muted">
+                  {t("project_detail.display_name_label")}
+                </label>
                 <Input
                   value={addRepoForm.display_name}
                   onChange={(e) => {
@@ -343,7 +343,7 @@ export function ProjectDetail() {
               </div>
               <div>
                 <label className="mb-1 block text-[11px] text-fg-muted">
-                  Git URL <span className="text-fg-subtle">(비워두면 빈 폴더)</span>
+                  Git URL <span className="text-fg-subtle">{t("project_detail.git_url_hint")}</span>
                 </label>
                 <Input
                   value={addRepoForm.git_remote_url}
@@ -358,18 +358,18 @@ export function ProjectDetail() {
             {addRepoErr ? <p className="mt-2 text-[11px] text-danger">{addRepoErr}</p> : null}
             <div className="mt-3 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setShowAddRepo(false)}>
-                취소
+                {t("project_detail.cancel")}
               </Button>
               <Button variant="primary" onClick={() => void onAddRepo()}>
-                추가
+                {t("project_detail.add")}
               </Button>
             </div>
           </div>
         ) : null}
         {state === "ready" && repos.length === 0 ? (
           <p className="rounded-md border border-dashed border-border bg-bg-elevated/40 px-4 py-3 text-[12px] text-fg-muted">
-            이 프로젝트에는 레포지토리가 없습니다. 위의 <strong>레포 추가</strong> 버튼으로 git URL
-            을 등록하거나, 비워둔 채로 추가해서 빈 폴더로만 시작할 수도 있습니다.
+            {t("project_detail.empty_repos.before")} <strong>{t("project_detail.add_repo")}</strong>{" "}
+            {t("project_detail.empty_repos.after")}
           </p>
         ) : null}
         {repos.length > 0 ? (
@@ -395,14 +395,14 @@ export function ProjectDetail() {
                   </a>
                 ) : (
                   <span className="ml-2 text-[11px] italic text-fg-subtle">
-                    (no remote — git init 대기)
+                    {t("project_detail.no_remote")}
                   </span>
                 )}
                 {repos.length > 1 ? (
                   <button
                     type="button"
                     onClick={() => void onRemoveRepo(r.id, r.display_name)}
-                    title="레포지토리 제거"
+                    title={t("project_detail.remove_repo")}
                     className="ml-auto grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-danger/10 hover:text-danger"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -414,7 +414,8 @@ export function ProjectDetail() {
         ) : null}
         {reposLoading ? (
           <p className="mt-2 text-[11px] text-fg-subtle">
-            <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> 갱신 중…
+            <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />{" "}
+            {t("project_detail.refreshing")}
           </p>
         ) : null}
       </section>
@@ -493,7 +494,9 @@ export function ProjectDetail() {
                                 {s.branch ? (
                                   <span className="text-fg-subtle">@{s.branch}</span>
                                 ) : (
-                                  <span className="text-fg-subtle">(빈)</span>
+                                  <span className="text-fg-subtle">
+                                    {t("project_detail.empty_branch")}
+                                  </span>
                                 )}
                                 {i < Math.min(3, w.selections.length - 1) ? (
                                   <span className="mx-0.5">·</span>

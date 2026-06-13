@@ -3,6 +3,7 @@ import { CheckCircle2, FlaskConical, Loader2, Play, Square, XCircle } from "luci
 
 import { getIntrospection } from "@/api/introspect";
 import { streamTestRun, type TestRunFrame } from "@/api/tests";
+import { useI18n } from "@/app/providers/i18n-context";
 import { Badge } from "@/ui/Badge";
 import { Button } from "@/ui/Button";
 
@@ -25,6 +26,7 @@ interface RunState {
  * keeps a scroll-buffer of the last N lines (rolling so a 50k-line
  * pytest run doesn't murder the DOM). */
 export function TestRunnerPanel({ workspaceId }: Props) {
+  const { t } = useI18n();
   const [defaultCmd, setDefaultCmd] = useState<string | null>(null);
   const [defaultCwd, setDefaultCwd] = useState<string | null>(null);
   const [override, setOverride] = useState("");
@@ -107,23 +109,23 @@ export function TestRunnerPanel({ workspaceId }: Props) {
     <div className="flex h-full flex-col bg-bg-elevated">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <FlaskConical className="h-3.5 w-3.5 text-fg-muted" />
-        <span className="text-[12px] font-semibold text-fg">테스트 러너</span>
+        <span className="text-[12px] font-semibold text-fg">{t("test_panel.title")}</span>
         <input
           type="text"
           value={override}
           onChange={(e) => setOverride(e.currentTarget.value)}
-          placeholder={defaultCmd ?? "예: pytest, npm test, vitest run -t auth"}
+          placeholder={defaultCmd ?? t("test_panel.command_placeholder")}
           className="ml-2 flex-1 rounded-md border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent"
         />
         {run?.running ? (
           <Button variant="danger" onClick={cancel}>
             <Square className="mr-1 h-3 w-3" />
-            중단
+            {t("test_panel.stop")}
           </Button>
         ) : (
           <Button variant="primary" onClick={start} disabled={!effectiveCmd}>
             <Play className="mr-1 h-3 w-3" />
-            실행
+            {t("test_panel.run")}
           </Button>
         )}
         {run?.exitCode !== null && run?.exitCode !== undefined ? (
@@ -147,13 +149,13 @@ export function TestRunnerPanel({ workspaceId }: Props) {
         <div className="flex flex-1 items-center justify-center text-[12px] text-fg-subtle">
           {defaultCmd ? (
             <>
-              감지된 명령:{" "}
+              {t("test_panel.detected_command")}{" "}
               <code className="ml-1 rounded bg-bg-elevated px-1 font-mono">{defaultCmd}</code>
               <span className="mx-1 text-fg-subtle">·</span>
-              <span>실행을 누르세요</span>
+              <span>{t("test_panel.press_run")}</span>
             </>
           ) : (
-            "테스트 명령을 입력하고 실행하세요."
+            t("test_panel.empty_state")
           )}
         </div>
       ) : (
@@ -163,7 +165,8 @@ export function TestRunnerPanel({ workspaceId }: Props) {
         >
           {run.lines.length === 0 ? (
             <span className="flex items-center gap-1 text-fg-subtle">
-              <Loader2 className="h-3 w-3 animate-spin" /> {run.command} 시작 중…
+              <Loader2 className="h-3 w-3 animate-spin" />{" "}
+              {t("test_panel.starting").replace("{command}", run.command)}
             </span>
           ) : (
             run.lines.join("\n")

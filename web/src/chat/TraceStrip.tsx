@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 
+import { useI18n } from "@/app/providers/i18n-context";
 import type { SessionStreamEvent } from "@/chat/useSessionStream";
 import { cn } from "@/ui/cn";
 
@@ -47,24 +48,24 @@ function asString(v: unknown, fallback = ""): string {
   return typeof v === "string" ? v : fallback;
 }
 
-/** Human-readable label per phase code. */
-const PHASE_LABEL: Record<string, string> = {
-  stage_enter: "단계 진입",
-  stage_exit: "단계 완료",
-  stage_bypass: "단계 건너뜀",
-  api_request: "API 호출",
-  api_response: "API 응답",
-  parse: "파싱",
-  evaluate_start: "평가 시작",
-  evaluate_complete: "평가 완료",
-  loop: "루프",
-  yield: "최종 결과",
-  guard: "가드",
-  context: "컨텍스트",
-  system: "시스템 프롬프트",
-  memory: "메모리",
-  task_registry: "작업 레지스트리",
-  input: "입력 정규화",
+/** i18n key per phase code. Resolved to a human-readable label via t(). */
+const PHASE_LABEL_KEY: Record<string, string> = {
+  stage_enter: "trace.phase.stage_enter",
+  stage_exit: "trace.phase.stage_exit",
+  stage_bypass: "trace.phase.stage_bypass",
+  api_request: "trace.phase.api_request",
+  api_response: "trace.phase.api_response",
+  parse: "trace.phase.parse",
+  evaluate_start: "trace.phase.evaluate_start",
+  evaluate_complete: "trace.phase.evaluate_complete",
+  loop: "trace.phase.loop",
+  yield: "trace.phase.yield",
+  guard: "trace.phase.guard",
+  context: "trace.phase.context",
+  system: "trace.phase.system",
+  memory: "trace.phase.memory",
+  task_registry: "trace.phase.task_registry",
+  input: "trace.phase.input",
 };
 
 /** Phase-bucket → tailwind colour. Picks 1 of 4 tones so the
@@ -78,7 +79,15 @@ function phaseTone(phase: string): string {
 }
 
 export function TraceStrip({ events, active }: Props) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
+
+  // Resolve a phase code to its localized label, falling back to the
+  // raw code when we have no key for it.
+  const phaseLabel = (phase: string): string => {
+    const key = PHASE_LABEL_KEY[phase];
+    return key ? t(key as Parameters<typeof t>[0]) : phase;
+  };
 
   const steps = useMemo<Step[]>(() => {
     const out: Step[] = [];
@@ -105,10 +114,10 @@ export function TraceStrip({ events, active }: Props) {
   })();
 
   const headLabel = lastLiveStep
-    ? `${PHASE_LABEL[lastLiveStep.phase] ?? lastLiveStep.phase}${
+    ? `${phaseLabel(lastLiveStep.phase)}${
         lastLiveStep.stage ? ` · ${lastLiveStep.stage}` : ""
       }${lastLiveStep.summary ? ` · ${lastLiveStep.summary}` : ""}`
-    : "대기 중…";
+    : t("trace.idle");
 
   return (
     <div
@@ -146,7 +155,7 @@ export function TraceStrip({ events, active }: Props) {
                 {step.stage || "·"}
               </span>
               <span className={cn("shrink-0", phaseTone(step.phase))}>
-                {PHASE_LABEL[step.phase] ?? step.phase}
+                {phaseLabel(step.phase)}
               </span>
               {step.summary ? (
                 <span className="truncate text-fg-subtle">{step.summary}</span>

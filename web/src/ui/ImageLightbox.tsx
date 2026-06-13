@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
+import { useI18n } from "@/app/providers/i18n-context";
 import { cn } from "@/ui/cn";
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
  * overlay is portal-mounted on <body> (escapes the panel's
  * overflow-hidden), closes on backdrop click, the X button, or ESC. */
 export function PreviewableImage({ src, alt, className, title }: Props) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -42,7 +44,7 @@ export function PreviewableImage({ src, alt, className, title }: Props) {
         type="button"
         onClick={() => setOpen(true)}
         title={title ?? alt}
-        aria-label={`${alt} 크게 보기`}
+        aria-label={t("lightbox.view_larger").replace("{name}", alt)}
         className="group/preview block cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <img
@@ -70,7 +72,7 @@ export function PreviewableImage({ src, alt, className, title }: Props) {
               />
               <button
                 type="button"
-                aria-label="닫기"
+                aria-label={t("app.close")}
                 onClick={() => setOpen(false)}
                 className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-white hover:bg-black/80"
               >

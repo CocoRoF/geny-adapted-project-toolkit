@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, FolderGit2, GitBranch, Loader2, RefreshCw } from "lucide-react";
 
 import { ApiError } from "@/api/client";
+import { useI18n } from "@/app/providers/i18n-context";
 import { getRemoteBranches } from "@/api/projects";
 import { type ProjectRepository, listProjectRepositories } from "@/api/repositories";
 import {
@@ -51,6 +52,7 @@ interface RepoRowState {
  *  Combobox has room to render its dropdown without colliding with
  *  the refresh button. */
 export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [worktreePath, setWorktreePath] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -192,7 +194,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!name.trim()) {
-      setError("워크스페이스 이름을 입력해주세요");
+      setError(t("new_ws.name_required"));
       return;
     }
     setError(null);
@@ -226,26 +228,28 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       onClose={() => {
         if (!submitting) onClose();
       }}
-      title="새 워크스페이스 만들기"
-      description="이름을 정하고, 이 워크스페이스에 함께 클론할 레포지토리 + 각각의 브랜치를 고르세요."
+      title={t("new_ws.title")}
+      description={t("new_ws.description")}
       size="2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            취소
+            {t("new_ws.cancel")}
           </Button>
           <Button variant="primary" type="submit" form="new-workspace-form" disabled={!canSubmit}>
             {submitting ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                만드는 중…
+                {t("new_ws.creating")}
               </>
             ) : (
               <>
                 <Check className="mr-1.5 h-3.5 w-3.5" />
-                워크스페이스 만들기
+                {t("new_ws.create")}
                 {includedCount > 0 ? (
-                  <span className="ml-1.5 text-[11px] opacity-75">· {includedCount}개 레포</span>
+                  <span className="ml-1.5 text-[11px] opacity-75">
+                    {t("new_ws.repo_count_suffix").replace("{count}", String(includedCount))}
+                  </span>
                 ) : null}
               </>
             )}
@@ -256,10 +260,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
       <form id="new-workspace-form" onSubmit={onSubmit} className="flex flex-col gap-5">
         {/* ── Section 1: identity ────────────────────────────── */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1fr]">
-          <Field
-            label="워크스페이스 이름"
-            hint="이 프로젝트 안에서만 유니크하면 OK — 예: ws-1430, feature-test"
-          >
+          <Field label={t("new_ws.name_label")} hint={t("new_ws.name_hint")}>
             <Input
               type="text"
               value={name}
@@ -273,7 +274,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
               autoFocus
             />
           </Field>
-          <Field label="워크트리 경로 (선택)" hint="비워두면 /workspace/<slug>/<id> 로 자동 생성">
+          <Field label={t("new_ws.worktree_label")} hint={t("new_ws.worktree_hint")}>
             <Input
               type="text"
               value={worktreePath}
@@ -288,7 +289,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
         <section>
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-[13px] font-semibold text-fg">포함할 레포지토리</h3>
+              <h3 className="text-[13px] font-semibold text-fg">{t("new_ws.repos_heading")}</h3>
               {rows.length > 0 ? (
                 <Badge tone="neutral" className="text-[10px]">
                   {includedCount} / {rows.length}
@@ -302,7 +303,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
                   onClick={() => selectAll(true)}
                   className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-hover hover:text-accent"
                 >
-                  전체 선택
+                  {t("new_ws.select_all")}
                 </button>
                 <span className="text-fg-subtle">·</span>
                 <button
@@ -310,7 +311,7 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
                   onClick={() => selectAll(false)}
                   className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-hover hover:text-accent"
                 >
-                  전체 해제
+                  {t("new_ws.deselect_all")}
                 </button>
               </div>
             ) : null}
@@ -319,17 +320,14 @@ export function NewWorkspaceModal({ open, projectId, onClose, onCreated }: Props
           {!reposLoaded ? (
             <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-bg-subtle px-4 py-6 text-[12px] text-fg-muted">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              레포지토리 불러오는 중…
+              {t("new_ws.repos_loading")}
             </div>
           ) : rows.length === 0 ? (
             <div className="flex items-start gap-3 rounded-lg border border-border bg-bg-subtle px-4 py-3 text-[12px] text-fg-muted">
               <FolderGit2 className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle" />
               <div>
-                <p className="font-medium text-fg">이 프로젝트에는 레포가 없어요</p>
-                <p className="mt-0.5 text-[11.5px]">
-                  워크스페이스가 빈 폴더만 가집니다. 프로젝트 페이지에서 레포를 추가하면 다음
-                  워크스페이스부터 포함할 수 있어요.
-                </p>
+                <p className="font-medium text-fg">{t("new_ws.no_repos_title")}</p>
+                <p className="mt-0.5 text-[11.5px]">{t("new_ws.no_repos_body")}</p>
               </div>
             </div>
           ) : (
@@ -382,6 +380,7 @@ function RepoCard({
   onBranchChange: (v: string) => void;
   onRefreshBranches: () => void;
 }) {
+  const { t } = useI18n();
   const hasRemote = !!row.repo.git_remote_url;
   return (
     <li
@@ -411,13 +410,13 @@ function RepoCard({
             </code>
           ) : (
             <code className="rounded bg-bg-subtle px-1.5 py-0.5 text-[10.5px] text-fg-subtle">
-              루트
+              {t("new_ws.root")}
             </code>
           )}
         </div>
         {!hasRemote ? (
           <Badge tone="warn" className="text-[9.5px]">
-            빈 폴더 · git 없음
+            {t("new_ws.empty_folder_badge")}
           </Badge>
         ) : null}
       </label>
@@ -427,7 +426,7 @@ function RepoCard({
         <div className="border-t border-border/60 px-3.5 py-2.5">
           <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-wider text-fg-subtle">
             <GitBranch className="h-3 w-3" strokeWidth={1.5} />
-            브랜치
+            {t("new_ws.branch_label")}
             {row.branchesLoading ? (
               <Loader2 className="h-3 w-3 animate-spin text-fg-subtle" />
             ) : null}
@@ -457,7 +456,7 @@ function RepoCard({
               type="button"
               onClick={onRefreshBranches}
               disabled={row.branchesLoading}
-              title="원격에서 브랜치 목록 다시 불러오기"
+              title={t("new_ws.refresh_branches_title")}
               className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-border bg-bg text-fg-muted hover:bg-surface-hover hover:text-accent disabled:opacity-50"
             >
               <RefreshCw
@@ -470,13 +469,14 @@ function RepoCard({
             <p className="mt-1.5 flex items-start gap-1.5 text-[10.5px] text-fg-subtle">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warn" />
               <span>
-                브랜치 자동 불러오기 실패 — 직접 입력하세요.
+                {t("new_ws.branches_load_failed")}
                 <span className="ml-1 text-fg-subtle/70">({row.branchesError})</span>
               </span>
             </p>
           ) : row.headBranch ? (
             <p className="mt-1.5 text-[10.5px] text-fg-subtle">
-              원격 기본 브랜치: <code className="text-fg-muted">{row.headBranch}</code>
+              {t("new_ws.default_branch_label")}{" "}
+              <code className="text-fg-muted">{row.headBranch}</code>
             </p>
           ) : null}
         </div>
@@ -485,9 +485,8 @@ function RepoCard({
       {/* Body — empty/candidate repo state. */}
       {row.include && !hasRemote ? (
         <div className="border-t border-border/60 px-3.5 py-2.5 text-[11px] text-fg-subtle">
-          이 레포는 원격 URL이 없어서 클론하지 않고 빈 폴더만 만듭니다. 워크스페이스 안 터미널에서{" "}
-          <code className="text-fg-muted">git init</code>
-          으로 시작할 수 있어요.
+          {t("new_ws.no_remote_body_prefix")} <code className="text-fg-muted">git init</code>
+          {t("new_ws.no_remote_body_suffix")}
         </div>
       ) : null}
     </li>

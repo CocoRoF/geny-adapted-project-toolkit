@@ -250,10 +250,10 @@ function SubdomainSetupGuide({ refreshKey = 0 }: { refreshKey?: number }) {
   const domain = result?.preview_domain ?? "<your-preview-domain>";
   const cnameSnippet = `Type:    CNAME
 Name:    *
-Content: ${domain}.cdn.cloudflare.net   ← 또는 기존 ${domain} 의 target 과 동일
+Content: ${domain}.cdn.cloudflare.net   ${t("env_settings.subdomain.snippet.cname_comment").replace("{domain}", domain)}
 TTL:     Auto
 Proxy:   ✓ (orange cloud)`;
-  const tunnelSnippet = `# ~/.cloudflared/config.yml — ingress 에 와일드카드 항목 추가
+  const tunnelSnippet = `${t("env_settings.subdomain.snippet.tunnel_comment")}
 ingress:
   - hostname: "*.${domain}"
     service: http://localhost:38080
@@ -310,9 +310,9 @@ ingress:
             n={3}
             title={t("env_settings.subdomain.step3.title")}
             body={t("env_settings.subdomain.step3.body")}
-            snippet="# GAPT 서버 환경변수
+            snippet={`${t("env_settings.subdomain.snippet.env_comment")}
 GAPT_CADDY_PREVIEW_DOMAIN=gapt.hrletsgo.me
-GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019"
+GAPT_CADDY_ADMIN_URL=http://127.0.0.1:32019`}
           />
         </>
       )}

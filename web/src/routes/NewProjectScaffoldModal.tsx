@@ -25,6 +25,7 @@ import {
   Square,
 } from "lucide-react";
 
+import { type I18nSnapshot, useI18n } from "@/app/providers/i18n-context";
 import { ApiError } from "@/api/client";
 import type { ProjectResponse } from "@/api/projects";
 import {
@@ -78,6 +79,7 @@ function slugify(input: string): string {
 }
 
 export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
+  const { t } = useI18n();
   const [step, setStep] = useState<Step>(0);
   const [presets, setPresets] = useState<ScaffoldPreset[] | null>(null);
   const [presetsError, setPresetsError] = useState<string | null>(null);
@@ -217,8 +219,13 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
       .finally(() => setSubmitting(false));
   }
 
-  const titles = ["식별 정보", "프리셋 선택", "옵션", "확인 + 생성"];
-  const title = `새 프로젝트 만들기 — ${titles[step]}`;
+  const titles = [
+    t("scaffold.step.identity"),
+    t("scaffold.step.preset"),
+    t("scaffold.step.options"),
+    t("scaffold.step.confirm"),
+  ];
+  const title = t("scaffold.title").replace("{step}", titles[step] ?? "");
 
   return (
     <Modal
@@ -231,13 +238,13 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            취소
+            {t("scaffold.cancel")}
           </Button>
           <div className="flex items-center gap-2">
             {step > 0 ? (
               <Button variant="outline" onClick={prevStep} disabled={submitting}>
                 <ChevronLeft className="h-3.5 w-3.5" />
-                이전
+                {t("scaffold.prev")}
               </Button>
             ) : null}
             {step < 3 ? (
@@ -250,7 +257,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
                   (step === 2 && optionsHaveErrors)
                 }
               >
-                다음
+                {t("scaffold.next")}
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             ) : (
@@ -258,12 +265,12 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
                 {submitting ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    만드는 중…
+                    {t("scaffold.creating")}
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    만들기
+                    {t("scaffold.create")}
                   </>
                 )}
               </Button>
@@ -299,13 +306,16 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
           role="alert"
           className="mb-4 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger"
         >
-          프리셋 로드 실패: {presetsError}
+          {t("scaffold.presets_load_failed")} {presetsError}
         </p>
       ) : null}
 
       {step === 0 ? (
         <div className="flex flex-col gap-3.5">
-          <Field label="표시 이름" hint="한글 OK. 카드 + 프로젝트 페이지 상단에 표시됩니다.">
+          <Field
+            label={t("scaffold.field.display_name.label")}
+            hint={t("scaffold.field.display_name.hint")}
+          >
             <Input
               type="text"
               value={displayName}
@@ -315,9 +325,9 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
             />
           </Field>
           <Field
-            label="슬러그 (GAPT 내부 식별자)"
-            hint="소문자, 숫자, 하이픈만. 표시 이름에서 자동 추출됩니다."
-            error={slug.length > 0 && !slugValid ? "소문자/숫자/하이픈만 사용 가능" : null}
+            label={t("scaffold.field.slug.label")}
+            hint={t("scaffold.field.slug.hint")}
+            error={slug.length > 0 && !slugValid ? t("scaffold.field.slug.error") : null}
           >
             <Input
               type="text"
@@ -332,10 +342,10 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
             />
           </Field>
           <Field
-            label="GitHub 레포 이름"
-            hint="GAPT 가 이 이름으로 새 레포를 만듭니다. 슬러그와 달라도 됩니다."
+            label={t("scaffold.field.repo_name.label")}
+            hint={t("scaffold.field.repo_name.hint")}
             error={
-              repoName.length > 0 && !repoNameValid ? "영숫자 + - _ . 만 (시작은 영숫자/_)" : null
+              repoName.length > 0 && !repoNameValid ? t("scaffold.field.repo_name.error") : null
             }
           >
             <Input
@@ -350,12 +360,12 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
               placeholder="my-project"
             />
           </Field>
-          <Field label="공개 범위">
+          <Field label={t("scaffold.field.visibility.label")}>
             <Select
               value={visibility}
               onChange={(e) => setVisibility(e.currentTarget.value as "private" | "public")}
             >
-              <option value="private">private (권장)</option>
+              <option value="private">{t("scaffold.field.visibility.private")}</option>
               <option value="public">public</option>
             </Select>
           </Field>
@@ -366,7 +376,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
         <div>
           {!presets ? (
             <div className="flex items-center gap-2 text-[12px] text-fg-muted">
-              <Loader2 className="h-3 w-3 animate-spin" /> 프리셋 불러오는 중…
+              <Loader2 className="h-3 w-3 animate-spin" /> {t("scaffold.presets_loading")}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
@@ -411,11 +421,12 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
       {step === 2 && selectedPreset ? (
         <div className="flex flex-col gap-3.5">
           <p className="text-[12px] text-fg-muted">
-            {selectedPreset.display_name} — 옵션을 조정합니다. 기본값으로 두면 바로 다음 단계로.
+            {t("scaffold.options.hint").replace("{name}", selectedPreset.display_name)}
           </p>
           {selectedPreset.option_schema.map((opt) => (
             <OptionField
               key={opt.id}
+              t={t}
               option={opt}
               value={options[opt.id]}
               onChange={(v) => setOptions((prev) => ({ ...prev, [opt.id]: v }))}
@@ -426,19 +437,17 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
 
       {step === 3 && selectedPreset ? (
         <div className="flex flex-col gap-3.5">
-          <p className="text-[12px] text-fg-muted">
-            아래 내용으로 GitHub 레포를 만들고 스캐폴드를 푸시한 뒤 GAPT 프로젝트로 등록합니다.
-          </p>
-          <SummaryRow label="표시 이름" value={displayName} />
-          <SummaryRow label="GAPT 슬러그" value={slug} />
+          <p className="text-[12px] text-fg-muted">{t("scaffold.confirm.hint")}</p>
+          <SummaryRow label={t("scaffold.summary.display_name")} value={displayName} />
+          <SummaryRow label={t("scaffold.summary.slug")} value={slug} />
           <SummaryRow
-            label="GitHub 레포"
+            label={t("scaffold.summary.repo")}
             value={`${visibility === "private" ? "🔒" : "🌐"} ${repoName}`}
           />
-          <SummaryRow label="프리셋" value={selectedPreset.display_name} />
+          <SummaryRow label={t("scaffold.summary.preset")} value={selectedPreset.display_name} />
           {Object.keys(options).length > 0 ? (
             <SummaryRow
-              label="옵션"
+              label={t("scaffold.summary.options")}
               value={Object.entries(options)
                 .map(([k, v]) => `${k}=${String(v)}`)
                 .join(", ")}
@@ -462,7 +471,7 @@ export function NewProjectScaffoldModal({ open, onClose, onCreated }: Props) {
                   >
                     Settings → Credentials
                   </a>{" "}
-                  에서 GitHub PAT 등록 후 다시 시도.
+                  {t("scaffold.error.token_hint")}
                 </span>
               ) : null}
             </p>
@@ -481,10 +490,12 @@ function asFieldString(v: unknown): string {
 }
 
 function OptionField({
+  t,
   option,
   value,
   onChange,
 }: {
+  t: I18nSnapshot["t"];
   option: ScaffoldOption;
   value: unknown;
   onChange: (v: unknown) => void;
@@ -538,7 +549,7 @@ function OptionField({
           checked={Boolean(value ?? option.default)}
           onChange={(e) => onChange(e.currentTarget.checked)}
         />
-        {(value ?? option.default) ? "사용" : "미사용"}
+        {(value ?? option.default) ? t("scaffold.toggle.on") : t("scaffold.toggle.off")}
       </label>
     </Field>
   );

@@ -278,15 +278,21 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
       const r = await rehydrateWorkspace(workspaceId);
       if (r.outcome === "cloned" || r.outcome === "exists" || r.outcome === "skipped") {
         setNotCloned(false);
-        setFlash({ kind: "info", text: `워크스페이스에 레포가 준비됐어요 (${r.outcome})` });
+        setFlash({
+          kind: "info",
+          text: t("git.rehydrate.ready").replace("{outcome}", r.outcome),
+        });
         await refresh();
       } else if (r.outcome === "empty") {
         setNotCloned(false);
-        setFlash({ kind: "info", text: "빈 프로젝트 — 클론할 레포가 없어요" });
+        setFlash({ kind: "info", text: t("git.rehydrate.empty") });
       } else {
         setFlash({
           kind: "error",
-          text: `재클론 실패: ${(r.detail ?? r.outcome).slice(0, 200)}`,
+          text: t("git.rehydrate.failed").replace(
+            "{detail}",
+            (r.detail ?? r.outcome).slice(0, 200),
+          ),
         });
       }
     } catch (e) {
@@ -294,7 +300,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
     } finally {
       setRehydrating(false);
     }
-  }, [workspaceId, refresh]);
+  }, [workspaceId, refresh, t]);
 
   useEffect(() => {
     void refresh();
@@ -709,13 +715,13 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 value={selectedRepoId ?? ""}
                 onChange={(e) => setSelectedRepoId(e.target.value || null)}
                 className="min-w-0 flex-1 truncate rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11.5px] text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-                title="이 패널이 들여다볼 레포지토리를 바꿉니다"
+                title={t("git.repo_selector.title")}
               >
                 {repos.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.display_name}
                     {r.subpath ? `  ·  ${r.subpath}/` : ""}
-                    {!r.git_remote_url ? "  (빈 폴더)" : ""}
+                    {!r.git_remote_url ? `  ${t("git.repo_selector.empty_suffix")}` : ""}
                   </option>
                 ))}
               </select>
@@ -842,12 +848,12 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         {isEmptyProject ? (
           <EmptyStateBody
             icon={<GitBranch className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />}
-            title="레포지토리가 없어요"
+            title={t("git.empty_project.title")}
             description={
               <>
-                이 프로젝트는 빈 상태입니다. 프로젝트 페이지의 "레포지토리" 섹션에서{" "}
-                <strong className="text-fg">레포 추가</strong>로 git URL 을 등록하거나, URL 없이 빈
-                폴더만 만들 수도 있어요.
+                {t("git.empty_project.desc_before")}
+                <strong className="text-fg">{t("git.empty_project.add_repo")}</strong>
+                {t("git.empty_project.desc_after")}
               </>
             }
             footer={
@@ -855,7 +861,7 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 to={`/projects/${projectId}`}
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-bg-elevated px-3 text-[11.5px] font-medium text-fg hover:bg-surface-hover"
               >
-                프로젝트 페이지로 이동 →
+                {t("git.empty_project.go_to_project")}
               </Link>
             }
           />
@@ -863,14 +869,14 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
         {showCandidate ? (
           <EmptyStateBody
             icon={<Package className="h-8 w-8 text-fg-subtle" strokeWidth={1.25} />}
-            title={`'${selectedRepo?.display_name}' 은(는) 빈 폴더 레포예요`}
+            title={t("git.candidate.title").replace("{name}", selectedRepo?.display_name ?? "")}
             description={
               <>
-                이 레포는 원격 URL 없이 등록돼서 git 추적이 비활성화돼 있어요. 터미널에서{" "}
+                {t("git.candidate.desc_before")}
                 <code className="rounded bg-bg-subtle px-1 py-0.5 text-[11px] text-fg-muted">
                   cd {selectedRepo?.subpath || "."} && git init
-                </code>{" "}
-                으로 git 추적을 시작하거나, 프로젝트 페이지에서 원격 URL 을 추가하세요.
+                </code>
+                {t("git.candidate.desc_after")}
               </>
             }
           />
@@ -883,13 +889,8 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                 strokeWidth={1.25}
               />
             }
-            title="이 레포는 아직 워크스페이스에 없어요"
-            description={
-              <>
-                프로젝트에 새로 추가된 레포지토리는 자동 클론이 안 되어 있을 수 있어요. 아래
-                버튼으로 지금 바로 가져올 수 있습니다.
-              </>
-            }
+            title={t("git.not_cloned.title")}
+            description={<>{t("git.not_cloned.desc")}</>}
             footer={
               <>
                 <Button
@@ -903,13 +904,13 @@ export function GitPanel({ workspaceId, projectId, onOpenDiff }: Props) {
                   ) : (
                     <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5" />
                   )}
-                  {rehydrating ? "클론 중…" : "지금 클론하기"}
+                  {rehydrating ? t("git.not_cloned.cloning") : t("git.not_cloned.clone_now")}
                 </Button>
                 <Link
                   to={`/projects/${projectId}`}
                   className="text-[11px] text-fg-subtle hover:text-accent"
                 >
-                  또는 프로젝트 페이지에서 새 워크스페이스 만들기 →
+                  {t("git.not_cloned.or_new_workspace")}
                 </Link>
                 {flash ? (
                   <p

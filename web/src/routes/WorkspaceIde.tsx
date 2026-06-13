@@ -198,7 +198,7 @@ export function WorkspaceIde() {
             window.localStorage.setItem(`${WIZARD_DISMISS_KEY_PREFIX}.${wid}`, "1");
           }}
           onApplied={({ actions }) =>
-            setWizardToast(actions.length > 0 ? actions.join(" · ") : "감지 결과를 적용했습니다.")
+            setWizardToast(actions.length > 0 ? actions.join(" · ") : t("ide_ws.detection_applied"))
           }
         />
       ) : null}
@@ -208,7 +208,7 @@ export function WorkspaceIde() {
           className="fixed bottom-4 right-4 z-40 max-w-[480px] rounded-md border border-accent/40 bg-bg-elevated px-3 py-2 text-[12px] text-fg shadow-lg"
         >
           <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="font-semibold text-accent">자동 감지 적용됨</span>
+            <span className="font-semibold text-accent">{t("ide_ws.auto_detection_applied")}</span>
             <button
               type="button"
               onClick={() => setWizardToast(null)}

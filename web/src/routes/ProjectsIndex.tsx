@@ -199,9 +199,11 @@ export function ProjectsIndex() {
                   >
                     <Sparkles className="mt-0.5 h-3.5 w-3.5 text-accent" />
                     <div>
-                      <div className="text-[13px] font-medium text-fg">새로 만들기</div>
+                      <div className="text-[13px] font-medium text-fg">
+                        {t("projects.menu.scaffold.title")}
+                      </div>
                       <div className="text-[11px] text-fg-muted">
-                        새 GitHub 레포 + 프리셋 스캐폴드
+                        {t("projects.menu.scaffold.desc")}
                       </div>
                     </div>
                   </button>
@@ -218,8 +220,12 @@ export function ProjectsIndex() {
                   >
                     <Download className="mt-0.5 h-3.5 w-3.5 text-fg-muted" />
                     <div>
-                      <div className="text-[13px] font-medium text-fg">불러오기</div>
-                      <div className="text-[11px] text-fg-muted">기존 git 레포 URL 등록</div>
+                      <div className="text-[13px] font-medium text-fg">
+                        {t("projects.menu.import.title")}
+                      </div>
+                      <div className="text-[11px] text-fg-muted">
+                        {t("projects.menu.import.desc")}
+                      </div>
                     </div>
                   </button>
                 </li>
@@ -238,9 +244,11 @@ export function ProjectsIndex() {
                   >
                     <FolderPlus className="mt-0.5 h-3.5 w-3.5 text-fg-muted" />
                     <div>
-                      <div className="text-[13px] font-medium text-fg">빈 프로젝트</div>
+                      <div className="text-[13px] font-medium text-fg">
+                        {t("projects.menu.empty.title")}
+                      </div>
                       <div className="text-[11px] text-fg-muted">
-                        git 없이 시작 + 나중에 레포 추가 (VS Code 식 multi-root)
+                        {t("projects.menu.empty.desc")}
                       </div>
                     </div>
                   </button>
@@ -323,7 +331,9 @@ export function ProjectsIndex() {
                     {p.repository_count > 1 ? (
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
                         <GitBranch className="h-3 w-3" />
-                        <span className="truncate">{p.repository_count}개 레포지토리</span>
+                        <span className="truncate">
+                          {t("projects.repo_count").replace("{count}", String(p.repository_count))}
+                        </span>
                         <Badge tone="accent" className="text-[9px]">
                           multi
                         </Badge>
@@ -331,7 +341,7 @@ export function ProjectsIndex() {
                     ) : p.repository_count === 0 ? (
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
                         <GitBranch className="h-3 w-3" />
-                        <span className="italic">비어있음 (레포 없음)</span>
+                        <span className="italic">{t("projects.repo_empty")}</span>
                       </div>
                     ) : (
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] text-fg-subtle">
