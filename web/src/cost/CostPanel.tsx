@@ -32,7 +32,11 @@ function resolveSince(preset: RangePreset): string | undefined {
 }
 
 function fmtUsd(value: number): string {
-  return `$${value.toFixed(4)}`;
+  // Sign belongs OUTSIDE the currency symbol: "-$0.8560", not the
+  // "$-0.8560" the naive template produced. Negative totals can occur
+  // from a pricing-alias miss producing a refund-shaped delta.
+  const sign = value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(value).toFixed(4)}`;
 }
 
 /** Cost dashboard panel — totals, per-project table, expandable
@@ -240,7 +244,9 @@ export function CostPanel() {
                     <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-bg-subtle">
                       <div
                         className="bg-accent transition-all"
-                        style={{ width: `${(row.cost_usd / maxDaily) * 100}%` }}
+                        style={{
+                          width: `${Math.max(0, Math.min(100, (row.cost_usd / maxDaily) * 100))}%`,
+                        }}
                         aria-hidden
                       />
                     </div>

@@ -60,7 +60,12 @@ export function useDeployStream(runId: string | null): DeployStreamState {
 
     src.onopen = () => {
       if (closed) return;
-      setState((s) => ({ ...s, phase: "open" }));
+      // Reset the accumulated log on every (re)connect. The deploy
+      // stream replays its full log from the top on a fresh
+      // connection, so without this an auto-reconnect after a transient
+      // drop would append a second copy of everything. First connect
+      // resets an already-empty string (no-op).
+      setState((s) => ({ ...s, phase: "open", log: "" }));
     };
 
     src.addEventListener("status", (ev) => {

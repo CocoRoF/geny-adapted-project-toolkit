@@ -24,14 +24,22 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
       <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-4 border-b border-border bg-bg-elevated/90 px-4 backdrop-blur">
-        <Link to="/projects" className="flex items-center gap-2 text-fg hover:text-accent">
+        <Link to="/projects" className="flex min-w-0 items-center gap-2 text-fg hover:text-accent">
           <span
             aria-hidden
-            className="grid h-6 w-6 place-items-center rounded bg-accent text-[11px] font-bold text-accent-fg"
+            className="grid h-6 w-6 shrink-0 place-items-center rounded bg-accent text-[11px] font-bold text-accent-fg"
           >
             G
           </span>
-          <span className="text-[13px] font-semibold tracking-tight">{t("app.title")}</span>
+          {/* Full title truncates instead of wrapping to 4 lines at
+              narrow widths; below sm the long subtitle is dropped to
+              just "GAPT" so the header stays one tidy row. */}
+          <span className="hidden truncate whitespace-nowrap text-[13px] font-semibold tracking-tight sm:inline">
+            {t("app.title")}
+          </span>
+          <span className="truncate whitespace-nowrap text-[13px] font-semibold tracking-tight sm:hidden">
+            GAPT
+          </span>
         </Link>
 
         {signedIn ? (

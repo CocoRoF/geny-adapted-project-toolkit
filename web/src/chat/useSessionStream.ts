@@ -34,6 +34,14 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   const [errorReason, setErrorReason] = useState<string | null>(null);
   const lastSeqRef = useRef(0);
   const sourceRef = useRef<EventSource | null>(null);
+  // Positive seqs already committed to `events`. Native EventSource
+  // auto-reconnects on any transient drop, and the server replays the
+  // turn's history from the top on a fresh connection — without this
+  // guard every reconnect re-appended the WHOLE transcript, doubling
+  // it. seqs are server-assigned + monotonic, so a seen seq is always
+  // a true duplicate. (Non-finite seqs are rare malformed frames; we
+  // never dedup those so the user still sees them.)
+  const seenSeqsRef = useRef<Set<number>>(new Set());
   // When did we last see a terminal `done`/`error` frame?  The server
   // closes the SSE socket cleanly after a terminal frame; the browser
   // fires `onerror` for that close and we'd otherwise show a noisy
@@ -46,6 +54,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
   const reset = useCallback(() => {
     setEvents([]);
     lastSeqRef.current = 0;
+    seenSeqsRef.current = new Set();
     setErrorReason(null);
   }, []);
 
@@ -66,6 +75,7 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
     // events of the new session" and the chat opened blank.
     setEvents([]);
     lastSeqRef.current = 0;
+    seenSeqsRef.current = new Set();
     lastTerminalAtRef.current = 0;
     setErrorReason(null);
 
@@ -85,7 +95,12 @@ export function useSessionStream(sessionId: string | null): UseSessionStreamRetu
           // user still sees something instead of a silent drop.
           data = { raw: event.data };
         }
-        if (Number.isFinite(seq)) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+        if (Number.isFinite(seq)) {
+          lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+          // Drop a frame we've already committed (reconnect replay).
+          if (seenSeqsRef.current.has(seq)) return;
+          seenSeqsRef.current.add(seq);
+        }
         if (kind === "done" || kind === "error") {
           lastTerminalAtRef.current = Date.now();
         }

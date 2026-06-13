@@ -27,6 +27,7 @@ import {
   patchSessionOverrides,
 } from "@/api/sessions";
 import { useI18n } from "@/app/providers/i18n-context";
+import type { MessageKey } from "@/i18n";
 import { CostModal } from "@/chat/CostModal";
 import { deriveCostSnapshot, type CostSnapshot as FullCostSnapshot } from "@/chat/cost-snapshot";
 import { type ManifestSummary, listManifests } from "@/api/manifests";
@@ -68,28 +69,31 @@ function isImageMediaType(v: string): v is ImageMediaType {
 }
 
 /** File → PendingAttachment (base64 + preview). Rejects with a
- * user-displayable reason string. */
-function readImageFile(file: File): Promise<PendingAttachment> {
+ * user-displayable reason string. `t` is threaded in from the caller
+ * (this helper lives outside the component, so it has no hook access). */
+function readImageFile(file: File, t: (key: MessageKey) => string): Promise<PendingAttachment> {
   return new Promise((resolve, reject) => {
     if (!isImageMediaType(file.type)) {
-      reject(new Error(`${file.name || "clipboard image"}: PNG/JPEG/GIF/WebP만 첨부할 수 있어요`));
+      reject(
+        new Error(`${file.name || "clipboard image"}: ${t("chat.attach.error.unsupported_type")}`),
+      );
       return;
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
       reject(
         new Error(
-          `${file.name || "clipboard image"}: ${(file.size / 1024 / 1024).toFixed(1)}MB — 이미지당 최대 5MB입니다`,
+          `${file.name || "clipboard image"}: ${(file.size / 1024 / 1024).toFixed(1)}${t("chat.attach.error.too_large")}`,
         ),
       );
       return;
     }
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`${file.name}: 파일을 읽지 못했습니다`));
+    reader.onerror = () => reject(new Error(`${file.name}: ${t("chat.attach.error.read_failed")}`));
     reader.onload = () => {
       const url = typeof reader.result === "string" ? reader.result : "";
       const comma = url.indexOf(",");
       if (!url.startsWith("data:") || comma < 0) {
-        reject(new Error(`${file.name}: 인코딩 실패`));
+        reject(new Error(`${file.name}: ${t("chat.attach.error.encode_failed")}`));
         return;
       }
       resolve({
@@ -545,42 +549,49 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
     attachmentsCountRef.current = attachments.length;
   }, [attachments]);
 
-  const addImageFiles = useCallback((files: File[]) => {
-    if (files.length === 0) return;
-    void (async () => {
-      const settled = await Promise.allSettled(files.map(readImageFile));
-      const fresh: PendingAttachment[] = [];
-      for (const r of settled) {
-        if (r.status === "fulfilled") fresh.push(r.value);
-        else toast.error(r.reason instanceof Error ? r.reason.message : String(r.reason));
-      }
-      if (fresh.length === 0) return;
-      const room = MAX_ATTACHMENTS - attachmentsCountRef.current;
-      if (room <= 0) {
-        toast.error(`이미지는 한 번에 최대 ${MAX_ATTACHMENTS}장까지 첨부할 수 있어요`);
-        return;
-      }
-      if (fresh.length > room) {
-        toast.warning(`처음 ${room}장만 첨부했어요 (최대 ${MAX_ATTACHMENTS}장)`);
-      }
-      // PURE updater: dedup by content + enforce the cap inside, so a
-      // StrictMode double-call is a harmless no-op the second time.
-      // Content dedup also collapses clipboards that expose the same
-      // screenshot through multiple items.
-      setAttachments((prev) => {
-        const seen = new Set(prev.map((a) => `${a.mediaType}:${a.dataBase64}`));
-        const next = [...prev];
-        for (const att of fresh) {
-          if (next.length >= MAX_ATTACHMENTS) break;
-          const key = `${att.mediaType}:${att.dataBase64}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          next.push(att);
+  const addImageFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      void (async () => {
+        const settled = await Promise.allSettled(files.map((f) => readImageFile(f, t)));
+        const fresh: PendingAttachment[] = [];
+        for (const r of settled) {
+          if (r.status === "fulfilled") fresh.push(r.value);
+          else toast.error(r.reason instanceof Error ? r.reason.message : String(r.reason));
         }
-        return next.length === prev.length ? prev : next;
-      });
-    })();
-  }, []);
+        if (fresh.length === 0) return;
+        const room = MAX_ATTACHMENTS - attachmentsCountRef.current;
+        if (room <= 0) {
+          toast.error(t("chat.attach.error.max_total").replace("{max}", String(MAX_ATTACHMENTS)));
+          return;
+        }
+        if (fresh.length > room) {
+          toast.warning(
+            t("chat.attach.error.partial")
+              .replace("{count}", String(room))
+              .replace("{max}", String(MAX_ATTACHMENTS)),
+          );
+        }
+        // PURE updater: dedup by content + enforce the cap inside, so a
+        // StrictMode double-call is a harmless no-op the second time.
+        // Content dedup also collapses clipboards that expose the same
+        // screenshot through multiple items.
+        setAttachments((prev) => {
+          const seen = new Set(prev.map((a) => `${a.mediaType}:${a.dataBase64}`));
+          const next = [...prev];
+          for (const att of fresh) {
+            if (next.length >= MAX_ATTACHMENTS) break;
+            const key = `${att.mediaType}:${att.dataBase64}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            next.push(att);
+          }
+          return next.length === prev.length ? prev : next;
+        });
+      })();
+    },
+    [t],
+  );
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -825,14 +836,17 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
     if (!session) return undefined;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      const hasInflight = stream.events.some((ev) => ev.kind === "tool_call");
-      if (!hasInflight && !pending) return;
+      // Gate on the real "turn in progress" signal (`isThinking`) —
+      // the prior check only fired when a tool_call frame existed or
+      // `pending` was set, so Esc did nothing during the common case
+      // of the assistant streaming plain text with no tool calls yet.
+      if (!isThinking && !pending) return;
       e.preventDefault();
       interrupt();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [session, stream.events, pending, interrupt]);
+  }, [session, isThinking, pending, interrupt]);
 
   // Reset the local user echoes when the session changes so a fresh
   // chat doesn't inherit the previous session's bubbles. Also clear
@@ -1318,13 +1332,13 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="font-medium">이 세션의 예산 한도에 도달했습니다.</p>
+                  <p className="font-medium">{t("chat.budget.title")}</p>
                   <p className="mt-0.5 text-[11.5px] opacity-90">
-                    누적 비용{" "}
+                    {t("chat.budget.spent_label")}{" "}
                     <span className="font-mono">${budgetExhausted.cost_usd.toFixed(4)}</span>
-                    {" / 한도 "}
+                    {t("chat.budget.cap_label")}
                     <span className="font-mono">${budgetExhausted.cost_budget_usd.toFixed(4)}</span>
-                    . 새 세션을 시작하거나 Settings 에서 한도를 조정하세요.
+                    {t("chat.budget.advice")}
                   </p>
                 </div>
               </div>
@@ -1334,7 +1348,7 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
                   onClick={dismissBudgetExhausted}
                   className="h-7 rounded-md border border-border bg-bg px-2.5 text-[11.5px] text-fg hover:bg-bg-subtle"
                 >
-                  확인
+                  {t("chat.budget.confirm")}
                 </button>
               </div>
             </div>
@@ -1348,11 +1362,8 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="font-medium">다른 곳에서 작업이 진행 중입니다.</p>
-                  <p className="mt-0.5 text-[11.5px] opacity-90">
-                    다른 PC / 탭에서 시작한 invoke 가 아직 끝나지 않았어요. 이어받으면 진행 중인
-                    작업을 중단하고 이 메시지로 다음 turn 을 진행합니다.
-                  </p>
+                  <p className="font-medium">{t("chat.takeover.title")}</p>
+                  <p className="mt-0.5 text-[11.5px] opacity-90">{t("chat.takeover.body")}</p>
                 </div>
               </div>
               <div className="mt-2 flex items-center justify-end gap-1.5">
@@ -1362,7 +1373,7 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
                   disabled={pending}
                   className="h-7 rounded-md border border-border bg-bg px-2.5 text-[11.5px] text-fg hover:bg-bg-subtle disabled:opacity-50"
                 >
-                  취소
+                  {t("chat.takeover.cancel")}
                 </button>
                 <button
                   type="button"
@@ -1373,10 +1384,10 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
                   {pending ? (
                     <>
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      이어받는 중…
+                      {t("chat.takeover.pending")}
                     </>
                   ) : (
-                    "강제로 이어받기"
+                    t("chat.takeover.confirm")
                   )}
                 </button>
               </div>
