@@ -44,8 +44,12 @@ def upgrade() -> None:
     # migration. ``create_type=False`` tells alembic NOT to
     # re-CREATE it (would 42710 "type already exists"); the column
     # still binds to the existing pg type by name.
+    # Values must mirror db/enums.py:GitProvider. `create_type=False`
+    # means this literal is non-load-bearing (the column binds to the
+    # existing pg type by name), but a wrong literal misleads anyone
+    # reading the migration — keep it accurate.
     git_provider_enum = postgresql.ENUM(
-        "github", "gitlab", "bitbucket", "other",
+        "github", "gitlab", "gitea", "generic",
         name="git_provider_enum",
         create_type=False,
     )

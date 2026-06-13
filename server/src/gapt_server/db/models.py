@@ -241,7 +241,10 @@ class Environment(Base):
     )
     created_at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_environments_project_name"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_environments_project_name"),
+        Index("ix_environments_repository_id", "repository_id"),
+    )
 
 
 # ─────────────────────────────────────────────────────── deploy_runs ──
@@ -354,6 +357,7 @@ class Workspace(Base):
             unique=True,
             postgresql_where=text("status != 'archived'"),
         ),
+        Index("ix_workspaces_sandbox_id", "sandbox_id"),
     )
 
 
@@ -408,6 +412,10 @@ class WorkspaceRepository(Base):
             "ix_workspace_repositories_workspace",
             "workspace_id",
         ),
+        Index(
+            "ix_workspace_repositories_project_repository_id",
+            "project_repository_id",
+        ),
     )
 
 
@@ -438,6 +446,11 @@ class Sandbox(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        Index("ix_sandboxes_project_id", "project_id"),
+        Index("ix_sandboxes_workspace_id", "workspace_id"),
+    )
 
 
 # ────────────────────────────────────────────────────── agent_sessions ──
@@ -486,7 +499,10 @@ class AgentSession(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = (Index("ix_agent_sessions_project_status", "project_id", "status"),)
+    __table_args__ = (
+        Index("ix_agent_sessions_project_status", "project_id", "status"),
+        Index("ix_agent_sessions_workspace_id", "workspace_id"),
+    )
 
 
 # ─────────────────────────────────────────────────────── session_events ──
