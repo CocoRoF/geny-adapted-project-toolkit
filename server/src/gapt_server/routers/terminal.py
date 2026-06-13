@@ -33,7 +33,16 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -69,9 +78,7 @@ async def _workspace_or_404(
     # caller doesn't get a confusing failure deep in the PTY layer.
     _ = user
     row = (
-        await db.execute(
-            select(models.Workspace).where(models.Workspace.id == workspace_id)
-        )
+        await db.execute(select(models.Workspace).where(models.Workspace.id == workspace_id))
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(
@@ -150,9 +157,7 @@ async def terminal_ws(
         await websocket.close(code=1011, reason="docker unavailable")
         return
     except WorkspaceSandboxError as exc:
-        await websocket.send_json(
-            {"type": "error", "code": exc.code, "reason": str(exc)}
-        )
+        await websocket.send_json({"type": "error", "code": exc.code, "reason": str(exc)})
         await websocket.close(code=1011, reason="sandbox spawn failed")
         return
 
@@ -234,6 +239,7 @@ _TAIL_POLL_S = 0.4
 @router.get("/{workspace_id}/file-tail")
 async def file_tail(
     workspace_id: str,
+    request: Request,
     path: str = Query(..., min_length=1, max_length=4096),
     since_byte: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
@@ -255,9 +261,40 @@ async def file_tail(
             detail={"code": "tail.path.invalid", "reason": path},
         )
     abs_path = os.path.join(workspace.worktree_path, relative)
+    # `..`-rejection alone is not enough: this reads the file HOST-side,
+    # and the worktree is a bind mount the semi-trusted agent can write.
+    # A symlink it plants (e.g. .gapt/services/x.log → /etc/passwd or a
+    # host ssh key) would otherwise be followed off-tree. Resolve the
+    # real path and require it to stay within the worktree. We resolve
+    # the PARENT (the log file may not exist yet — tail -F waits for it)
+    # and re-check the final realpath on every open below.
+    worktree_real = os.path.realpath(workspace.worktree_path)
+
+    def _within_worktree(p: str) -> bool:
+        real = os.path.realpath(p)
+        return real == worktree_real or real.startswith(worktree_real + os.sep)
+
+    if not _within_worktree(os.path.dirname(abs_path) or abs_path):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "tail.path.escapes_worktree", "reason": path},
+        )
+
+    # Native EventSource can't change its URL on auto-reconnect, but it
+    # DOES resend the last `id:` it saw via the `Last-Event-Id` header.
+    # Honour it (over the initial `since_byte` query) so a transient
+    # drop resumes from the byte offset already delivered instead of
+    # re-streaming the whole file — the "log doubled after a blip" bug.
+    resume_offset = since_byte
+    last_event_id = request.headers.get("last-event-id")
+    if last_event_id:
+        try:
+            resume_offset = max(resume_offset, int(last_event_id))
+        except ValueError:
+            pass
 
     async def stream():  # type: ignore[no-untyped-def]
-        offset = since_byte
+        offset = resume_offset
         # First touch: if the file doesn't exist yet, wait for it.
         # `tail -F` semantics.
         idle_loops = 0
@@ -278,6 +315,12 @@ async def file_tail(
                 # the new tail.
                 offset = 0
             if size > offset:
+                # Re-check on every open: a symlink could be swapped in
+                # after the initial parent check (TOCTOU). If the file
+                # now resolves outside the worktree, stop streaming.
+                if not _within_worktree(abs_path):
+                    yield b": rejected-symlink-escape\n\n"
+                    return
                 with open(abs_path, "rb") as fh:
                     fh.seek(offset)
                     while True:

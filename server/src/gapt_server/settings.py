@@ -1,8 +1,22 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn
+from pydantic import Field, PostgresDsn, RedisDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Built-in placeholders that are fine for local dev but must never
+# reach staging/prod — they'd let anyone forge session cookies or the
+# introspection-MCP bearer (HMAC over session_secret), or derive the
+# vault key. `_validate_secrets` refuses to boot a non-dev env that
+# still carries any of these.
+_DEV_PLACEHOLDER_SECRETS = frozenset(
+    {
+        "dev-only-secret-change-me",
+        "dev-only-daemon-secret-change-me",
+        "dev-only-vault-master-change-me",
+        "dev-only-session-secret",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -245,6 +259,32 @@ class Settings(BaseSettings):
     # invariant floors (deploy.prod / secret.* / git.push.force) at
     # parse time so a misconfigured file never loosens the gates.
     policy_config_path: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_secrets(self) -> "Settings":
+        """Fail fast in staging/prod when any auth secret is still a
+        built-in dev placeholder. session_secret signs the session
+        cookie AND the introspection-MCP bearer token (HMAC) — leaving
+        it at the public default makes both forgeable. dev keeps the
+        placeholders so a fresh clone runs with zero config."""
+        if self.env == "dev":
+            return self
+        offenders = [
+            name
+            for name, value in (
+                ("GAPT_SESSION_SECRET", self.session_secret),
+                ("GAPT_DAEMON_JWT_SECRET", self.daemon_jwt_secret),
+                ("GAPT_VAULT_MASTER_KEY", self.vault_master_key),
+            )
+            if value in _DEV_PLACEHOLDER_SECRETS
+        ]
+        if offenders:
+            raise ValueError(
+                f"env={self.env!r} but these secrets are still the dev "
+                f"placeholder: {', '.join(offenders)}. Set high-entropy "
+                "values (≥32 random chars) before running outside dev."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

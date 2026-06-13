@@ -128,9 +128,7 @@ async def caddy_on_demand_ask(
 
     # Workspace preview — slug == workspace.id lowercased.
     row = (
-        await db.execute(
-            select(models.Workspace).where(models.Workspace.id == slug.upper())
-        )
+        await db.execute(select(models.Workspace).where(models.Workspace.id == slug.upper()))
     ).scalar_one_or_none()
     if row is None or row.status.value == "archived":
         raise HTTPException(
@@ -215,6 +213,33 @@ async def register_preview(
                 "reason": (
                     "preview subdomains require GAPT_CADDY_ADMIN_URL + "
                     "GAPT_CADDY_PREVIEW_DOMAIN — see docs/operations"
+                ),
+            },
+        )
+
+    # Constrain the upstream Caddy will dial: only this workspace's own
+    # sandbox container, a prod stack of its project, or localhost.
+    # Without this, a free-text upstream_host turns the preview register
+    # into a "make GAPT's Caddy proxy to any internal host" primitive.
+    import re as _re  # noqa: PLC0415
+
+    allowed = {
+        f"gapt-ws-{workspace_id.lower()}",
+        "localhost",
+        "127.0.0.1",
+    }
+    host_ok = payload.upstream_host in allowed or bool(
+        _re.fullmatch(r"gapt-prod-[a-z0-9-]+", payload.upstream_host.lower())
+    )
+    if not host_ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "preview.upstream_not_allowed",
+                "reason": (
+                    f"upstream_host {payload.upstream_host!r} must be this "
+                    f"workspace's container (gapt-ws-{workspace_id.lower()}), a "
+                    "gapt-prod-* stack, or localhost"
                 ),
             },
         )
@@ -401,8 +426,8 @@ async def diagnose_subdomain_mode(
     """Check every prerequisite for subdomain mode and report
     which are missing. Called from the env settings modal's
     "현재 상태 확인" button."""
-    import socket  # noqa: PLC0415
     import secrets as _secrets  # noqa: PLC0415
+    import socket  # noqa: PLC0415
 
     # Local imports keep the Cloudflare integration optional — the
     # diagnose endpoint must still work even when the provider
@@ -414,10 +439,10 @@ async def diagnose_subdomain_mode(
     from gapt_server.domains.providers.cloudflare.service import (  # noqa: PLC0415
         CloudflareService,
     )
-    from gapt_server.routers.providers import _read_token  # noqa: PLC0415
     from gapt_server.routers.deploy import (  # noqa: PLC0415
         _resolve_effective_preview_domain,
     )
+    from gapt_server.routers.providers import _read_token  # noqa: PLC0415
 
     next_steps: list[str] = []
     # Effective preview domain: provider config wins over env var so
@@ -437,9 +462,7 @@ async def diagnose_subdomain_mode(
 
     # 2. DNS lookup against a random slug — proves wildcard DNS is wired
     sample_host = (
-        f"diag-{_secrets.token_hex(4)}.{preview_domain}"
-        if preview_domain
-        else "diag-no-domain"
+        f"diag-{_secrets.token_hex(4)}.{preview_domain}" if preview_domain else "diag-no-domain"
     )
     dns_resolves = False
     dns_message = ""
@@ -455,9 +478,9 @@ async def diagnose_subdomain_mode(
                 f"`*.{preview_domain}` → 기존 `{preview_domain}` 과 동일 target "
                 f"(CNAME 또는 A). Cloudflare 사용 시 orange-cloud proxy ON. "
                 f"Cloudflare Tunnel 사용 시 `cloudflared` ingress 에 "
-                f"`hostname: \"*.{preview_domain}\"` 추가."
+                f'`hostname: "*.{preview_domain}"` 추가.'
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             dns_message = f"lookup error: {exc}"
     else:
         dns_message = "skipped (preview_domain unset)"
@@ -490,10 +513,7 @@ async def diagnose_subdomain_mode(
                         for m in route.get("match", []) or []:
                             hosts = m.get("host") or []
                             for h in hosts:
-                                if (
-                                    isinstance(h, str)
-                                    and h.lower().endswith(suffix)
-                                ):
+                                if isinstance(h, str) and h.lower().endswith(suffix):
                                     caddy_has_wildcard_server = True
                                     break
                     # Even with no admin-injected routes yet, `main`
@@ -504,12 +524,10 @@ async def diagnose_subdomain_mode(
                         caddy_has_wildcard_server = True
         except CaddyAdminError as exc:
             next_steps.append(f"Caddy admin API 응답 안 됨: {exc}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             next_steps.append(f"Caddy admin 통신 실패: {exc}")
     else:
-        next_steps.append(
-            "환경변수 `GAPT_CADDY_ADMIN_URL` 미설정 — Caddy 동적 라우팅 비활성."
-        )
+        next_steps.append("환경변수 `GAPT_CADDY_ADMIN_URL` 미설정 — Caddy 동적 라우팅 비활성.")
 
     # 4. End-to-end probe — actually hit `<diag-slug>.<preview-domain>`
     # through Cloudflare and see what comes back. If we get any
@@ -522,9 +540,7 @@ async def diagnose_subdomain_mode(
         try:
             import httpx  # noqa: PLC0415
 
-            async with httpx.AsyncClient(
-                verify=False, follow_redirects=False, timeout=4.0
-            ) as c:
+            async with httpx.AsyncClient(verify=False, follow_redirects=False, timeout=4.0) as c:
                 resp = await c.head(f"https://{sample_host}/")
             e2e_reachable = True
             via = resp.headers.get("via", "")
@@ -547,7 +563,7 @@ async def diagnose_subdomain_mode(
                     f"`~/.cloudflared/config.yml` 의 `ingress:` 에 wildcard hostname 추가 + "
                     f"`cloudflared service restart` (또는 dev 면 `cloudflared tunnel run` 재시작)."
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             e2e_message = f"probe error: {exc}"
             # Any connection/TLS error means the wildcard hostname
             # never reaches a working TLS terminator. Most common
@@ -592,9 +608,7 @@ async def diagnose_subdomain_mode(
                 tunnel_mode = snap.mode
                 if preview_domain:
                     wildcard = f"*.{preview_domain}"
-                    tunnel_has_wildcard = any(
-                        e.hostname == wildcard for e in snap.ingress
-                    )
+                    tunnel_has_wildcard = any(e.hostname == wildcard for e in snap.ingress)
                 if tunnel_mode == "local_config":
                     next_steps.append(
                         "Cloudflare 터널이 **로컬 config.yml 모드** 라서 API 로 ingress 를 "
@@ -611,7 +625,7 @@ async def diagnose_subdomain_mode(
                 f"Cloudflare API 호출 실패 ({exc}). 토큰 권한 확인: "
                 "Account → Cloudflare Tunnel : Edit 필요."
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             next_steps.append(f"Cloudflare provider 진단 실패: {exc}")
     elif not provider_configured:
         next_steps.append(

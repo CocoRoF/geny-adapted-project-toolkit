@@ -130,6 +130,38 @@ async def logout(
     return response
 
 
+def _request_from_sandbox_net(request: Request) -> bool:
+    """True when the request originates from a workspace sandbox on
+    gapt-net rather than the operator's browser.
+
+    The control plane shares gapt-net with every sandbox (so Caddy can
+    reach them), which means a prompt-injected agent has a network path
+    to `/_gapt/api/*`. The session cookie normally blocks it — but with
+    `auth_enabled=false` that gate is gone. We treat any forwarded
+    client IP inside the docker bridge ranges (172.16/12, 10/8) as
+    sandbox-origin so the "trusted localhost" shortcut never silently
+    hands a sandbox full admin. Real operator traffic arrives via the
+    Cloudflare tunnel / loopback and is not in these ranges."""
+    import ipaddress  # noqa: PLC0415
+
+    candidates: list[str] = []
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        candidates.append(xff.split(",")[0].strip())
+    if request.client is not None:
+        candidates.append(request.client.host)
+    for raw in candidates:
+        try:
+            ip = ipaddress.ip_address(raw)
+        except ValueError:
+            continue
+        if ip.is_loopback:
+            return False  # operator via loopback / tunnel — trusted
+        if ip in ipaddress.ip_network("172.16.0.0/12") or ip in ipaddress.ip_network("10.0.0.0/8"):
+            return True
+    return False
+
+
 async def get_current_user(
     request: Request,
     settings: Settings = Depends(get_app_settings),  # noqa: B008
@@ -139,6 +171,15 @@ async def get_current_user(
     is disabled; otherwise the session cookie must resolve to a live
     entry in the store."""
     if not settings.auth_enabled:
+        # Defence-in-depth: even with auth off, never auto-admit a
+        # request that came from a workspace sandbox on gapt-net. The
+        # agent's only sanctioned API surface is the scoped-bearer MCP
+        # under /_gapt/api/mcp (mounted separately, not via this dep).
+        if _request_from_sandbox_net(request):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "auth.sandbox_origin_forbidden"},
+            )
         return AdminPrincipal(id=settings.admin_id, display_name=settings.admin_id)
     cookie = request.cookies.get(settings.session_cookie_name)
     if not cookie:

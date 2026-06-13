@@ -26,6 +26,7 @@ import structlog
 from geny_executor import CredentialBundle, ProviderCredentials
 
 from gapt_server.db import enums
+from gapt_server.domains.secrets.vault import SecretVaultError
 
 if TYPE_CHECKING:
     from typing import Any
@@ -56,14 +57,19 @@ async def _resolve_user_secret(
     purpose: str,
 ) -> str | None:
     """Look up an admin-scoped secret by key_name. Returns plaintext or
-    None when the secret isn't stored. Errors are swallowed because a
-    missing secret is the normal case — the caller falls back to the
-    process env (host-OAuth path)."""
+    None when the secret isn't stored — that's the normal case (the
+    caller falls back to the process env / host-OAuth path).
+
+    A *missing* secret returns None silently; a *failed read* of a
+    secret that DOES exist (decryption error, DB hiccup) is logged at
+    WARNING rather than silently falling back, so a corrupted vault
+    surfaces instead of masquerading as "no secret configured"."""
     try:
         metadata = await vault.list(
             db, scope=enums.SecretOwnerScope.SYSTEM, owner_id=actor_id
         )
-    except Exception:
+    except SecretVaultError as exc:
+        logger.warning("credentials.vault_list_failed", key_name=key_name, error=str(exc))
         return None
     for md in metadata:
         if md.key_name != key_name:
@@ -72,7 +78,15 @@ async def _resolve_user_secret(
             return await vault.read(
                 db, secret_id=md.id, purpose=purpose, actor_id=actor_id
             )
-        except Exception:
+        except SecretVaultError as exc:
+            # The metadata row exists but the value can't be read — a
+            # real fault, not a "not configured" miss. Surface it.
+            logger.warning(
+                "credentials.vault_read_failed",
+                key_name=key_name,
+                secret_id=md.id,
+                error=str(exc),
+            )
             return None
     return None
 
