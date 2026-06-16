@@ -23,6 +23,7 @@ from gapt_server.domains.services.registry import (
     Service,
     ServiceAlreadyExists,
     ServiceNotFound,
+    ServicePortConflict,
     ServiceRegistry,
     ServiceState,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "Service",
     "ServiceAlreadyExists",
     "ServiceNotFound",
+    "ServicePortConflict",
     "ServiceRegistry",
     "ServiceState",
 ]

@@ -48,6 +48,7 @@ from gapt_server.domains.services import (
     Service,
     ServiceAlreadyExists,
     ServiceNotFound,
+    ServicePortConflict,
     ServiceRegistry,
 )
 from gapt_server.routers.auth import get_current_user
@@ -117,9 +118,7 @@ async def _workspace_or_404(
     # running rows with 409 so the service spawn path fails early.
     _ = user
     row = (
-        await db.execute(
-            select(models.Workspace).where(models.Workspace.id == workspace_id)
-        )
+        await db.execute(select(models.Workspace).where(models.Workspace.id == workspace_id))
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(
@@ -188,6 +187,15 @@ async def start_service(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "service.already_running", "reason": str(exc)},
+        ) from exc
+    except ServicePortConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "service.port_conflict",
+                "reason": str(exc),
+                "port": exc.port,
+            },
         ) from exc
     except RuntimeError as exc:
         raise HTTPException(
@@ -317,6 +325,15 @@ async def restart_service(
             port=user_port,
             env=env,
         )
+    except ServicePortConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "service.port_conflict",
+                "reason": str(exc),
+                "port": exc.port,
+            },
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -38,7 +38,14 @@ from pathlib import Path
 
 import structlog
 
+from gapt_server.domains.services.port_reconcile import (
+    VALID_PORT_POLICIES,
+    extract_log_port_hint,
+    free_listener_pgid_script,
+    parse_intended_port,
+)
 from gapt_server.domains.workspace_sandbox import (
+    WorkspaceSandbox,
     WorkspaceSandboxError,
     WorkspaceSandboxManager,
 )
@@ -326,6 +333,20 @@ class ServiceAlreadyExists(RuntimeError):
     pass
 
 
+class ServicePortConflict(RuntimeError):
+    """Raised (under ``port_conflict_policy="strict"``) when the port a
+    service is about to bind is held by a foreign process the registry
+    declined to reap. Carries the port so the router can render a
+    structured ``service.port_conflict`` error."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        super().__init__(
+            f"port {port} is already in use by another process and "
+            "ports_policy=strict forbids reaping it"
+        )
+
+
 @dataclass
 class Service:
     """A single managed process inside the workspace sandbox.
@@ -389,7 +410,12 @@ class ServiceRegistry:
     """One per process. Lock guards the dict; per-service operations
     don't need cross-service synchronisation."""
 
-    def __init__(self, sandbox_manager: WorkspaceSandboxManager | None = None) -> None:
+    def __init__(
+        self,
+        sandbox_manager: WorkspaceSandboxManager | None = None,
+        *,
+        port_conflict_policy: str = "free",
+    ) -> None:
         self._entries: dict[tuple[str, str], Service] = {}
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
@@ -399,6 +425,14 @@ class ServiceRegistry:
         # `start()` raises a clear error if it's None and a real
         # spawn is attempted.
         self._sandbox_manager = sandbox_manager
+        # How start() reconciles a port that's already held inside the
+        # container — "free" (default: reap the stale holder so the
+        # restart succeeds), "strict" (refuse and surface the conflict),
+        # or "off" (skip the port-free step). An unknown value degrades
+        # to "free" rather than wedging every service start.
+        self._port_policy = (
+            port_conflict_policy if port_conflict_policy in VALID_PORT_POLICIES else "free"
+        )
 
     async def recover_from_containers(self, workspaces: list[tuple[str, str]]) -> int:
         """Rebuild the in-memory entry table by scanning each
@@ -459,7 +493,7 @@ class ServiceRegistry:
                     continue
                 marker_full = line[idx:].strip()
                 # marker_full = "GAPT_SVC=<wid>:<label>"
-                payload = marker_full[len("GAPT_SVC="):]
+                payload = marker_full[len("GAPT_SVC=") :]
                 if ":" not in payload:
                     continue
                 wid_in_marker, label = payload.split(":", 1)
@@ -479,9 +513,7 @@ class ServiceRegistry:
                     # Already known (e.g. user clicked restart between
                     # boot and recover) — leave it alone.
                     continue
-                log_path_host = (
-                    Path(worktree_path) / ".gapt" / "services" / f"{label}.log"
-                )
+                log_path_host = Path(worktree_path) / ".gapt" / "services" / f"{label}.log"
                 self._entries[key] = Service(
                     workspace_id=workspace_id,
                     label=label,
@@ -530,9 +562,7 @@ class ServiceRegistry:
                     # cmdline so our unique marker hits. The bracketed
                     # pattern keeps the probing sh from matching its
                     # own cmdline (which would always report "alive").
-                    sandbox = self._sandbox_manager.get(
-                        svc.workspace_id, svc.worktree_path
-                    )
+                    sandbox = self._sandbox_manager.get(svc.workspace_id, svc.worktree_path)
                     pattern = _pgrep_pattern(svc._pgrep_marker)
                     try:
                         rc, _, _ = await sandbox.exec(
@@ -664,6 +694,17 @@ class ServiceRegistry:
         log_dir_host = Path(worktree_path) / ".gapt" / "services"
         log_dir_host.mkdir(parents=True, exist_ok=True)
         log_path_host = log_dir_host / f"{label}.log"
+        # Before truncating, recover the port the PREVIOUS run bound from
+        # its log — the only place it survives when the command hides the
+        # port in a package.json script (`npm run dev` → `next dev
+        # -p 3000`) and the live cmd string carries nothing for the
+        # parser. Used by the port reconcile below to free a zombie.
+        prev_log_hint: int | None = None
+        try:
+            tail = log_path_host.read_bytes()[-_PORT_SCAN_BYTES:]
+            prev_log_hint = extract_log_port_hint(tail.decode("utf-8", errors="replace"))
+        except OSError:
+            prev_log_hint = None
         log_path_host.write_bytes(b"")
         log_path_in_container = f"/workspace/.gapt/services/{label}.log"
 
@@ -692,7 +733,7 @@ class ServiceRegistry:
         # unknown env. Caller can override by passing their own
         # values in `env=`.
         for k, v in (
-            ("CHOKIDAR_USEPOLLING", "1"),   # nodemon, ts-node-dev, vite older versions
+            ("CHOKIDAR_USEPOLLING", "1"),  # nodemon, ts-node-dev, vite older versions
             ("WATCHPACK_POLLING", "true"),  # webpack-dev-server, next dev (webpack)
             ("WATCHPACK_POLLING_INTERVAL", "500"),
             ("NEXT_WEBPACK_USEPOLLING", "1"),  # explicit Next.js hook
@@ -700,6 +741,36 @@ class ServiceRegistry:
             service_env.setdefault(k, v)
 
         sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
+
+        # Port reconcile — the dev-service analog of the prod deploy
+        # port preflight. Reap a stale previous instance and free the
+        # port this service is about to bind, so a restart after a GAPT
+        # restart/crash doesn't die with EADDRINUSE. The intended port
+        # comes from the command, else the previous run's log.
+        intended_port = parse_intended_port(cmd, env, port) or prev_log_hint
+        try:
+            reconcile_status = await self._reconcile_port(
+                workspace_id=workspace_id,
+                label=label,
+                worktree_path=worktree_path,
+                intended_port=intended_port,
+            )
+        except ServicePortConflict:
+            # strict policy + foreign holder — release the slot and let
+            # the router surface a structured 409.
+            async with self._lock:
+                if self._entries.get((workspace_id, label)) is placeholder:
+                    del self._entries[(workspace_id, label)]
+            raise
+        if reconcile_status not in ("", "noop", "marker_reap", "clear"):
+            logger.info(
+                "service.port_reconciled",
+                workspace_id=workspace_id,
+                label=label,
+                port=intended_port,
+                status=reconcile_status,
+            )
+
         try:
             await sandbox.spawn_background(
                 cmd=cmd,
@@ -737,6 +808,110 @@ class ServiceRegistry:
             cmd=cmd,
         )
         return svc
+
+    async def _reconcile_port(
+        self,
+        *,
+        workspace_id: str,
+        label: str,
+        worktree_path: str,
+        intended_port: int | None,
+    ) -> str:
+        """Free the port a service is about to bind so a (re)start
+        doesn't die with EADDRINUSE — the dev-service counterpart of the
+        prod deploy port preflight.
+
+        Two independent steps:
+
+        1. Always reap a *previous instance of this exact service* — its
+           ``GAPT_SVC=<wid>:<label>`` wrapper and any ``GAPT_FWD=``
+           loopback forwarder. Those markers survive a GAPT
+           restart/crash, and stop()'s pgid kill can miss a descendant
+           that called ``setpgid()`` (Turbopack's detached
+           ``next-server`` is the usual culprit). It's always our own
+           leftover, so it's reaped unconditionally, regardless of
+           policy.
+
+        2. If the intended port is known and *still* held after step 1
+           — i.e. by a process with no GAPT marker (the detached
+           grandchild, or a genuinely foreign listener) — apply the
+           policy: ``free`` reaps whatever holds it; ``strict`` raises
+           ``ServicePortConflict``; ``off`` leaves it (the dev server
+           reports the conflict itself).
+
+        Never raises except the deliberate strict-policy conflict — a
+        sandbox hiccup degrades to best-effort so diagnostics can't
+        block a start. Returns a short status string for the log line.
+        """
+        if self._sandbox_manager is None:
+            return "noop"
+        sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
+
+        # Step 1 — reap our own previous instance (a no-op on a
+        # first-ever start: nothing matches the markers).
+        for mk in (
+            f"GAPT_SVC={workspace_id}:{label}",
+            f"GAPT_FWD={workspace_id}:{label}",
+        ):
+            with contextlib.suppress(WorkspaceSandboxError):
+                await sandbox.exec(
+                    ["sh", "-c", _kill_marker_pgid_script(mk, "KILL")],
+                    timeout_s=5.0,
+                )
+
+        if intended_port is None or self._port_policy == "off":
+            return "marker_reap"
+
+        # Give the just-killed tree a beat to release the socket before
+        # we judge the port held by something else.
+        await asyncio.sleep(0.2)
+        if not await self._port_in_use(sandbox, intended_port):
+            return "clear"
+
+        if self._port_policy == "strict":
+            raise ServicePortConflict(intended_port)
+
+        # "free" — reap the foreign holder: TERM, brief grace, then
+        # KILL, polling the container's LISTEN table until it frees.
+        for signal in ("TERM", "KILL"):
+            with contextlib.suppress(WorkspaceSandboxError):
+                await sandbox.exec(
+                    ["sh", "-c", free_listener_pgid_script(intended_port, signal)],
+                    timeout_s=8.0,
+                )
+            for _ in range(6):
+                await asyncio.sleep(0.3)
+                if not await self._port_in_use(sandbox, intended_port):
+                    return "freed"
+        # Couldn't free it (a foreign un-killable process?). Proceed and
+        # let the dev server surface the conflict — but flag it so the
+        # operator can see we tried.
+        logger.warning(
+            "service.port_still_held",
+            workspace_id=workspace_id,
+            label=label,
+            port=intended_port,
+        )
+        return "still_held"
+
+    async def _port_in_use(self, sandbox: WorkspaceSandbox, port: int) -> bool:
+        """True if any process inside the container LISTENs on ``port``.
+        Reuses the ``/proc/net`` parser; a sandbox error reads as 'free'
+        so diagnostics never block a start."""
+        try:
+            _, out, _ = await sandbox.exec(
+                [
+                    "sh",
+                    "-c",
+                    "cat /proc/net/tcp 2>/dev/null; echo ---; cat /proc/net/tcp6 2>/dev/null",
+                ],
+                timeout_s=5.0,
+            )
+        except WorkspaceSandboxError:
+            return False
+        text = out.decode("utf-8", errors="replace")
+        tcp4, _, tcp6 = text.partition("---")
+        return _parse_listeners(tcp4, tcp6, port)["any"]
 
     async def stop(
         self,
@@ -821,9 +996,7 @@ class ServiceRegistry:
                 [
                     "sh",
                     "-c",
-                    _kill_marker_pgid_script(
-                        f"GAPT_FWD={svc.workspace_id}:{svc.label}", "KILL"
-                    ),
+                    _kill_marker_pgid_script(f"GAPT_FWD={svc.workspace_id}:{svc.label}", "KILL"),
                 ],
                 timeout_s=5.0,
             )
@@ -838,11 +1011,7 @@ class ServiceRegistry:
                 reason="process tree survived SIGKILL pass — port may stay held",
             )
         else:
-            svc.state = (
-                ServiceState.EXITED
-                if svc.exit_code in (0, None)
-                else ServiceState.FAILED
-            )
+            svc.state = ServiceState.EXITED if svc.exit_code in (0, None) else ServiceState.FAILED
             logger.info(
                 "service.stopped",
                 workspace_id=workspace_id,
@@ -902,7 +1071,11 @@ class ServiceRegistry:
         sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
         try:
             _, out, _ = await sandbox.exec(
-                ["sh", "-c", "cat /proc/net/tcp 2>/dev/null; echo ---; cat /proc/net/tcp6 2>/dev/null"],
+                [
+                    "sh",
+                    "-c",
+                    "cat /proc/net/tcp 2>/dev/null; echo ---; cat /proc/net/tcp6 2>/dev/null",
+                ],
                 timeout_s=5.0,
             )
         except WorkspaceSandboxError:
@@ -991,9 +1164,7 @@ class ServiceRegistry:
         # than a dead forwarder. Treat as forwarded (best-effort).
         return "forwarded"
 
-    async def kill_forwarder(
-        self, *, workspace_id: str, worktree_path: str, label: str
-    ) -> None:
+    async def kill_forwarder(self, *, workspace_id: str, worktree_path: str, label: str) -> None:
         """Take down the loopback forwarder for a service (unexpose)."""
         if self._sandbox_manager is None:
             return
@@ -1023,7 +1194,13 @@ class ServiceRegistry:
         self._closed = True
         if self._reaper_task is not None:
             self._reaper_task.cancel()
-            with contextlib.suppress(Exception):
+            # Awaiting a cancelled task re-raises CancelledError, which
+            # is BaseException (not Exception) on 3.8+ — suppress(Exception)
+            # alone would let it escape aclose() and break the lifespan
+            # shutdown / any caller that closes a registry with a live
+            # reaper. Suppress both it and a real exception the reaper
+            # may have stored; we're tearing down regardless.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._reaper_task
         await self.kill_all()
 

@@ -123,6 +123,23 @@ class Settings(BaseSettings):
     # a host where `/var/lib` isn't writable by the GAPT user.
     workspace_bare_root: str = "/var/lib/gapt-bare"
 
+    # How a dev service start reconciles a port that's already held
+    # inside the workspace container (the dev-mode counterpart of the
+    # prod deploy `ports_policy`). A long-lived `gapt-ws-<wid>`
+    # container can carry a zombie from a previous GAPT lifetime still
+    # bound to e.g. :3000 — `next dev --turbo`'s detached `next-server`
+    # is the classic case — so the next start would crash with
+    # EADDRINUSE. Values:
+    #   "free"   — default: reap whatever holds the port so the restart
+    #              succeeds. Safe because each `gapt-ws-<wid>` container
+    #              is a single workspace's private sandbox.
+    #   "strict" — refuse to touch a foreign holder; surface a
+    #              `service.port_conflict` 409 so the operator decides.
+    #   "off"    — skip the port-free step (the previous-instance marker
+    #              reap still runs — that's always GAPT's own leftover).
+    # Override with `GAPT_SERVICES_PORT_CONFLICT_POLICY`.
+    services_port_conflict_policy: str = "free"
+
     # ── Phase M.1 — agent session memory bounds ──────────────────
     #
     # All five knobs are exposed as `GAPT_SESSION_*` env vars so an

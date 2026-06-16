@@ -152,7 +152,10 @@ def build_container(
             session_registry=_make_session_registry(settings),
             registry=MetricsRegistry(),
             notifications=notifications,
-            services=ServiceRegistry(sandbox_manager=ws_sandbox_noop),
+            services=ServiceRegistry(
+                sandbox_manager=ws_sandbox_noop,
+                port_conflict_policy=settings.services_port_conflict_policy,
+            ),
             workspace_sandbox=ws_sandbox_noop,
             deploy_registry=DeployRegistry(session_factory=None),
         )
@@ -182,7 +185,10 @@ def build_container(
         session_registry=SessionRegistry(),
         registry=MetricsRegistry(),
         notifications=notifications,
-        services=ServiceRegistry(sandbox_manager=ws_sandbox),
+        services=ServiceRegistry(
+            sandbox_manager=ws_sandbox,
+            port_conflict_policy=settings.services_port_conflict_policy,
+        ),
         workspace_sandbox=ws_sandbox,
         deploy_registry=DeployRegistry(session_factory=factory),
         host_github_token=_discover_host_github_token(),
@@ -258,8 +264,6 @@ def _build_notifications(settings: Settings) -> NotificationService:
     if settings.discord_webhook_url:
         channels.append(DiscordWebhookChannel(settings.discord_webhook_url))
     return NotificationService(channels=channels)
-
-
 
 
 def _coerce_async_dsn(dsn: str) -> str:
