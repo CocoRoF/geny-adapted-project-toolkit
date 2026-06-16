@@ -105,11 +105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 workspace_root="/workspace",
                 workspace_bare_root=settings.workspace_bare_root,
             )
-            if (
-                report.migrated
-                or report.skipped_target_exists
-                or report.failed
-            ):
+            if report.migrated or report.skipped_target_exists or report.failed:
                 logger.info(
                     "workspace.bare_migration.done",
                     migrated=len(report.migrated),
@@ -145,9 +141,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reconcile_loop,
     )
 
-    reconciler_task = _asyncio.create_task(
-        reconcile_loop(), name="gapt-net-reconciler"
-    )
+    reconciler_task = _asyncio.create_task(reconcile_loop(), name="gapt-net-reconciler")
 
     # Phase N.2.7 — Caddy route reconciler. Periodic safety-net loop
     # that re-runs `run_boot_resync` every few minutes so any drift
@@ -245,31 +239,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             logger.exception("caddy.boot_resync.crashed")
 
-    # ServiceRegistry recovery — scan running workspaces for live
-    # `GAPT_SVC=` markers and rebuild the in-memory table. Without
-    # this every server restart wipes the Services panel even
-    # though `npm run dev` is still happily running inside each
-    # container.
+    # ServiceRegistry recovery — converge each running workspace's
+    # container to its durable service manifests: adopt the still-live
+    # ones with full metadata, restart the ones that died while desired
+    # running (Turbopack orphans included), and surface deliberately
+    # stopped ones. Without this a server restart wiped the Services
+    # panel and lost the declared port / env / preview binding.
     if container.session_factory is not None:
         from sqlalchemy import select as _select  # noqa: PLC0415
 
         async with container.session_factory() as bg_db:
             rows = (
                 await bg_db.execute(
-                    _select(
-                        models.Workspace.id, models.Workspace.worktree_path
-                    ).where(
+                    _select(models.Workspace.id, models.Workspace.worktree_path).where(
                         models.Workspace.status == enums.WorkspaceStatus.RUNNING
                     )
                 )
             ).all()
             workspaces = [(r[0], r[1]) for r in rows]
         try:
-            restored = await container.services.recover_from_containers(workspaces)
-            if restored:
-                logger.info("services.recovered", count=restored)
+            recovered = await container.services.reconcile_workspaces(workspaces)
+            await _apply_reconcile_report(container, settings, recovered)
         except Exception:
-            logger.exception("services.recover_failed")
+            logger.exception("services.reconcile_failed")
     # GAPT self-introspection MCP (agent debugging window). The
     # FastMCP streamable-HTTP transport needs its session manager
     # running; mounted Starlette sub-apps don't get their lifespan
@@ -313,6 +305,55 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 pass
         await container.aclose()
         logger.info("gapt.server.shutdown")
+
+
+async def _apply_reconcile_report(
+    container: AppContainer,
+    settings: Settings,
+    recovered: list,  # list[RecoveredService]
+) -> None:
+    """Log the boot-reconcile outcome and re-establish the Caddy preview
+    binding for services that were RESTARTED and had been exposed.
+
+    Adopted-alive services keep their live Caddy route + loopback
+    forwarder, and `_register_adopted` already restored their bound
+    state from the manifest — nothing to do. A restarted service is a
+    fresh process: its forwarder is gone and the route may point at a
+    not-yet-listening port, so we re-run the same wait-then-register
+    the restart endpoint uses. Fire-and-forget per service."""
+    if not recovered:
+        return
+    import asyncio  # noqa: PLC0415
+
+    from gapt_server.routers.services import (  # noqa: PLC0415
+        _WARM_TASKS,
+        _reexpose_when_ready,
+    )
+
+    by_action: dict[str, int] = {}
+    for rec in recovered:
+        by_action[rec.action] = by_action.get(rec.action, 0) + 1
+    logger.info("services.reconciled", total=len(recovered), **by_action)
+
+    for rec in recovered:
+        if rec.action != "restarted" or not rec.expose:
+            continue
+        try:
+            svc = await container.services.get(rec.workspace_id, rec.label)
+        except Exception:
+            continue
+        task = asyncio.create_task(
+            _reexpose_when_ready(
+                registry=container.services,
+                settings=settings,
+                workspace_id=rec.workspace_id,
+                label=rec.label,
+                worktree_path=svc.worktree_path,
+            ),
+            name=f"reexpose-boot-{rec.workspace_id}-{rec.label}",
+        )
+        _WARM_TASKS.add(task)
+        task.add_done_callback(_WARM_TASKS.discard)
 
 
 def create_app(

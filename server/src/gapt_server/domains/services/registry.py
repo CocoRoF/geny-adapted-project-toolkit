@@ -38,6 +38,15 @@ from pathlib import Path
 
 import structlog
 
+from gapt_server.domains.services.manifest import (
+    DESIRED_RUNNING,
+    DESIRED_STOPPED,
+    ServiceManifest,
+    delete_manifest,
+    list_manifests,
+    update_manifest,
+    write_manifest,
+)
 from gapt_server.domains.services.port_reconcile import (
     VALID_PORT_POLICIES,
     extract_log_port_hint,
@@ -406,6 +415,22 @@ class Service:
         }
 
 
+@dataclass
+class RecoveredService:
+    """One line of the boot-reconcile report (see
+    ``ServiceRegistry.reconcile_workspaces``)."""
+
+    workspace_id: str
+    label: str
+    # "adopted" (alive, re-attached), "restarted" (was dead + desired
+    # running), or "kept_stopped" (dead + desired stopped — surfaced
+    # but not started).
+    action: str
+    # The expose binding the manifest recorded, so the caller can
+    # re-establish the preview route for the recovered service.
+    expose: dict[str, str] | None = None
+
+
 class ServiceRegistry:
     """One per process. Lock guards the dict; per-service operations
     don't need cross-service synchronisation."""
@@ -434,104 +459,204 @@ class ServiceRegistry:
             port_conflict_policy if port_conflict_policy in VALID_PORT_POLICIES else "free"
         )
 
-    async def recover_from_containers(self, workspaces: list[tuple[str, str]]) -> int:
-        """Rebuild the in-memory entry table by scanning each
-        workspace's sandbox container for live `GAPT_SVC=…` markers.
+    async def reconcile_workspaces(
+        self, workspaces: list[tuple[str, str]]
+    ) -> list[RecoveredService]:
+        """Converge each workspace container to its service manifests
+        after a GAPT (re)start — the durable-state recovery.
 
-        Reason: the registry is in-process state, but the actual
-        processes live inside the per-workspace docker container —
-        they survive a GAPT server restart. Without this step the
-        IDE shows "No services yet" right after a restart even
-        though the user's `npm run dev` is happily compiling away.
-        Recovery is idempotent: re-running it after a recover only
-        repopulates entries that are still alive.
+        For every ``<worktree>/.gapt/services/<label>.svc.json``:
 
-        `workspaces` is a list of `(workspace_id, worktree_path)`
-        tuples. Caller supplies them by querying the workspace table
-        for rows in `running` status. We can't pull from the DB
-        ourselves without a session dependency, and the registry
-        intentionally stays DB-agnostic.
+        - process still alive → ADOPT into the registry with the
+          manifest's full metadata (cmd/port/env/expose), fixing the
+          old marker-scan's lossy reconstruction.
+        - process dead, desired=running → RESTART (start() reconciles
+          the port first, evicting any marker-less zombie still holding
+          it — Turbopack's detached ``next-server`` is the classic
+          case).
+        - process dead, desired=stopped → surface as EXITED but never
+          auto-start (the operator stopped it on purpose).
 
-        Returns the number of services restored.
+        Plus a legacy pass: services with a live ``GAPT_SVC=`` marker
+        but no manifest (started before manifests existed) are adopted
+        and given a manifest so the next boot is clean.
+
+        Idempotent — only labels not already in the registry are
+        touched. ``workspaces`` is ``(workspace_id, worktree_path)`` for
+        running workspaces; the caller supplies them so the registry
+        stays DB-agnostic. Returns a per-service report the caller uses
+        to re-establish expose bindings.
         """
         if self._sandbox_manager is None:
-            return 0
-        restored = 0
+            return []
+        report: list[RecoveredService] = []
         for workspace_id, worktree_path in workspaces:
             sandbox = self._sandbox_manager.get(workspace_id, worktree_path)
-            try:
-                rc, out, _ = await sandbox.exec(
-                    [
-                        "sh",
-                        "-c",
-                        # `pgrep -af` prints `<pid> <cmdline>` — every
-                        # running sh wrapper carries the marker as $0
-                        # so this catches them all. Bracketed pattern
-                        # so the probing sh doesn't match itself.
-                        "pgrep -af '[G]APT_SVC=' || true",
-                    ],
-                    timeout_s=5.0,
-                )
-            except WorkspaceSandboxError:
-                # Container missing / not reachable — skip silently;
-                # next time the workspace boots the service can be
-                # restarted via the wizard or by hand.
-                continue
-            if rc != 0 and rc != 1:
-                continue
-            for raw in out.decode("utf-8", errors="replace").splitlines():
-                line = raw.strip()
-                if not line:
+            handled: set[str] = set()
+            for manifest in list_manifests(worktree_path):
+                handled.add(manifest.label)
+                if (workspace_id, manifest.label) in self._entries:
                     continue
-                # `<pid> sh -c <inner-cmd> GAPT_SVC=<wid>:<label>`
-                # cmdline pieces are NUL-separated in /proc but
-                # pgrep -f prints them space-joined. Split on the
-                # GAPT_SVC marker — everything before is the inner
-                # cmd, everything after is workspace_id:label.
-                idx = line.find("GAPT_SVC=")
-                if idx == -1:
-                    continue
-                marker_full = line[idx:].strip()
-                # marker_full = "GAPT_SVC=<wid>:<label>"
-                payload = marker_full[len("GAPT_SVC=") :]
-                if ":" not in payload:
-                    continue
-                wid_in_marker, label = payload.split(":", 1)
-                if wid_in_marker != workspace_id:
-                    # Marker collision shouldn't happen, but if it
-                    # does we trust the workspace_id we're scanning.
-                    continue
-                # Extract the user's cmd from the sh -c wrapper.
-                # Pattern: `sh -c <inner> GAPT_SVC=...`
-                inner = line[:idx].strip()
-                # Drop the `<pid> ` prefix and the leading `sh -c `.
-                # We only need a best-effort cmd for display + restart.
-                user_cmd = _extract_user_cmd_from_sh_wrapper(inner)
-
-                key = (workspace_id, label)
-                if key in self._entries:
-                    # Already known (e.g. user clicked restart between
-                    # boot and recover) — leave it alone.
-                    continue
-                log_path_host = Path(worktree_path) / ".gapt" / "services" / f"{label}.log"
-                self._entries[key] = Service(
-                    workspace_id=workspace_id,
-                    label=label,
-                    cmd=user_cmd,
-                    worktree_path=worktree_path,
-                    log_path=str(log_path_host),
-                    state=ServiceState.RUNNING,
-                    _pgrep_marker=marker_full,
-                )
-                restored += 1
-                logger.info(
-                    "service.recovered",
-                    workspace_id=workspace_id,
-                    label=label,
-                )
-        if restored:
+                marker = f"GAPT_SVC={workspace_id}:{manifest.label}"
+                if await self._marker_alive(sandbox, marker):
+                    self._register_adopted(
+                        workspace_id, worktree_path, manifest, marker, ServiceState.RUNNING
+                    )
+                    report.append(
+                        RecoveredService(
+                            workspace_id, manifest.label, "adopted", manifest.expose
+                        )
+                    )
+                    logger.info(
+                        "service.reconcile.adopted",
+                        workspace_id=workspace_id,
+                        label=manifest.label,
+                    )
+                elif manifest.desired_state == DESIRED_RUNNING:
+                    try:
+                        await self.start(
+                            workspace_id=workspace_id,
+                            label=manifest.label,
+                            cmd=manifest.cmd,
+                            worktree_path=worktree_path,
+                            port=manifest.user_port,
+                            env=manifest.env,
+                        )
+                    except (RuntimeError, ServicePortConflict) as exc:
+                        logger.warning(
+                            "service.reconcile.restart_failed",
+                            workspace_id=workspace_id,
+                            label=manifest.label,
+                            error=str(exc),
+                        )
+                        continue
+                    report.append(
+                        RecoveredService(
+                            workspace_id, manifest.label, "restarted", manifest.expose
+                        )
+                    )
+                    logger.info(
+                        "service.reconcile.restarted",
+                        workspace_id=workspace_id,
+                        label=manifest.label,
+                    )
+                else:
+                    self._register_adopted(
+                        workspace_id, worktree_path, manifest, marker, ServiceState.EXITED
+                    )
+                    report.append(
+                        RecoveredService(workspace_id, manifest.label, "kept_stopped", None)
+                    )
+            await self._adopt_unmanifested(
+                workspace_id, worktree_path, sandbox, handled, report
+            )
+        if report:
             self._ensure_reaper()
-        return restored
+        return report
+
+    async def recover_from_containers(self, workspaces: list[tuple[str, str]]) -> int:
+        """Back-compat shim — drive the reconcile and return a count."""
+        return len(await self.reconcile_workspaces(workspaces))
+
+    async def _marker_alive(self, sandbox: WorkspaceSandbox, marker: str) -> bool:
+        """True if a process carrying ``marker`` is alive in the
+        container. Bracketed pattern so the probing sh can't match
+        itself. A sandbox error reads as 'dead' so a missing container
+        doesn't block the reconcile."""
+        pattern = _pgrep_pattern(marker)
+        try:
+            rc, _, _ = await sandbox.exec(
+                ["sh", "-c", f"pgrep -f {shlex.quote(pattern)} >/dev/null"],
+                timeout_s=4.0,
+            )
+        except WorkspaceSandboxError:
+            return False
+        return rc == 0
+
+    def _register_adopted(
+        self,
+        workspace_id: str,
+        worktree_path: str,
+        manifest: ServiceManifest,
+        marker: str,
+        state: ServiceState,
+    ) -> None:
+        """Insert an adopted service with the manifest's full metadata."""
+        log_path = str(Path(worktree_path) / ".gapt" / "services" / f"{manifest.label}.log")
+        expose = manifest.expose or {}
+        self._entries[(workspace_id, manifest.label)] = Service(
+            workspace_id=workspace_id,
+            label=manifest.label,
+            cmd=manifest.cmd,
+            worktree_path=worktree_path,
+            log_path=log_path,
+            port=manifest.user_port,
+            user_port=manifest.user_port,
+            env=dict(manifest.env),
+            state=state,
+            _pgrep_marker=marker,
+            bound_host=expose.get("host"),
+            bound_url=expose.get("url"),
+        )
+
+    async def _adopt_unmanifested(
+        self,
+        workspace_id: str,
+        worktree_path: str,
+        sandbox: WorkspaceSandbox,
+        handled: set[str],
+        report: list[RecoveredService],
+    ) -> None:
+        """Adopt live ``GAPT_SVC=`` services that have no manifest yet
+        (started before manifests existed) and write one so the next
+        boot reconciles them properly. Mirrors the pre-manifest
+        marker-scan recovery."""
+        try:
+            rc, out, _ = await sandbox.exec(
+                ["sh", "-c", "pgrep -af '[G]APT_SVC=' || true"], timeout_s=5.0
+            )
+        except WorkspaceSandboxError:
+            return
+        if rc not in (0, 1):
+            return
+        for raw in out.decode("utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            idx = line.find("GAPT_SVC=")
+            if idx == -1:
+                continue
+            marker_full = line[idx:].strip()
+            payload = marker_full[len("GAPT_SVC=") :]
+            if ":" not in payload:
+                continue
+            wid_in_marker, label = payload.split(":", 1)
+            if wid_in_marker != workspace_id or label in handled:
+                continue
+            if (workspace_id, label) in self._entries:
+                continue
+            user_cmd = _extract_user_cmd_from_sh_wrapper(line[:idx].strip())
+            log_path = str(Path(worktree_path) / ".gapt" / "services" / f"{label}.log")
+            self._entries[(workspace_id, label)] = Service(
+                workspace_id=workspace_id,
+                label=label,
+                cmd=user_cmd,
+                worktree_path=worktree_path,
+                log_path=log_path,
+                state=ServiceState.RUNNING,
+                _pgrep_marker=marker_full,
+            )
+            handled.add(label)
+            write_manifest(
+                worktree_path,
+                ServiceManifest(label=label, cmd=user_cmd, desired_state=DESIRED_RUNNING),
+            )
+            report.append(RecoveredService(workspace_id, label, "adopted", None))
+            logger.info(
+                "service.reconcile.adopted_legacy",
+                workspace_id=workspace_id,
+                label=label,
+            )
 
     def bind_sandbox_manager(self, manager: WorkspaceSandboxManager) -> None:
         """Late-bind (used when the registry is built before the
@@ -801,6 +926,19 @@ class ServiceRegistry:
         async with self._lock:
             self._entries[(workspace_id, label)] = svc
             self._ensure_reaper()
+        # Persist the desired state so a GAPT restart can adopt or
+        # restart this service with its full definition (cmd/port/env),
+        # not the lossy marker-scan reconstruction.
+        write_manifest(
+            worktree_path,
+            ServiceManifest(
+                label=label,
+                cmd=cmd,
+                desired_state=DESIRED_RUNNING,
+                user_port=port,
+                env=dict(env or {}),
+            ),
+        )
         logger.info(
             "service.started",
             workspace_id=workspace_id,
@@ -919,9 +1057,16 @@ class ServiceRegistry:
         label: str,
         *,
         timeout_s: float = 5.0,
+        mark_desired_stopped: bool = True,
     ) -> Service:
         """SIGTERM the in-container process tree rooted at the marker,
         then SIGKILL after `timeout_s`. Returns the final state.
+
+        ``mark_desired_stopped`` records the operator's intent in the
+        manifest so boot reconcile won't auto-restart a deliberately
+        stopped service. Pass False for GAPT-internal teardown
+        (shutdown's `kill_all`) — there the service is still *desired*
+        running and must come back on the next boot.
 
         Phase N.3 — pgid-based kill. Pre-fix this method ran
         ``pkill -TERM -f <marker>`` which matched only the wrapping
@@ -1017,6 +1162,12 @@ class ServiceRegistry:
                 workspace_id=workspace_id,
                 label=label,
             )
+        if mark_desired_stopped:
+            # Operator-initiated stop — record it so boot reconcile
+            # surfaces the service but doesn't auto-restart it.
+            update_manifest(
+                svc.worktree_path, label, desired_state=DESIRED_STOPPED
+            )
         return svc
 
     async def remove(self, workspace_id: str, label: str) -> None:
@@ -1029,6 +1180,9 @@ class ServiceRegistry:
             if svc.state in {ServiceState.STARTING, ServiceState.RUNNING}:
                 return
             self._entries.pop((workspace_id, label), None)
+        # The service is gone for good — drop its manifest so boot
+        # reconcile doesn't resurrect it.
+        delete_manifest(svc.worktree_path, label)
 
     async def set_bound(
         self, workspace_id: str, label: str, host: str | None, url: str | None
@@ -1041,6 +1195,14 @@ class ServiceRegistry:
             raise ServiceNotFound(f"{workspace_id}/{label}")
         svc.bound_host = host
         svc.bound_url = url
+        # Persist the expose intent so boot reconcile can re-establish
+        # the preview binding for the recovered/restarted service.
+        if host and url:
+            update_manifest(
+                svc.worktree_path, label, expose={"host": host, "url": url}
+            )
+        else:
+            update_manifest(svc.worktree_path, label, clear_expose=True)
         return svc
 
     async def ensure_reachable(
@@ -1181,12 +1343,16 @@ class ServiceRegistry:
 
     async def kill_all(self) -> None:
         """Best-effort cleanup at shutdown. Doesn't wait for graceful
-        exit beyond the per-stop timeout."""
+        exit beyond the per-stop timeout.
+
+        ``mark_desired_stopped=False``: a GAPT shutdown must NOT mark
+        these services stopped — they're still desired running, and the
+        next boot's reconcile is exactly what brings them back."""
         async with self._lock:
             keys = list(self._entries.keys())
         for ws, label in keys:
             try:
-                await self.stop(ws, label, timeout_s=1.0)
+                await self.stop(ws, label, timeout_s=1.0, mark_desired_stopped=False)
             except Exception:
                 pass
 
