@@ -489,6 +489,17 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         # keep working.
         stream = runtime.pipeline.run_stream(run_input, state=runtime.conversation_state)
 
+    # Per-run tool-call de-duplication. The executor emits `api.tool_use`
+    # TWICE for one tool — an empty-input frame at the content-block
+    # start, then a finalized frame with the full arguments — and both
+    # used to be published (and persisted) as TOOL_CALL frames with
+    # distinct seqs. On replay the chat paired the tool_result with only
+    # the latest, leaving the empty-input duplicate stuck as a perpetual
+    # "실행 중" card. We publish exactly one TOOL_CALL per tool_use_id,
+    # preferring the frame that carries the real input.
+    published_tool_ids: set[str] = set()
+    deferred_tool_calls: dict[str, dict[str, object]] = {}
+
     async for ev in stream:
         event_type = str(getattr(ev, "type", ""))
         stage_name = getattr(ev, "stage", "") or ""
@@ -528,58 +539,105 @@ async def _drive_pipeline(runtime: SessionRuntime, message: str) -> None:
         if step_payload is not None:
             await runtime.bus.publish(SessionEventKind.STEP, step_payload)
 
-        # Tool invocations — `api.tool_use` (2.2.0 built-in chunk
-        # forwarding; pre-2.2 this required GAPT's `_call_streaming`
-        # fork). Fires for BOTH CLI-executed tools (source == "cli":
-        # Bash / Read / Edit the claude CLI ran itself) and API-side
-        # tool requests (source == "api": Stage 10 will dispatch).
-        # Forwarded as a TOOL_CALL frame so the ToolCallCard renders
-        # inline in the chat — the gap the old patch docstring called
-        # out ("the GAPT chat trace has no idea any tool ran").
-        if event_type == EventTypes.API_TOOL_USE:
-            await runtime.bus.publish(
-                SessionEventKind.TOOL_CALL,
-                {
-                    "tool": data.get("name"),
-                    "tool_name": data.get("name"),
-                    "tool_use_id": data.get("id"),
-                    "input": data.get("input"),
-                    "source": data.get("source"),
-                },
-            )
-            continue
-        # `api.cli_tool_call` duplicates `api.tool_use` for narrow
-        # subscribers; we consume the broad event above, so drop the
-        # companion (it would double-render every ToolCallCard) —
-        # likewise the raw streaming bookkeeping frames.
-        if event_type in (
-            EventTypes.API_CLI_TOOL_CALL,
-            EventTypes.API_INPUT_JSON_DELTA,
-            EventTypes.API_CONTENT_BLOCK_STOP,
+        # Tool invocations + results — forwarded as TOOL_CALL /
+        # TOOL_RESULT frames, de-duplicating the executor's twin
+        # `api.tool_use` emissions. See `_forward_tool_event`.
+        if await _forward_tool_event(
+            runtime, event_type, data, published_tool_ids, deferred_tool_calls
         ):
             continue
-        # Tool result (paired with api.tool_use by tool_use_id) —
-        # canonical since 2.2.0 (the CLI translator now surfaces the
-        # synthetic user-role tool_result echoes the old
-        # `StreamJsonAccumulator.feed` patch reverse-engineered).
-        # Without this the ToolCallCard stays in "running" forever.
-        if event_type == EventTypes.API_TOOL_RESULT:
-            content = _flatten_tool_result_content(data.get("content"))
-            await runtime.bus.publish(
-                SessionEventKind.TOOL_RESULT,
-                {
-                    "tool_use_id": data.get("tool_use_id"),
-                    "is_error": data.get("is_error", False),
-                    "output": content,
-                    "content": content,
-                },
-            )
-            continue
 
-        kind, payload = _map_pipeline_event(event_type, data)
+        kind, mapped = _map_pipeline_event(event_type, data)
         if kind is None:
             continue
-        await runtime.bus.publish(kind, payload)
+        await runtime.bus.publish(kind, mapped)
+
+    # Flush any tool_call buffered (empty-input) but never finalized or
+    # resulted — better an empty-arg card than a silently dropped tool.
+    for buffered in deferred_tool_calls.values():
+        await runtime.bus.publish(SessionEventKind.TOOL_CALL, buffered)
+    deferred_tool_calls.clear()
+
+
+async def _forward_tool_event(
+    runtime: SessionRuntime,
+    event_type: str,
+    data: dict[str, object],
+    published_tool_ids: set[str],
+    deferred_tool_calls: dict[str, dict[str, object]],
+) -> bool:
+    """Publish TOOL_CALL / TOOL_RESULT frames for the executor's tool
+    events, returning True when the event was consumed (the caller then
+    skips the generic mapping).
+
+    De-duplication: the executor emits `api.tool_use` TWICE for one tool
+    — an empty-input frame at the content-block start, then a finalized
+    frame with the full arguments. Pre-fix both were published as
+    TOOL_CALL frames with distinct seqs, and on replay the chat paired
+    the tool_result with only the latest, leaving the empty duplicate
+    stuck as a perpetual "실행 중" card. We publish exactly one TOOL_CALL
+    per tool_use_id, preferring the frame that carries the real input;
+    a genuinely no-arg tool's buffered card is flushed when its result
+    lands (or at end-of-stream by the caller)."""
+    if event_type == EventTypes.API_TOOL_USE:
+        tid = data.get("id")
+        payload = {
+            "tool": data.get("name"),
+            "tool_name": data.get("name"),
+            "tool_use_id": tid,
+            "input": data.get("input"),
+            "source": data.get("source"),
+        }
+        if isinstance(tid, str) and tid in published_tool_ids:
+            return True  # re-emit of an already-published call — drop
+        if data.get("input") or not isinstance(tid, str):
+            # Full-input frame (or an id-less call we can't dedupe).
+            await runtime.bus.publish(SessionEventKind.TOOL_CALL, payload)
+            if isinstance(tid, str):
+                published_tool_ids.add(tid)
+                deferred_tool_calls.pop(tid, None)
+        else:
+            # Empty-input block-start — buffer until a richer frame or
+            # the result arrives.
+            deferred_tool_calls[tid] = payload
+        return True
+    # `api.cli_tool_call` duplicates `api.tool_use` for narrow
+    # subscribers; we consume the broad event above, so drop the
+    # companion (it would double-render every ToolCallCard) — likewise
+    # the raw streaming bookkeeping frames.
+    if event_type in (
+        EventTypes.API_CLI_TOOL_CALL,
+        EventTypes.API_INPUT_JSON_DELTA,
+        EventTypes.API_CONTENT_BLOCK_STOP,
+    ):
+        return True
+    # Tool result — paired with api.tool_use by tool_use_id. Without
+    # this the ToolCallCard stays in "running" forever.
+    if event_type == EventTypes.API_TOOL_RESULT:
+        rid = data.get("tool_use_id")
+        if (
+            isinstance(rid, str)
+            and rid not in published_tool_ids
+            and rid in deferred_tool_calls
+        ):
+            # A no-arg tool whose only api.tool_use frames were empty:
+            # publish its buffered card now so the result has one.
+            await runtime.bus.publish(
+                SessionEventKind.TOOL_CALL, deferred_tool_calls.pop(rid)
+            )
+            published_tool_ids.add(rid)
+        content = _flatten_tool_result_content(data.get("content"))
+        await runtime.bus.publish(
+            SessionEventKind.TOOL_RESULT,
+            {
+                "tool_use_id": data.get("tool_use_id"),
+                "is_error": data.get("is_error", False),
+                "output": content,
+                "content": content,
+            },
+        )
+        return True
+    return False
 
 
 def _flatten_tool_result_content(raw: object) -> str:

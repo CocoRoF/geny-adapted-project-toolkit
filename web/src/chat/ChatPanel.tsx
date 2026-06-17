@@ -1149,8 +1149,12 @@ export function ChatPanel({ projectId, workspaceId, standalone = false, onPopped
                   const pair = toolPairs.find((p) => p.call.seq === event.seq);
                   if (pair) {
                     runPairs.push(pair);
-                    continue;
                   }
+                  // No pair = this tool_call was a deduped duplicate
+                  // re-emit (the executor fires api.tool_use twice; the
+                  // pair rendered at the full-input frame's seq). Skip it
+                  // — never fall through to a stray raw tool_call row.
+                  continue;
                 }
                 if (event.kind === "tool_result") {
                   // tool_results that pair with an in-run tool_call

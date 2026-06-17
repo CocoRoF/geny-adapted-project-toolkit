@@ -25,10 +25,10 @@ function walk(dir: string): string[] {
   return out;
 }
 
-/** Remove // line comments, /* block comments, and JSX {/* … *​/}
- * comments so only real code/markup remains. Crude but sufficient —
- * false negatives (Korean in a weird spot) are acceptable; we only
- * need to catch the common "hardcoded JSX/label/string" leak. */
+/** Strip line and block comments (including JSX block comments) so
+ * only real code/markup remains. Crude but sufficient — false
+ * negatives (Korean in a weird spot) are acceptable; we only need to
+ * catch the common "hardcoded JSX/label/string" leak. */
 function stripComments(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, "") // block + JSX comments

@@ -118,6 +118,84 @@ async def test_api_cli_tool_call_companion_is_suppressed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duplicate_api_tool_use_publishes_single_tool_call() -> None:
+    """The executor fires `api.tool_use` TWICE for one tool — an empty-
+    input frame at the content-block start, then a finalized frame with
+    the full args. Both used to be published (distinct seqs), and on
+    replay the result paired with only the latest, leaving the empty
+    twin stuck 'running' forever. We publish exactly ONE TOOL_CALL,
+    carrying the real input."""
+    published = await _drive(
+        [
+            _FakeEvent(
+                type="api.tool_use",
+                data={"id": "t1", "name": "ToolSearch", "input": {}, "source": "cli"},
+            ),
+            _FakeEvent(
+                type="api.tool_use",
+                data={
+                    "id": "t1",
+                    "name": "ToolSearch",
+                    "input": {"query": "x"},
+                    "source": "cli",
+                },
+            ),
+            _FakeEvent(
+                type="api.tool_result",
+                data={"tool_use_id": "t1", "content": "ok", "is_error": False},
+            ),
+        ]
+    )
+    calls = [d for k, d in published if k is SessionEventKind.TOOL_CALL]
+    assert len(calls) == 1
+    assert calls[0]["input"] == {"query": "x"}
+    assert len([d for k, d in published if k is SessionEventKind.TOOL_RESULT]) == 1
+
+
+@pytest.mark.asyncio
+async def test_noarg_tool_buffered_call_flushed_before_its_result() -> None:
+    """A genuinely no-arg tool only ever emits empty-input frames; the
+    buffered card is flushed when its result lands — exactly once, and
+    ordered before the result so the chat can pair them."""
+    published = await _drive(
+        [
+            _FakeEvent(
+                type="api.tool_use",
+                data={"id": "t2", "name": "Now", "input": {}, "source": "cli"},
+            ),
+            _FakeEvent(
+                type="api.tool_result",
+                data={"tool_use_id": "t2", "content": "2pm"},
+            ),
+        ]
+    )
+    calls = [d for k, d in published if k is SessionEventKind.TOOL_CALL]
+    assert len(calls) == 1
+    assert calls[0]["tool_use_id"] == "t2"
+    kinds = [k for k, _ in published]
+    assert kinds.index(SessionEventKind.TOOL_CALL) < kinds.index(
+        SessionEventKind.TOOL_RESULT
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_input_tool_use_flushed_at_stream_end_if_no_result() -> None:
+    """An empty-input tool_use with neither a richer frame nor a result
+    is still surfaced (flushed at end-of-stream) rather than dropped."""
+    published = await _drive(
+        [
+            _FakeEvent(
+                type="api.tool_use",
+                data={"id": "t3", "name": "Ping", "input": {}, "source": "cli"},
+            ),
+        ]
+    )
+    calls = [d for k, d in published if k is SessionEventKind.TOOL_CALL]
+    assert len(calls) == 1
+    assert calls[0]["tool_use_id"] == "t3"
+
+
+@pytest.mark.asyncio
 async def test_api_tool_result_maps_to_tool_result_frame_with_flattened_content() -> None:
     published = await _drive(
         [

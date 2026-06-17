@@ -53,6 +53,51 @@ describe("pairToolEvents", () => {
     expect(pairs[1]!.result?.data["result"]).toBe("B");
   });
 
+  describe("duplicate api.tool_use de-dup (executor emits twice)", () => {
+    it("collapses the empty-input + full-input twin into one settled pair", () => {
+      // The executor fires `api.tool_use` twice for one tool: an empty-
+      // input frame at the content-block start (seq 23 in the wild),
+      // then a finalized frame with the full args (seq 25), each
+      // persisted with its own seq. Pre-fix this made TWO pairs; the
+      // tool_result matched only the latest, so the first stayed
+      // running:true forever → a perpetual "실행 중" card on reconnect.
+      const pairs = pairToolEvents([
+        ev(1, "tool_call", { tool_name: "ToolSearch", tool_use_id: "t1", input: {} }),
+        ev(2, "tool_call", {
+          tool_name: "ToolSearch",
+          tool_use_id: "t1",
+          input: { query: "x" },
+        }),
+        ev(3, "tool_result", { tool_use_id: "t1", content: "ok" }),
+      ]);
+      expect(pairs).toHaveLength(1);
+      const only = pairs[0]!;
+      expect(only.running).toBe(false);
+      expect(only.result?.seq).toBe(3);
+      // Keeps the richer (full-input) call, not the empty block-start.
+      expect(only.call.data["input"]).toEqual({ query: "x" });
+    });
+
+    it("does not orphan the empty twin even before the result arrives", () => {
+      const pairs = pairToolEvents([
+        ev(1, "tool_call", { tool_name: "Read", tool_use_id: "t9", input: {} }),
+        ev(2, "tool_call", { tool_name: "Read", tool_use_id: "t9", input: { path: "/x" } }),
+      ]);
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]!.call.data["input"]).toEqual({ path: "/x" });
+    });
+
+    it("still treats two id-less same-name calls as distinct pairs", () => {
+      // No id → can't tell a re-emit from a genuine second call; keep
+      // the conservative two-pair behaviour.
+      const pairs = pairToolEvents([
+        ev(1, "tool_call", { tool: "Bash", input: { cmd: "a" } }),
+        ev(2, "tool_call", { tool: "Bash", input: { cmd: "b" } }),
+      ]);
+      expect(pairs).toHaveLength(2);
+    });
+  });
+
   describe("abandoned (Phase N.3 — terminal-event cleanup)", () => {
     it("marks an open tool_call abandoned when the turn ends with `done`", () => {
       // Reproduces the live bug: agent emitted PRE_TOOL_USE, then died

@@ -44,6 +44,18 @@ function keyFor(event: SessionStreamEvent): string {
   return "name:tool";
 }
 
+/** True when a tool_call event carries a non-empty `input` object. The
+ *  executor streams `api.tool_use` TWICE for one tool — first at the
+ *  content-block start with `input: {}`, then a finalized frame with the
+ *  full arguments. We prefer the richer one when collapsing the pair. */
+function hasInput(event: SessionStreamEvent): boolean {
+  const input = event.data["input"];
+  if (input == null) return false;
+  if (typeof input === "object") return Object.keys(input).length > 0;
+  if (typeof input === "string") return input.length > 0;
+  return true; // a present scalar (number/boolean) counts as input
+}
+
 /** Mark every still-pending pair as abandoned and clear the map.
  *  Called when a turn-terminal event (DONE / session-level ERROR)
  *  lands: any tool_call still open at that moment will never receive
@@ -68,6 +80,21 @@ export function pairToolEvents(events: SessionStreamEvent[]): ToolPair[] {
   for (const event of events) {
     if (event.kind === "tool_call") {
       const key = keyFor(event);
+      const open = pending.get(key);
+      // Duplicate re-emit of the SAME call: the executor fires
+      // `api.tool_use` twice per tool (empty-input block-start, then a
+      // full-input finalize), each persisted with its own seq. Pre-fix
+      // each made a fresh pair; the tool_result matched only the latest,
+      // so the earlier pair stayed `running:true` forever — every tool
+      // showed a perpetual "실행 중" card after a reconnect/replay.
+      // Collapse the re-emit into the open pair (keeping the richer
+      // input) instead of orphaning a stuck-running duplicate. Only for
+      // id-keyed calls — a name-only key can legitimately repeat for two
+      // distinct calls of the same tool.
+      if (open && open.running && key.startsWith("id:")) {
+        if (hasInput(event) || !hasInput(open.call)) open.call = event;
+        continue;
+      }
       const pair: ToolPair = {
         call: event,
         result: null,
