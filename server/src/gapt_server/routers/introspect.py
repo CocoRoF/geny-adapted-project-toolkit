@@ -177,7 +177,11 @@ class ApplyIntrospectionRequest(BaseModel):
     prod_primary_service: str | None = None
     prod_primary_port: int | None = None
     prod_build: bool | None = None  # when None, take detector's `prod_build_required`
-    prod_preview_mode: str = "path"  # "path" | "subdomain"
+    # `None` = don't impose a preview mode. On a FRESH env we default to
+    # "path"; on an EXISTING env we leave the user's saved mode alone (a
+    # re-run of the wizard must never reset a hand-set "subdomain" back to
+    # "path"). Only a non-None value here is treated as an explicit choice.
+    prod_preview_mode: str | None = None  # "path" | "subdomain" | None
 
 
 class ApplyIntrospectionResponse(BaseModel):
@@ -186,6 +190,33 @@ class ApplyIntrospectionResponse(BaseModel):
     created_environment: dict[str, Any] | None = Field(default=None)
     # Human-readable summary of what changed — UI shows as a toast.
     actions: list[str] = Field(default_factory=list)
+
+
+def merge_deploy_config(
+    existing: dict[str, Any] | None,
+    detection: dict[str, Any],
+    explicit_preview_mode: str | None,
+) -> dict[str, Any]:
+    """Compute the ``deploy_target_config`` for an apply-introspection.
+
+    Non-destructive by design — this is the guard against the
+    "re-running the wizard reset my deploy settings" bug:
+
+    - EXISTING env: refresh only the detected compose facts
+      (``detection`` carries just compose_path(s)/build/primary_*), and
+      keep every user-owned routing field (preview_mode, preview_slug,
+      strip_prefix, upstream_*). An *explicit* ``preview_mode`` still
+      applies (the user picked it in this run); a ``None`` one leaves the
+      saved value untouched.
+    - FRESH env (``existing is None``): seed the default preview mode
+      ("path") unless the caller chose one.
+    """
+    if existing is None:
+        return {**detection, "preview_mode": explicit_preview_mode or "path"}
+    merged = {**existing, **detection}
+    if explicit_preview_mode is not None:
+        merged["preview_mode"] = explicit_preview_mode
+    return merged
 
 
 @router.post(
@@ -306,16 +337,21 @@ async def apply_introspection(
                 if payload.prod_build is not None
                 else intro.prod_build_required
             )
-            cfg: dict[str, Any] = {
+            # Detection-only facts — safe to refresh on every apply.
+            # Routing/preview fields (preview_mode, preview_slug,
+            # strip_prefix, upstream_*) are USER-OWNED and deliberately
+            # NOT in here: re-running the wizard (e.g. an accidental
+            # re-approve after a reconnect) must never clobber a hand-set
+            # "subdomain" mode + slug back to the detector's defaults.
+            detection_cfg: dict[str, Any] = {
                 "compose_path": abs_path,
                 "compose_paths": abs_paths,
                 "build": bool(build),
-                "preview_mode": payload.prod_preview_mode,
             }
             if primary_service:
-                cfg["primary_service"] = primary_service
+                detection_cfg["primary_service"] = primary_service
             if primary_port:
-                cfg["primary_port"] = primary_port
+                detection_cfg["primary_port"] = primary_port
 
             # Upsert by (project_id, name).
             existing = (
@@ -327,13 +363,16 @@ async def apply_introspection(
                 )
             ).scalar_one_or_none()
             if existing is not None:
-                existing.deploy_target_config = {
-                    **(existing.deploy_target_config or {}),
-                    **cfg,
-                }
+                # Non-destructive refresh — keep user routing config.
+                existing.deploy_target_config = merge_deploy_config(
+                    existing.deploy_target_config,
+                    detection_cfg,
+                    payload.prod_preview_mode,
+                )
                 env_row = existing
                 actions.append(
-                    f"updated environment {payload.prod_environment_name!r} with detected compose config"
+                    f"refreshed environment {payload.prod_environment_name!r} "
+                    "compose config (routing settings preserved)"
                 )
             else:
                 env_row = models.Environment(
@@ -341,7 +380,9 @@ async def apply_introspection(
                     project_id=ws.project_id,
                     name=payload.prod_environment_name,
                     deploy_target_kind=enums.DeployTargetKind.LOCAL,
-                    deploy_target_config=cfg,
+                    deploy_target_config=merge_deploy_config(
+                        None, detection_cfg, payload.prod_preview_mode
+                    ),
                     require_2fa=False,
                     secret_refs=[],
                     cost_multiplier=1.0,

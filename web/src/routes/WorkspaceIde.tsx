@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Archive, ChevronLeft, Code2, GitBranch, Loader2, Rocket } from "lucide-react";
 
 import { ApiError } from "@/api/client";
+import { listEnvironments } from "@/api/environments";
 import {
   type WorkspaceResponse,
   deleteWorkspace,
@@ -69,15 +70,31 @@ export function WorkspaceIde() {
     fetchOnce();
   }, [fetchOnce]);
 
-  // Auto-open the introspection wizard once the workspace finishes
-  // cloning AND the user hasn't dismissed it before. Stored per-
-  // workspace in localStorage; manual reopen via the toolbar.
+  // Auto-open the introspection wizard ONLY for a fresh, un-configured
+  // project: workspace running, not previously dismissed, AND the
+  // project has no environment yet. Re-opening it on every reconnect
+  // let the user accidentally re-approve auto-detection, which used to
+  // reset their saved deploy/preview config — so once an environment
+  // exists we never auto-prompt again (manual reopen via the toolbar
+  // stays available). The backend apply is also non-destructive now,
+  // so this is the first of two guards. On an env-list error we stay
+  // closed rather than risk an unwanted prompt.
   useEffect(() => {
-    if (!wid) return;
+    if (!wid || !pid) return;
     if (workspace?.status !== "running") return;
     if (window.localStorage.getItem(`${WIZARD_DISMISS_KEY_PREFIX}.${wid}`)) return;
-    setWizardOpen(true);
-  }, [wid, workspace?.status]);
+    let cancelled = false;
+    listEnvironments(pid)
+      .then((envs) => {
+        if (!cancelled && envs.length === 0) setWizardOpen(true);
+      })
+      .catch(() => {
+        /* env list unavailable — don't auto-prompt */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wid, pid, workspace?.status]);
 
   // Poll while the workspace is still being cloned; ticker also drives
   // the "elapsed" counter shown to the user so they know it's alive.
