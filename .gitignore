@@ -13,6 +13,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# `lib/` above is the Python build-artifact dir; it must NOT swallow
+# the web SPA's source directory (web/src/lib/json.ts etc.).
+!web/src/lib/
 lib64/
 parts/
 sdist/
