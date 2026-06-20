@@ -111,9 +111,20 @@ services:
       GAPT_SLACK_WEBHOOK_URL: ${GAPT_SLACK_WEBHOOK_URL:-}
       GAPT_DISCORD_WEBHOOK_URL: ${GAPT_DISCORD_WEBHOOK_URL:-}
       GAPT_CI_GITHUB_TOKEN: ${GAPT_CI_GITHUB_TOKEN:-}
+    # GAPT drives the host Docker daemon (workspace sandboxes, preview
+    # routing, prod-stack deploys), so the containerised server mounts
+    # the socket. `group_add` with the host's docker GID lets the
+    # non-root `gapt` user read it — set GAPT_DOCKER_GID in .env to
+    # `getent group docker | cut -d: -f3` on the host. (Full workspace
+    # *isolation* additionally needs the sysbox runtime installed on
+    # the host; without it the control plane + previews/deploys work
+    # but `docker run --runtime=sysbox-runc` workspace creation fails.)
+    group_add:
+      - "${GAPT_DOCKER_GID:-999}"
     volumes:
       # Encrypted local vault — ciphertext survives container recreate.
       - vault-data:/var/lib/gapt
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:
         - CMD-SHELL
