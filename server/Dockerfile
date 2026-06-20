@@ -49,9 +49,18 @@ COPY --from=deps /opt/venv /opt/venv
 COPY --from=deps --chown=gapt:gapt /opt/gapt-server /opt/gapt-server
 WORKDIR /opt/gapt-server
 
+# Migration assets live at the server root (not under src/), so copy
+# them explicitly. The entrypoint runs `alembic upgrade head` against
+# GAPT_POSTGRES_DSN before the server starts — a fresh deploy
+# self-migrates instead of needing a manual upgrade step.
+COPY --chown=gapt:gapt server/alembic.ini ./alembic.ini
+COPY --chown=gapt:gapt server/migrations ./migrations
+COPY --chmod=0755 server/docker-entrypoint.sh /usr/local/bin/gapt-entrypoint.sh
+
 USER gapt
 EXPOSE 8088
 
+ENTRYPOINT ["/usr/local/bin/gapt-entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "gapt_server.app:app", "--host", "0.0.0.0", "--port", "8088"]
 
 LABEL org.opencontainers.image.title="gapt/server" \

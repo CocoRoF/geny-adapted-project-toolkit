@@ -1,0 +1,29 @@
+# Cloudflare tunnel config for the GAPT tunnel deployment.
+#
+# Copy to `config.yml` (same directory) and drop the tunnel's
+# credentials JSON beside it, then bring up the `tunnel` profile:
+#   docker compose -f docker-compose.tunnel.yml --profile tunnel up -d
+#
+# The compose mounts this directory at /etc/cloudflared, so the
+# `credentials-file` path below is the in-container path. Both
+# config.yml and the *.json credentials file are gitignored — the
+# JSON is the tunnel secret and must never be committed.
+#
+# `service` dials Caddy over the compose network (NOT localhost) — the
+# cloudflared container and caddy share the gapt-tunnel network.
+
+tunnel: <TUNNEL_NAME>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # Apex: GAPT IDE + /api + /preview/<slug>/* (path-based preview).
+  - hostname: gapt.hrletsgo.me
+    service: http://caddy:8080
+    originRequest:
+      noTLSVerify: true
+  # Wildcard for per-deploy subdomains (subdomain preview mode).
+  - hostname: '*.gapt.hrletsgo.me'
+    service: http://caddy:8080
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404

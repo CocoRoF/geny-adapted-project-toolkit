@@ -119,6 +119,11 @@ id_ed25519*
 
 # GAPT-specific secret stores
 .gapt/secrets/
+
+# Cloudflare tunnel — real config + credentials are deploy-time
+# secrets; only the example template is tracked.
+compose/cloudflared/config.yml
+compose/cloudflared/*.json
 .gapt/local/
 **/.gapt/secrets/
 **/.gapt/local/

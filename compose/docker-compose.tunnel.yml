@@ -1,0 +1,169 @@
+# GAPT tunnel stack — fully containerised self-host behind a
+# Cloudflare named tunnel.
+#
+# Same control plane as docker-compose.prod.yml (postgres / redis /
+# seaweedfs / server) but the edge is built for a tunnel rather than a
+# public IP:
+#   - caddy: tunnel-mode Caddyfile (auto_https off, plain HTTP on
+#     :8080) and a SPA baked into the image (compose/caddy/Dockerfile).
+#   - cloudflared: the named tunnel, dialing `caddy:8080` over the
+#     compose network. Lives behind the `tunnel` profile so the app
+#     stack can be brought up and verified BEFORE the tunnel is cut
+#     over from the old host (avoids two connectors racing the same
+#     tunnel mid-migration).
+#
+# Required env (compose auto-loads a sibling `.env`):
+#   GAPT_DOMAIN            — apex (gapt.hrletsgo.me)
+#   GAPT_PREVIEW_DOMAIN    — preview host (path mode: same as apex)
+#   GAPT_POSTGRES_PASSWORD / GAPT_SESSION_SECRET / GAPT_DAEMON_JWT_SECRET
+#   GAPT_VAULT_MASTER_KEY  — KEEP CONSTANT (rotating orphans secrets)
+#   GAPT_SHARE_LINK_SECRET / GAPT_SEAWEED_SECRET_KEY
+#
+# Bring up the app stack:   docker compose -f docker-compose.tunnel.yml up -d --build
+# Add the tunnel:           docker compose -f docker-compose.tunnel.yml --profile tunnel up -d
+#   (cloudflared needs compose/cloudflared/config.yml + the tunnel
+#    credentials JSON in compose/cloudflared/ — see config.example.yml)
+
+name: gapt-tunnel
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gapt
+      POSTGRES_PASSWORD: ${GAPT_POSTGRES_PASSWORD:?GAPT_POSTGRES_PASSWORD required}
+      POSTGRES_DB: gapt
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gapt -d gapt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.99
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=512
+      - -volume.max=0
+      - -filer
+      - -filer.maxMB=128
+      - -s3
+      - -s3.config=/config/s3.json
+    volumes:
+      - seaweed-data:/data
+      - ./seaweed/s3.json:/config/s3.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget --no-verbose --tries=1 --spider http://127.0.0.1:9333/cluster/healthz || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      caddy:
+        condition: service_started
+    environment:
+      GAPT_ENV: prod
+      GAPT_LOG_FORMAT: json
+      GAPT_PORT: "8088"
+      GAPT_POSTGRES_DSN: postgresql+psycopg://gapt:${GAPT_POSTGRES_PASSWORD}@postgres:5432/gapt
+      GAPT_REDIS_DSN: redis://redis:6379/0
+      GAPT_SEAWEED_FILER_URL: http://seaweedfs:8888
+      GAPT_SEAWEED_S3_ENDPOINT: http://seaweedfs:8333
+      GAPT_SEAWEED_S3_ACCESS_KEY: ${GAPT_SEAWEED_ACCESS_KEY:-gapt}
+      GAPT_SEAWEED_S3_SECRET_KEY: ${GAPT_SEAWEED_SECRET_KEY:?GAPT_SEAWEED_SECRET_KEY required}
+      GAPT_SEAWEED_BUCKET: gapt
+      GAPT_SESSION_SECRET: ${GAPT_SESSION_SECRET:?GAPT_SESSION_SECRET required}
+      GAPT_DAEMON_JWT_SECRET: ${GAPT_DAEMON_JWT_SECRET:?GAPT_DAEMON_JWT_SECRET required}
+      GAPT_VAULT_MASTER_KEY: ${GAPT_VAULT_MASTER_KEY:?GAPT_VAULT_MASTER_KEY required}
+      GAPT_CADDY_ADMIN_URL: http://caddy:2019
+      GAPT_CADDY_PREVIEW_DOMAIN: ${GAPT_PREVIEW_DOMAIN:?GAPT_PREVIEW_DOMAIN required}
+      GAPT_SHARE_LINK_SECRET: ${GAPT_SHARE_LINK_SECRET:?GAPT_SHARE_LINK_SECRET required}
+      GAPT_SLACK_WEBHOOK_URL: ${GAPT_SLACK_WEBHOOK_URL:-}
+      GAPT_DISCORD_WEBHOOK_URL: ${GAPT_DISCORD_WEBHOOK_URL:-}
+      GAPT_CI_GITHUB_TOKEN: ${GAPT_CI_GITHUB_TOKEN:-}
+    volumes:
+      # Encrypted local vault — ciphertext survives container recreate.
+      - vault-data:/var/lib/gapt
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8088/health'').status==200 else 1)"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: compose/caddy/Dockerfile
+    image: gapt/caddy-tunnel:latest
+    restart: unless-stopped
+    volumes:
+      - ./caddy/Caddyfile.tunnel:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    # Bound to loopback only — the tunnel reaches Caddy over the
+    # compose network (caddy:8080); the host port is just for local
+    # verification on the box.
+    ports:
+      - "127.0.0.1:38080:8080"
+    networks:
+      - default
+      - gapt-net
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    depends_on:
+      - caddy
+    volumes:
+      # config.yml + the tunnel credentials JSON. Both are placed at
+      # deploy time (the creds JSON is a secret — never committed).
+      - ./cloudflared:/etc/cloudflared:ro
+
+volumes:
+  postgres-data:
+  redis-data:
+  seaweed-data:
+  caddy-data:
+  caddy-config:
+  vault-data:
+
+networks:
+  default:
+  # Shared network GAPT attaches per-workspace sandbox containers and
+  # per-deploy stacks to, so Caddy can reverse-proxy previews to them.
+  gapt-net:
+    name: gapt-net

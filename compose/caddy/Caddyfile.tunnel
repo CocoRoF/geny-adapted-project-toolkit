@@ -1,0 +1,92 @@
+# GAPT Caddy config — tunnel deployment (behind a Cloudflare tunnel).
+#
+# Same single-edge, path-based routing as Caddyfile.dev, but for a
+# fully containerised deploy that sits behind a Cloudflare named
+# tunnel instead of a public IP:
+#
+#   - `auto_https off`: Cloudflare terminates TLS at its edge and the
+#     tunnel hands Caddy plain HTTP, so Caddy must NOT try to mint
+#     Let's Encrypt certs (the server is behind NAT — HTTP-01 can't
+#     reach it anyway). This is the key difference from Caddyfile.prod,
+#     which is the direct-public, on-demand-ACME variant.
+#   - upstreams are the compose-internal `server:8088` (not a host
+#     process), and the SPA is served statically from the image-baked
+#     `/srv/gapt-web` rather than proxied to a Vite dev server.
+#
+# Domain model (cloudflared ingress sends both apex and wildcard to
+# this :8080 edge):
+#   gapt.hrletsgo.me/                  → 302 to /_gapt/app/
+#   gapt.hrletsgo.me/_gapt/app/*       → built SPA (static file_server)
+#   gapt.hrletsgo.me/_gapt/api/*       → control-plane server (server:8088)
+#   gapt.hrletsgo.me/health            → control-plane health
+#   gapt.hrletsgo.me/preview/<slug>/*  → workspace / prod stacks
+#       (routes injected at runtime by GAPT via the Caddy admin API,
+#       ahead of the safety-net 404 below)
+
+{
+    auto_https off
+    admin 0.0.0.0:2019
+    # Stable admin mount point (`/config/apps/http/servers/main/...`)
+    # so the GAPT server can inject per-slug preview routes.
+    servers :8080 {
+        name main
+    }
+}
+
+:8080 {
+    log {
+        output stderr
+        format console
+    }
+
+    encode gzip zstd
+
+    # ───── control plane (namespaced) ─────
+    # stream_close_delay keeps proxied SSE/WebSocket streams alive
+    # across the admin-API config reloads every expose/unexpose does.
+    handle /_gapt/api/* {
+        reverse_proxy server:8088 {
+            stream_close_delay 1h
+        }
+    }
+
+    # /health stays at apex root — uptime monitors / k8s probes expect
+    # it unprefixed.
+    handle /health {
+        reverse_proxy server:8088
+    }
+
+    # ───── IDE SPA (namespaced, served statically) ─────
+    # The SPA is built with base `/_gapt/app/` and baked into the image
+    # at /srv/gapt-web. `handle_path` strips the `/_gapt/app` prefix so
+    # `/_gapt/app/assets/x.js` → `/srv/gapt-web/assets/x.js`. Unknown
+    # paths fall back to index.html so client-side routes
+    # (`/_gapt/app/projects`) boot the SPA shell.
+    handle_path /_gapt/app/* {
+        root * /srv/gapt-web
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Apex root → 302 to the IDE entry.
+    handle / {
+        header Location "/_gapt/app/"
+        respond 302
+    }
+
+    # ───── per-workspace previews ─────
+    # GAPT injects one route per exposed slug (`/preview/<slug>` +
+    # `/preview/<slug>/*`), MORE specific than this safety net, so they
+    # win when registered. Unregistered `/preview/...` (boot before
+    # recovery, typo, unexpose race) returns 404 instead of falling
+    # through to the SPA/default.
+    @any_preview path /preview /preview/*
+    handle @any_preview {
+        respond "Preview not found. Expose a service from the IDE Service tab — or wait for the workspace to finish booting." 404
+    }
+
+    # ───── default ─────
+    handle {
+        respond "Not found." 404
+    }
+}
