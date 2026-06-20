@@ -9,10 +9,21 @@
 # config.yml and the *.json credentials file are gitignored — the
 # JSON is the tunnel secret and must never be committed.
 #
-# `service` dials Caddy over the compose network (NOT localhost) — the
-# cloudflared container and caddy share the gapt-tunnel network.
+# Reference the tunnel by its UUID, not its name: a name requires the
+# account `cert.pem` (from `cloudflared tunnel login`) to resolve,
+# which a fresh box doesn't have. The UUID + credentials-file is
+# self-contained.
+#
+# NOTE: if the tunnel is REMOTELY managed (its ingress configured in
+# the Cloudflare Zero Trust dashboard), cloudflared uses that remote
+# config and IGNORES the `ingress:` below — only `tunnel:` and
+# `credentials-file:` are honoured. In that case the docker-compose
+# cloudflared service runs with `network_mode: host` so the dashboard's
+# `http://localhost:38080` origin reaches Caddy's published port. For a
+# LOCALLY managed tunnel the ingress below dials `caddy:8080` over the
+# compose network instead.
 
-tunnel: <TUNNEL_NAME>
+tunnel: <TUNNEL_ID>
 credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
 
 ingress:

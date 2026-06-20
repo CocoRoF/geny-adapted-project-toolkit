@@ -157,6 +157,13 @@ services:
     restart: unless-stopped
     profiles: ["tunnel"]
     command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    # Host networking: this tunnel is remotely-managed (its ingress is
+    # configured in the Cloudflare dashboard, which overrides the local
+    # config.yml ingress) and points the origin at `http://localhost:38080`.
+    # On host net the container's localhost is the host's, so it reaches
+    # Caddy's published 127.0.0.1:38080. (config.yml still supplies the
+    # tunnel UUID + credentials-file for auth.)
+    network_mode: host
     depends_on:
       - caddy
     volumes:
