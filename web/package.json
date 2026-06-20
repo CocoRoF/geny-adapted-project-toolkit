@@ -5,6 +5,9 @@
   "license": "Apache-2.0",
   "type": "module",
   "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
