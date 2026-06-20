@@ -17,7 +17,13 @@ WORKDIR /web
 RUN corepack enable
 # Lockfile-first for layer caching, then the rest of the SPA source.
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: pnpm 10+ aborts (ERR_PNPM_IGNORED_BUILDS) when a
+# dependency build script is unreviewed. The only one here is esbuild,
+# whose binary already ships via the @esbuild/<platform> packages — no
+# postinstall needed for `vite build` (lightningcss is the same). So
+# skip all build scripts; the install is deterministic and the build
+# works without them.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
 RUN pnpm build
 
