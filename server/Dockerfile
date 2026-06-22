@@ -41,8 +41,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
+        curl \
+        bash \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 1000 gapt
+
+# Claude Code CLI — the LLM-backends auth modal runs `claude auth login`
+# / `claude auth status` IN this container (the device-code flow the
+# operator drives from the UI). The native installer drops a
+# self-contained binary; copy it to a world-exec path so the non-root
+# `gapt` user can run it, then drop the installer's per-user tree. (The
+# agent itself runs claude INSIDE the workspace sandbox — this binary
+# is only for the server-side auth flow + health check.)
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && cp "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
+    && chmod 0755 /usr/local/bin/claude \
+    && rm -rf /root/.local \
+    && /usr/local/bin/claude --version
 
 COPY --from=deps /opt/venv /opt/venv
 # Keep the project at the same path the deps stage's editable install

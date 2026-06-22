@@ -111,6 +111,15 @@ services:
       GAPT_SLACK_WEBHOOK_URL: ${GAPT_SLACK_WEBHOOK_URL:-}
       GAPT_DISCORD_WEBHOOK_URL: ${GAPT_DISCORD_WEBHOOK_URL:-}
       GAPT_CI_GITHUB_TOKEN: ${GAPT_CI_GITHUB_TOKEN:-}
+      # Claude Code auth. CLAUDE_CONFIG_DIR points the in-server `claude
+      # auth login` (the UI modal) at the host-mounted dir, so the login
+      # lands on the host and survives restarts. GAPT_HOST_CLAUDE_DIR /
+      # _CONFIG tell GAPT to bind-mount that same dir into every sandbox,
+      # so the agent's claude reuses the modal login. (CLAUDE_CONFIG_DIR
+      # consolidates .claude + .claude.json into one dir.)
+      CLAUDE_CONFIG_DIR: ${GAPT_HOST_CLAUDE_DIR:-/home/hrjang/.claude}
+      GAPT_HOST_CLAUDE_DIR: ${GAPT_HOST_CLAUDE_DIR:-/home/hrjang/.claude}
+      GAPT_HOST_CLAUDE_CONFIG: ${GAPT_HOST_CLAUDE_DIR:-/home/hrjang/.claude}/.claude.json
     # GAPT drives the host Docker daemon (workspace sandboxes, preview
     # routing, prod-stack deploys), so the containerised server mounts
     # the socket. `group_add` with the host's docker GID lets the
@@ -135,6 +144,13 @@ services:
       # must be owned by uid 1000 (the `gapt` user).
       - /workspace:/workspace
       - /var/lib/gapt-bare:/var/lib/gapt-bare
+      # Claude Code state, identity-mounted so the SAME dir is (a) where
+      # the in-server auth modal writes the login (CLAUDE_CONFIG_DIR
+      # below) and (b) the GAPT_HOST_CLAUDE_DIR the daemon bind-mounts
+      # into each sandbox — one login, usable by the agent. Host dir owned
+      # by uid 1000. Defaults to /home/hrjang/.claude; override with
+      # GAPT_HOST_CLAUDE_DIR in .env.
+      - ${GAPT_HOST_CLAUDE_DIR:-/home/hrjang/.claude}:${GAPT_HOST_CLAUDE_DIR:-/home/hrjang/.claude}
     healthcheck:
       test:
         - CMD-SHELL
