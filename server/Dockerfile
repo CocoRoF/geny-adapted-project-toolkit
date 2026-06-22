@@ -47,6 +47,11 @@ COPY --from=deps /opt/venv /opt/venv
 # Keep the project at the same path the deps stage's editable install
 # resolved against, so the venv's .pth still points to a real src tree.
 COPY --from=deps --chown=gapt:gapt /opt/gapt-server /opt/gapt-server
+# Docker CLI — GAPT drives workspace sandboxes by shelling out to
+# `docker exec`/`docker run` against the host-mounted socket (the SDK
+# alone doesn't cover the subprocess paths in sandbox_runner /
+# workspace_sandbox). Just the client; the daemon is the host's.
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/gapt-server
 
 # Migration assets live at the server root (not under src/), so copy

@@ -10,6 +10,7 @@ export const en = {
   "app.footer": "Apache-2.0 · CocoRoF",
   "app.loading": "Loading…",
   "app.close": "Close",
+  "capabilities.title": "Workspace sandboxes are unavailable — some host dependencies are missing:",
   "app.error_boundary": "Something went wrong. Reload the page or report the issue.",
 
   // --- locale picker ---

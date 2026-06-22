@@ -9,6 +9,8 @@ export const ko: Record<keyof typeof en, string> = {
   "app.footer": "Apache-2.0 · CocoRoF",
   "app.loading": "불러오는 중…",
   "app.close": "닫기",
+  "capabilities.title":
+    "워크스페이스 샌드박스를 사용할 수 없습니다 — 호스트 의존성 일부가 없습니다:",
   "app.error_boundary": "문제가 발생했습니다. 페이지를 새로고침하거나 이슈로 보고하세요.",
 
   // --- locale picker ---

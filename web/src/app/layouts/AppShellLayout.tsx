@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { LogOut } from "lucide-react";
 
+import { CapabilityBanner } from "@/app/CapabilityBanner";
 import { ThemeSwitcher } from "@/app/ThemeSwitcher";
 import { useAuth } from "@/app/providers/auth-context";
 import { useI18n } from "@/app/providers/i18n-context";
@@ -77,6 +78,8 @@ export function AppShellLayout({ children }: { children: ReactNode }) {
           ) : null}
         </div>
       </header>
+
+      <CapabilityBanner />
 
       <main className="flex-1 overflow-y-auto">{children}</main>
 

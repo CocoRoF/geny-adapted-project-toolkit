@@ -36,6 +36,7 @@ from gapt_server.routers import (
     secrets,
     services,
     sessions,
+    system,
     terminal,
     tests,
     webhooks,
@@ -262,6 +263,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _apply_reconcile_report(container, settings, recovered)
         except Exception:
             logger.exception("services.reconcile_failed")
+
+    await _log_capability_warnings(settings)
+
     # GAPT self-introspection MCP (agent debugging window). The
     # FastMCP streamable-HTTP transport needs its session manager
     # running; mounted Starlette sub-apps don't get their lifespan
@@ -305,6 +309,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 pass
         await container.aclose()
         logger.info("gapt.server.shutdown")
+
+
+async def _log_capability_warnings(settings: Settings) -> None:
+    """Probe the workspace-sandbox dependency chain at startup and log a
+    warning per missing link (docker CLI / daemon / sysbox runtime /
+    image), so a misprovisioned host is visible in the logs — not only
+    when a workspace-create fails. The SPA surfaces the same report via
+    GET /_gapt/api/system/capabilities."""
+    try:
+        from gapt_server.domains.sandbox.capabilities import (  # noqa: PLC0415
+            probe_capabilities,
+        )
+
+        report = await probe_capabilities(
+            runtime=settings.sandbox_runtime, image=settings.sandbox_image_tag
+        )
+        if report.workspaces_ready:
+            logger.info("capabilities.ok", detail="workspace sandboxes ready")
+        else:
+            for cap in report.missing:
+                logger.warning(
+                    "capabilities.missing",
+                    capability=cap.key,
+                    state=cap.state,
+                    detail=cap.detail,
+                    remedy=cap.remedy,
+                )
+    except Exception:
+        logger.exception("capabilities.probe_failed")
 
 
 async def _apply_reconcile_report(
@@ -386,6 +419,7 @@ def create_app(
         )
 
     app.include_router(health.router)
+    app.include_router(system.router)
     app.include_router(auth.router)
     app.include_router(secrets.router)
     app.include_router(scaffolds.router)
