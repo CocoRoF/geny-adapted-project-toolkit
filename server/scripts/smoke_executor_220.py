@@ -34,8 +34,9 @@ from geny_executor.llm_client.types import APIResponse, ContentBlock, TokenUsage
 from gapt_server.agent.credentials import build_claude_code_cli_creds  # noqa: E402
 from gapt_server.agent.environment_service import GaptEnvironmentService  # noqa: E402
 from gapt_server.agent.hooks.cost_hook import CostAccumulator  # noqa: E402
+from geny_executor.llm_client import ContainerCLIRunner  # noqa: E402
+
 from gapt_server.agent.sandbox_runner import (  # noqa: E402
-    SandboxedCLIProcessRunner,
     build_sandboxed_cli_client,
 )
 from gapt_server.agent.session_registry import SessionRuntime, _drive_pipeline  # noqa: E402
@@ -143,7 +144,7 @@ async def main() -> None:
 
     client._runner_factory = _recording_factory
     runner = client._make_runner()
-    assert isinstance(runner, SandboxedCLIProcessRunner)
+    assert isinstance(runner, ContainerCLIRunner)
     assert factory_calls and factory_calls[0]["binary"] == str(fake_bin)
     assert factory_calls[0]["env_extras"]["ANTHROPIC_API_KEY"] == "sk-smoke"
     ok("runner_factory invoked with binary/cwd/env_extras/timeout kwargs")

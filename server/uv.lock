@@ -662,7 +662,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1" },
     { name = "email-validator", specifier = ">=2.2" },
     { name = "fastapi", specifier = ">=0.115,<0.120" },
-    { name = "geny-executor", specifier = ">=2.2.0,<3.0.0" },
+    { name = "geny-executor", specifier = ">=2.21.1,<3.0.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", extras = ["testing"], marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
@@ -693,7 +693,7 @@ dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20260518" }]
 
 [[package]]
 name = "geny-executor"
-version = "2.3.0"
+version = "2.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -709,10 +709,11 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/98/539b030444488a27d3ce735c44ae6e7d7bb82ccd1f3e659fc041567916d7/geny_executor-2.3.0.tar.gz", hash = "sha256:6cd97a3c591ed41004f22048235c58eaedd68cc7501d768c79b2316719c4cdaf", size = 1080938, upload-time = "2026-06-10T12:57:01.087Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/ce/834fcde6462e0d0998473db167eb73ba7ab944eb552b8ba1e4ffc11c3cc5/geny_executor-2.21.1.tar.gz", hash = "sha256:1539432884b8d0d44e730ede54d16074e1f9915b90d4cf5bd35f9f4130eadac2", size = 1161878, upload-time = "2026-06-22T07:04:42.286Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/3d/f64b3b79c0a97979e7d91780f99cfad30956cda8d4bf35c958c1391fac5d/geny_executor-2.3.0-py3-none-any.whl", hash = "sha256:bb0251fd4694b360dad315eed3d17a84814c9651080e6a3da9ce9bd5a52fd04c", size = 874960, upload-time = "2026-06-10T12:56:59.368Z" },
+    { url = "https://files.pythonhosted.org/packages/24/42/eeb49de3ecf1463e50b650e490351378fb366b79c4233dbc84c963e6f966/geny_executor-2.21.1-py3-none-any.whl", hash = "sha256:fc6c52a1578f70ea68348a5062d1ca9ce0e1c40eaaa947876284317e7b1dc8cc", size = 946992, upload-time = "2026-06-22T07:04:40.06Z" },
 ]
 
 [[package]]
