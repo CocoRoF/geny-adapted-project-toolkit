@@ -40,6 +40,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        git \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 1000 gapt
 

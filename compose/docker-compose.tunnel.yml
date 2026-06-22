@@ -125,6 +125,16 @@ services:
       # Encrypted local vault — ciphertext survives container recreate.
       - vault-data:/var/lib/gapt
       - /var/run/docker.sock:/var/run/docker.sock
+      # Workspace storage must be bind-mounted at IDENTICAL host paths:
+      # the server writes the bare clones (/var/lib/gapt-bare) and
+      # per-workspace worktrees (/workspace/<slug>/<wid>) here, then asks
+      # the host daemon to bind-mount those same paths into each sibling
+      # `gapt-ws` sandbox. If the path the server wrote to and the path
+      # the daemon mounts don't match, the sandbox sees an empty dir — so
+      # the mount is host:/x -> server:/x (identity), and the host dirs
+      # must be owned by uid 1000 (the `gapt` user).
+      - /workspace:/workspace
+      - /var/lib/gapt-bare:/var/lib/gapt-bare
     healthcheck:
       test:
         - CMD-SHELL
