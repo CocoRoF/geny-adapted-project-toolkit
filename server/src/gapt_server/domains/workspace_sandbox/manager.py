@@ -66,6 +66,12 @@ DEFAULT_IMAGE = os.environ.get("GAPT_WORKSPACE_SANDBOX_IMAGE", "gapt-workspace:l
 # — without publishing ports on the host. The name is fixed so the
 # compose stack and this server agree on it.
 GAPT_NETWORK = os.environ.get("GAPT_WORKSPACE_NETWORK", "gapt-net")
+# Optional OCI runtime for workspace containers (e.g. ``sysbox-runc`` for
+# kernel-level isolation). Empty (default) → Docker's default runtime (runc).
+# Decoupled from the M1 Sandbox runtime so an operator can enable sysbox for
+# workspaces only once they've verified the host supports it (bind-mount
+# ownership under sysbox's userns needs idmapped-mounts / shiftfs).
+GAPT_WORKSPACE_RUNTIME = os.environ.get("GAPT_WORKSPACE_RUNTIME", "").strip()
 
 
 def _resolve_host_claude_paths() -> tuple[str | None, str | None]:
@@ -333,6 +339,9 @@ class WorkspaceSandbox:
     # Validated by `_format_gpus_flag` below so we never emit a
     # malformed flag.
     gpus: str | None = None
+    # Optional OCI runtime (`docker run --runtime <x>`). `None`/empty → Docker
+    # default (runc). Set to `sysbox-runc` for kernel-level workspace isolation.
+    runtime: str | None = None
 
     async def ensure(self) -> None:
         """Idempotent: start the container if it doesn't already
@@ -370,6 +379,7 @@ class WorkspaceSandbox:
         argv: list[str] = [
             "run",
             "-d",
+            *(["--runtime", self.runtime] if self.runtime else []),
             "--init",
             "--name",
             self.container_name,
@@ -658,6 +668,7 @@ class WorkspaceSandboxManager:
             host_claude_dir=self.host_claude_dir,
             host_claude_config=self.host_claude_config,
             gpus=self.gpus,
+            runtime=GAPT_WORKSPACE_RUNTIME or None,
         )
         self._entries[workspace_id] = sandbox
         return sandbox
