@@ -967,11 +967,27 @@ class WorkspaceService:
         if self._session_factory is None:
             return
         async with self._session_factory() as bg_db:
-            row = await bg_db.get(models.Workspace, workspace_id)
+            # The create request commits the CREATING row *after* spawning this
+            # task. For fast (empty) clones we can get here before that commit,
+            # so the row isn't visible yet — retry briefly instead of silently
+            # skipping the status flip (which would strand the workspace at
+            # CREATING even though the container is up).
+            row = None
+            for _ in range(50):  # ~5s
+                row = await bg_db.get(models.Workspace, workspace_id)
+                if row is not None:
+                    break
+                await asyncio.sleep(0.1)
             if row is not None:
                 row.status = new_status
                 row.last_activity_at = _now()
                 await bg_db.commit()
+            else:
+                logger.warning(
+                    "workspace.clone.row_not_visible",
+                    workspace_id=workspace_id,
+                    note="create txn not committed within retry window; status left as-is",
+                )
         await self._audit.log(
             AuditEvent(
                 action=AuditAction.WORKSPACE_CREATE,
