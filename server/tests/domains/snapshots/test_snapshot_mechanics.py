@@ -131,6 +131,21 @@ def test_capture_on_empty_repo_no_parent(tmp_path: Path) -> None:
     assert "only.txt" in files
 
 
+def test_capture_auto_inits_non_git_workspace(tmp_path: Path) -> None:
+    # A workspace dir that is NOT a git repo (empty project / no clone) is still
+    # snapshottable — capture initialises a repo so the tree can be captured.
+    work = tmp_path / "nogit"
+    work.mkdir()
+    (work / "file.txt").write_text("hello")
+    cap = build_capture_script(include_ignored=True, workdir=str(work))
+    res = _sh(work, cap, {"SNAP_ID": "01TESTSNAP04", "SNAP_MSG": "init", "SNAP_PARENT": ""})
+    assert res.returncode == 0, res.stderr
+    commit = res.stdout.strip().splitlines()[-1]
+    assert (work / ".git").exists()  # repo was created
+    files = set(_git(work, "ls-tree", "-r", "--name-only", commit).split("\n"))
+    assert "file.txt" in files
+
+
 def test_parse_numstat() -> None:
     out = _parse_numstat("3\t1\ta.py\n-\t-\tbin.dat\n10\t0\tb.py\n")
     assert out == {"files": 3, "additions": 13, "deletions": 1}
