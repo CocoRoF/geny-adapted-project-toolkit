@@ -36,6 +36,7 @@ from gapt_server.routers import (
     secrets,
     services,
     sessions,
+    snapshots,
     system,
     terminal,
     tests,
@@ -429,6 +430,8 @@ def create_app(
     app.include_router(workspaces.by_id)
     app.include_router(sessions.by_project)
     app.include_router(sessions.by_id)
+    app.include_router(snapshots.by_workspace)
+    app.include_router(snapshots.by_id)
     app.include_router(audit.router)
     app.include_router(deploy.router)
     app.include_router(deploy.runs_router)

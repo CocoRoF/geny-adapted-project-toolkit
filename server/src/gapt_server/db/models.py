@@ -50,6 +50,7 @@ from gapt_server.db.enums import (
     SandboxStatus,
     SecretBackend,
     SecretOwnerScope,
+    SnapshotKind,
     WorkspaceStatus,
 )
 from gapt_server.db.ulid import ulid_default
@@ -543,6 +544,81 @@ class SessionEvent(Base):
 
     __table_args__ = (
         Index("ix_session_events_session_seq", "session_id", "seq"),
+    )
+
+
+# ───────────────────────────────────────────────────────────── snapshots ──
+
+
+class Snapshot(Base):
+    """A git-grade, AI-first workspace checkpoint.
+
+    Captures three things at a point in time so a workspace can be restored
+    *and* inspected later:
+
+    1. **File state + build artifacts** — a commit object on the reserved ref
+       ``refs/snapshots/<id>`` (``git_sha``). For ``tool_save`` snapshots the
+       capture force-includes normally-ignored artifacts (venv / build output)
+       so a cold restore reproduces a *working* environment.
+    2. **Agent activity** — the chat dialog + tool calls/results that produced
+       this state, pinned by the ``session_events`` seq range
+       (``event_start_seq``..``event_end_seq``) and stored compactly in
+       ``activity`` (durable against future event pruning).
+    3. **A graph** — ``parent_id`` chains snapshots into a DAG (git-like
+       history; the diff vs parent is computed on demand from the commits).
+
+    This is the durable "sandbox" half of a Sandbox Tool Pack: a saved tool
+    references a snapshot, and reuse restores the workspace from it.
+    """
+
+    __tablename__ = "snapshots"
+
+    id: Mapped[str] = _pk()
+    workspace_id: Mapped[str] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Nullable: snapshots can be session-scoped (tool_save / auto) or manual
+    # (operator pressed the button with no live agent session).
+    session_id: Mapped[str | None] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("agent_sessions.id", ondelete="SET NULL"),
+    )
+    # The DAG edge. SET NULL so deleting a mid-history snapshot doesn't cascade
+    # away its descendants — they just lose the back-link.
+    parent_id: Mapped[str | None] = mapped_column(
+        String(ULID_LEN),
+        ForeignKey("snapshots.id", ondelete="SET NULL"),
+    )
+    kind: Mapped[SnapshotKind] = mapped_column(
+        _pg_enum(SnapshotKind, "snapshot_kind_enum"),
+        nullable=False,
+        server_default=SnapshotKind.MANUAL.value,
+    )
+    label: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    # refs/snapshots/<id> + the commit sha it points at.
+    git_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    git_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    # session_events range whose activity this snapshot pins (inclusive).
+    event_start_seq: Mapped[int | None] = mapped_column(Integer)
+    event_end_seq: Mapped[int | None] = mapped_column(Integer)
+    # Cheap summary for list views: {files,additions,deletions,turns,tool_calls}.
+    stats: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    # Compact transcript {turns:[{user,assistant,tool_uses,cost_usd}]} — the AI
+    # activity baked into the snapshot, durable independent of session_events.
+    activity: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    created_at: Mapped[datetime] = _created_at()
+    created_by: Mapped[str | None] = mapped_column(String(80))
+
+    __table_args__ = (
+        Index("ix_snapshots_workspace_created", "workspace_id", "created_at"),
+        Index("ix_snapshots_session_id", "session_id"),
+        Index("ix_snapshots_parent_id", "parent_id"),
     )
 
 

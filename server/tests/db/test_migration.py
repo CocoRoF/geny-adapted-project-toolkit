@@ -41,6 +41,8 @@ EXPECTED_TABLES: frozenset[str] = frozenset(
         "sandboxes",
         "secrets",
         "session_events",
+        # Sandbox Tool Packs P1 — git-grade workspace checkpoints.
+        "snapshots",
         "workspaces",
         # Phase N.5 — per-workspace repo selection + branch. Replaces
         # the workspace-level `branch` column with a many-to-many.
@@ -58,6 +60,7 @@ EXPECTED_ENUMS: frozenset[str] = frozenset(
         "sandbox_status_enum",
         "secret_backend_enum",
         "secret_owner_scope_enum",
+        "snapshot_kind_enum",
         "workspace_status_enum",
     }
 )
