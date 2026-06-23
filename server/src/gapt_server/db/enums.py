@@ -48,6 +48,20 @@ class AgentSessionStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class SnapshotKind(StrEnum):
+    """Why a workspace snapshot was taken.
+
+    ``manual``    — operator pressed "snapshot" in the IDE.
+    ``tool_save`` — captured when saving a Sandbox Tool Pack (the durable
+                    [environment + tool code + skills] checkpoint).
+    ``auto``      — reserved for future per-turn auto-checkpointing.
+    """
+
+    MANUAL = "manual"
+    TOOL_SAVE = "tool_save"
+    AUTO = "auto"
+
+
 class SecretOwnerScope(StrEnum):
     # Single-admin model: there is no user/org tier. SYSTEM is the
     # admin-global scope (most secrets); PROJECT / ENVIRONMENT remain
