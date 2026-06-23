@@ -196,6 +196,7 @@ async def create_snapshot(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": exc.code, "reason": str(exc)},
         ) from exc
+    await db.commit()  # get_db_session does not auto-commit; persist the row
     await _audit(audit_sink, action="snapshot.create", actor=user.id,
                  outcome=enums.AuditOutcome.OK, workspace_id=workspace_id, snapshot_id=snap.id)
     return SnapshotResponse.of(snap)
@@ -306,6 +307,7 @@ async def delete_snapshot(
         except Exception:  # noqa: BLE001
             sandbox = None
     await snap_svc.delete(db, sandbox=sandbox, snapshot=snap)
+    await db.commit()  # persist the row removal
     await _audit(audit_sink, action="snapshot.delete", actor=user.id,
                  outcome=enums.AuditOutcome.OK, snapshot_id=snapshot_id)
     return {"ok": True, "snapshot_id": snapshot_id}
