@@ -254,7 +254,12 @@ async def capture(
     if prior is not None:
         parent_sha = prior.git_sha
     else:
-        rc, head_out, _ = await _sh(sandbox, "git rev-parse HEAD 2>/dev/null || true")
+        # ``--verify`` is essential: plain ``git rev-parse HEAD`` on an unborn
+        # repo prints the literal "HEAD" to STDOUT (+ error to stderr, rc 128),
+        # so a ``|| true`` would yield parent_sha="HEAD" → ``commit-tree -p
+        # HEAD`` fails "not a valid object name HEAD". ``--verify`` emits
+        # nothing + rc!=0 on an unborn HEAD, so parent_sha stays "".
+        rc, head_out, _ = await _sh(sandbox, "git rev-parse --verify HEAD 2>/dev/null")
         parent_sha = head_out.strip() if rc == 0 else ""
 
     # 2. Snapshot id (so the ref name is known before the row is flushed).
