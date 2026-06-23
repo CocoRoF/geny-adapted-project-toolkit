@@ -64,7 +64,11 @@ def build_capture_script(*, include_ignored: bool, workdir: str = "/workspace") 
     return (
         "set -e\n"
         f"cd {workdir}\n"
-        "if ! git rev-parse --git-dir >/dev/null 2>&1; then echo __NOGIT__; exit 0; fi\n"
+        # git is the snapshot substrate. A workspace with no repo (empty
+        # project / no clone) is still snapshottable — initialise one so the
+        # working tree can be captured. Idempotent; identity comes from the
+        # GIT_AUTHOR_*/COMMITTER_* env the caller sets.
+        "if ! git rev-parse --git-dir >/dev/null 2>&1; then git init -q; fi\n"
         'TMPIDX="$(mktemp -u)"\n'
         'export GIT_INDEX_FILE="$TMPIDX"\n'
         f"git add -A {force}.\n"
