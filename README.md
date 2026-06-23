@@ -1,36 +1,36 @@
 # geny-adapted-project-toolkit (GAPT)
 
-> **셀프호스트 AI DevOps 플랫폼.** 내 서버에 띄우는 `OpenHands × Coolify` 합본 + `Cursor`-급 라이브 편집 UI. 외부 Git 레포를 `git clone` → **Docker(Sysbox) 격리** → **Claude Code 기반 LLM**으로 편집·테스트·빌드·배포까지 **하나의 웹 콘솔**에서 끝낸다.
+> **A self-hosted AI DevOps platform.** An `OpenHands × Coolify` mashup you run on your own server, plus a `Cursor`-class live-editing UI. Take an external Git repo — `git clone` → **Docker (Sysbox) isolation** → **Claude Code-based LLM** — and do everything from editing to testing, building, and deploying in **a single web console**.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-M1--E4_complete_(beta)-yellow)](docs/11_roadmap.md)
 
-> **M1-E4 완료 (2026-05-24).** 350+ server tests · 89+ web tests · 운영자 self-host 가능 (`compose/docker-compose.prod.yml`). 다음: 사용자가 GAPT 를 GAPT 로 dogfood + Geny 첫 어댑트 — 운영 가이드는 [`docs/operations/install.md`](docs/operations/install.md), [`docs/operations/geny-adapt.md`](docs/operations/geny-adapt.md).
+> **M1-E4 complete (2026-05-24).** 350+ server tests · 89+ web tests · operator self-host ready (`compose/docker-compose.prod.yml`). Next: dogfood GAPT with GAPT itself + the first Geny adapt — operations guides at [`docs/operations/install.md`](docs/operations/install.md) and [`docs/operations/geny-adapt.md`](docs/operations/geny-adapt.md).
 
 ---
 
-## 한 줄 정의
+## In one line
 
 ```
-사용자 → 브라우저 한 탭 → 좌측 프로젝트 트리(여러 외부 레포) → 워크스페이스 진입
-   → Sysbox 격리 컨테이너 + SeaweedFS 영속 파일 + Claude Code CLI
-   → 채팅 / 에디터 / 터미널 / 프리뷰 / CI / 배포까지 같은 세션
+User → one browser tab → left-hand project tree (many external repos) → enter a workspace
+   → Sysbox-isolated container + SeaweedFS persistent files + Claude Code CLI
+   → chat / editor / terminal / preview / CI / deploy, all in the same session
 ```
 
-자세한 비전: [`docs/00_overview.md`](docs/00_overview.md)
+Full vision: [`docs/00_overview.md`](docs/00_overview.md)
 
 ---
 
-## GAPT는 그 자체로 TOOL이다 — `gapt-mcp`
+## GAPT is itself a TOOL — `gapt-mcp`
 
-GAPT는 격리 샌드박스 + 프로젝트 관리 플랫폼이므로, **그 전체가 하나의
-도구**가 될 수 있다. [`mcp/`](mcp/)의 **gapt-mcp**는 GAPT의 핵심 활동
-전부를 MCP(Model Context Protocol) 도구로 노출하는 npm 패키지다 — Claude
-Code, Claude Desktop, Cursor 등 어떤 MCP 클라이언트든 GAPT 인스턴스를
-원격 조종할 수 있다.
+Because GAPT is an isolated sandbox + project-management platform, **the
+whole thing can become a single tool.** **gapt-mcp** in [`mcp/`](mcp/) is
+an npm package that exposes every core GAPT activity as an MCP (Model
+Context Protocol) tool — any MCP client (Claude Code, Claude Desktop,
+Cursor, …) can remote-control a GAPT instance.
 
 ```jsonc
-// .mcp.json — 이 세 줄이면 에이전트가 GAPT 전체를 다룬다
+// .mcp.json — these few lines let an agent drive all of GAPT
 {
   "mcpServers": {
     "gapt": {
@@ -47,131 +47,133 @@ Code, Claude Desktop, Cursor 등 어떤 MCP 클라이언트든 GAPT 인스턴스
 ```
 
 ```bash
-# Claude Code 한 줄 등록
+# Register with Claude Code in one line
 claude mcp add gapt \
   --env GAPT_BASE_URL=https://gapt.example.com \
   --env GAPT_LOGIN_ID=admin --env GAPT_LOGIN_PW=secret \
   -- npx gapt-mcp
 ```
 
-연결된 에이전트가 할 수 있는 일 — **41개 도구**:
+What a connected agent can do — **41 tools**:
 
-| 그룹 | 능력 |
+| Group | Capability |
 |---|---|
-| orient | `gapt_overview` 한 콜로 전체 인스턴스 파악, LLM 비용 집계 |
-| projects | 프로젝트 생성(빈 프로젝트 포함) · **멀티 git 레포** 연결 · 원격 브랜치 조회 |
-| workspaces | per-repo 브랜치 선택으로 샌드박스 생성 · start/stop/delete/rehydrate · **임의 셸 명령 실행** |
-| files | 트리/읽기/쓰기/삭제 + 단일 파일 diff |
-| git | repo별 status/log/branches/checkout/commit/sync/stash/discard/**PR 생성** |
-| services | dev server 기동 · 게이트웨이 프리뷰 URL로 **expose** |
-| agent | GAPT 내장 코딩 에이전트에 **작업 통째로 위임** (oneshot + 세션) |
-| deploy | 비동기 배포 · run 폴링 · 스택 logs/restart · **rollback** |
+| orient | Grasp the whole instance in one `gapt_overview` call, with aggregated LLM cost |
+| projects | Create projects (including empty ones) · attach **multiple git repos** · list remote branches |
+| workspaces | Create a sandbox by picking a branch per repo · start/stop/delete/rehydrate · **run arbitrary shell commands** |
+| files | Tree / read / write / delete + per-file diff |
+| git | Per-repo status/log/branches/checkout/commit/sync/stash/discard/**open a PR** |
+| services | Start a dev server · **expose** it via a gateway preview URL |
+| agent | **Delegate a whole task** to GAPT's built-in coding agent (oneshot + session) |
+| deploy | Async deploy · poll runs · stack logs/restart · **rollback** |
 
-사용법 스킬(코어 모델, 골든 워크플로, 에러 복구 규칙)이 서버
-`instructions` + `gapt://skill/usage` 리소스 + `gapt_usage_guide`
-프롬프트 3중으로 내장되어, 연결만 하면 에이전트가 GAPT를 *정확하게*
-쓴다. 상세: [`mcp/README.md`](mcp/README.md)
+A usage skill (core model, golden workflows, error-recovery rules) is
+embedded three ways — the server `instructions`, the
+`gapt://skill/usage` resource, and the `gapt_usage_guide` prompt — so an
+agent uses GAPT *correctly* the moment it connects. Details:
+[`mcp/README.md`](mcp/README.md)
 
-> 이 구조의 의미: **GAPT 위의 에이전트가 GAPT를 부른다.** 외부 Claude가
-> gapt-mcp로 워크스페이스를 만들고, 그 안의 내장 에이전트에게 작업을
-> 위임하고, 결과를 PR로 만들어 배포까지 — 전 과정이 도구 호출이다.
+> What this structure means: **an agent on top of GAPT calls GAPT.** An
+> external Claude creates a workspace via gapt-mcp, delegates work to the
+> built-in agent inside it, turns the result into a PR, and deploys it —
+> the whole flow is tool calls.
 
 ---
 
-## 왜 만드는가
+## Why build this
 
-2026년 5월 현재, 다음을 *동시에* 제공하는 단일 제품은 사실상 존재하지 않는다.
+As of May 2026, essentially no single product offers all of the following *at once*.
 
-| 요건 | 가장 가까운 후보 | 우리와의 갭 |
+| Requirement | Closest candidate | The gap vs. us |
 |---|---|---|
-| 셀프호스트 (자기 서버에 띄움) | Coolify, OpenHands, Coder | OpenHands는 *코드 에이전트*만, Coolify는 *배포*만 |
-| AI 코드 에이전트 (Claude Code급) | Cursor, Windsurf | SaaS-only |
-| 멀티 프로젝트 (여러 외부 레포 동시) | GitLab Duo | GitLab 안에서만 |
-| 내장 CI/CD + 배포 | GitHub Actions, Coolify | 코드 에이전트와 분리됨 |
-| IDE-like 라이브 편집 UI | Cursor, v0 | 셀프호스트 불가 또는 벤더 종속 |
+| Self-host (run on your own server) | Coolify, OpenHands, Coder | OpenHands is *only* a code agent; Coolify is *only* deployment |
+| AI code agent (Claude Code-class) | Cursor, Windsurf | SaaS-only |
+| Multi-project (many external repos at once) | GitLab Duo | Only inside GitLab |
+| Built-in CI/CD + deploy | GitHub Actions, Coolify | Decoupled from the code agent |
+| IDE-like live-editing UI | Cursor, v0 | Not self-hostable, or vendor-locked |
 
-자세한 시장 분석: [`docs/01_market_landscape.md`](docs/01_market_landscape.md)
-
----
-
-## 핵심 원칙
-
-1. **Isolation by Default** — 호스트 docker 소켓을 *어떤 모드에서도* 노출하지 않음. Sysbox runtime 1차.
-2. **External Repo is First-Class** — 사용자가 이미 가진 GitHub/Gitea 레포가 일급 시민.
-3. **No Vendor Lock-in** — LLM/Git 호스트/IDP/시크릿 저장소 모두 교체 가능한 어댑터.
-4. **Self-Host or Get Out** — 코어는 단일 노드에서 100% 동작. SaaS 부가 서비스는 옵션.
-5. **Reuse Battle-Tested Components** — Sysbox, Caddy, Monaco, dockview, xterm, geny-executor 조립.
-6. **Live Edit > Batch Generate** — Cursor 식 작은 변경의 즉시 반영.
-7. **Audit Everything** — 모든 LLM 호출·도구·파일 편집·배포 명령은 감사 로그.
-8. **Policy by Default, Not by Code** — 위험 액션은 *PolicyEngine의 strict 기본값*. 사용자가 책임지고 config로 완화.
-9. **Single Agent Backend, Manifest-driven** — `geny-executor 2.1.0+` 한곳. **`claude_code_cli` provider + host MCP wrap**으로 GAPT 도구를 CLI에 노출.
-
-자세한 원칙: [`docs/00_overview.md`](docs/00_overview.md) §0.8
+Full market analysis: [`docs/01_market_landscape.md`](docs/01_market_landscape.md)
 
 ---
 
-## 문서 구조
+## Core principles
 
-### 분석 (12편 — Phase 0의 산출물)
+1. **Isolation by Default** — never expose the host Docker socket *in any mode*. Sysbox runtime first.
+2. **External Repo is First-Class** — the GitHub/Gitea repos you already own are first-class citizens.
+3. **No Vendor Lock-in** — the LLM, Git host, IDP, and secret store are all swappable adapters.
+4. **Self-Host or Get Out** — the core runs 100% on a single node. SaaS add-ons are optional.
+5. **Reuse Battle-Tested Components** — assembled from Sysbox, Caddy, Monaco, dockview, xterm, and geny-executor.
+6. **Live Edit > Batch Generate** — Cursor-style small changes reflected instantly.
+7. **Audit Everything** — every LLM call, tool, file edit, and deploy command is audit-logged.
+8. **Policy by Default, Not by Code** — risky actions hit the *PolicyEngine's strict defaults*; you relax them via config, at your own responsibility.
+9. **Single Agent Backend, Manifest-driven** — one place: `geny-executor 2.1.0+`. GAPT tools are exposed to the CLI via the **`claude_code_cli` provider + a host MCP wrap**.
 
-| # | 제목 | 한 줄 |
+Full principles: [`docs/00_overview.md`](docs/00_overview.md) §0.8
+
+---
+
+## Documentation structure
+
+### Analysis (12 documents — the output of Phase 0)
+
+| # | Title | One line |
 |---|---|---|
-| 00 | [개요](docs/00_overview.md) | 비전, 포지셔닝, 핵심 가치, 비-목표, 용어집 |
-| 01 | [시장 풍경](docs/01_market_landscape.md) | 12+ 경쟁 제품, 빈자리, 차용/회피 패턴 |
-| 02 | [유스케이스/페르소나](docs/02_use_cases_and_personas.md) | P1~P4, 5 골든패스, 비-시나리오 |
-| 03 | [시스템 아키텍처](docs/03_system_architecture.md) | 컨트롤/실행 플레인, 8 도메인, 데이터 흐름 |
-| 04 | [LLM 에이전트 레이어](docs/04_llm_agent_layer.md) | geny-executor manifest-driven, MCP 2 boundary |
-| 05 | [Git 워크플로](docs/05_git_workflow.md) | clone/worktree/PR/credential |
-| 06 | [격리/런타임](docs/06_isolation_and_runtime.md) | Sysbox, Compose, 리소스, 네트워크 |
-| 07 | [CI/CD/프리뷰](docs/07_cicd_and_preview.md) | inner/outer loop, DeployTarget, Caddy |
-| 08 | [Web IDE UX](docs/08_web_ide_ux.md) | Monaco+dockview, 채팅 1급, Plan/Act |
-| 09 | [보안/권한/감사/관측](docs/09_security_authz_observability.md) | RBAC, Vault, Audit, PolicyEngine, OTel |
-| 10 | [기술 스택 결정](docs/10_tech_stack_decisions.md) | 결정 매트릭스 + 라이선스 함정 |
-| 11 | [로드맵](docs/11_roadmap.md) | M0~M5 단계 + 비-목표 해제 |
-| 12 | [Geny 케이스 스터디](docs/12_geny_case_study.md) | 첫 어댑트 9 step + 함정 |
+| 00 | [Overview](docs/00_overview.md) | Vision, positioning, core values, non-goals, glossary |
+| 01 | [Market landscape](docs/01_market_landscape.md) | 12+ competitors, the empty slot, patterns to borrow/avoid |
+| 02 | [Use cases / personas](docs/02_use_cases_and_personas.md) | P1–P4, 5 golden paths, non-scenarios |
+| 03 | [System architecture](docs/03_system_architecture.md) | Control/execution planes, 8 domains, data flow |
+| 04 | [LLM agent layer](docs/04_llm_agent_layer.md) | geny-executor manifest-driven, MCP 2-boundary |
+| 05 | [Git workflow](docs/05_git_workflow.md) | clone / worktree / PR / credential |
+| 06 | [Isolation / runtime](docs/06_isolation_and_runtime.md) | Sysbox, Compose, resources, networking |
+| 07 | [CI/CD / preview](docs/07_cicd_and_preview.md) | inner/outer loop, DeployTarget, Caddy |
+| 08 | [Web IDE UX](docs/08_web_ide_ux.md) | Monaco + dockview, chat as first-class, Plan/Act |
+| 09 | [Security / authz / audit / observability](docs/09_security_authz_observability.md) | RBAC, Vault, Audit, PolicyEngine, OTel |
+| 10 | [Tech stack decisions](docs/10_tech_stack_decisions.md) | Decision matrix + licensing pitfalls |
+| 11 | [Roadmap](docs/11_roadmap.md) | M0–M5 milestones + non-goals lifted over time |
+| 12 | [Geny case study](docs/12_geny_case_study.md) | The first adapt in 9 steps + pitfalls |
 
-### 계획 / 진행
+### Plan / progress
 
-- [`docs/plan/`](docs/plan/) — 마스터 플랜 + M0/M1 디테일 카드 + M2~M5 윤곽
-- [`docs/progress/`](docs/progress/) — cycle별 진행 기록 (PR 단위 갱신)
+- [`docs/plan/`](docs/plan/) — master plan + M0/M1 detail cards + M2–M5 outlines
+- [`docs/progress/`](docs/progress/) — per-cycle progress log (updated per PR)
 
-cadence 규칙: [`docs/plan/00_master_plan.md`](docs/plan/00_master_plan.md) §0.1
+Cadence rules: [`docs/plan/00_master_plan.md`](docs/plan/00_master_plan.md) §0.1
 
 ---
 
-## 코드 레이아웃 (M1 종료 시점 목표)
+## Code layout (target at end of M1)
 
 ```
 geny-adapted-project-toolkit/
-├── docs/                   # 분석 + plan + progress
-├── analysis/               # 신규 주제 심층 분석 (cycle 도중 자유 추가)
-├── compose/                # 자체 배포 compose (dev / prod)
-├── server/                 # 컨트롤 플레인 (Python + FastAPI)
-├── runtime/                # gapt/runtime 컨테이너 이미지 + daemon
-├── web/                    # 프론트엔드 (Vite + React)
-├── mcp/                    # gapt-mcp — GAPT 전체를 MCP 도구로 (npm)
-├── caddy/                  # Caddy 템플릿
+├── docs/                   # analysis + plan + progress
+├── analysis/               # deep-dives on new topics (added freely mid-cycle)
+├── compose/                # self-deployment compose (dev / prod)
+├── server/                 # control plane (Python + FastAPI)
+├── runtime/                # gapt/runtime container image + daemon
+├── web/                    # frontend (Vite + React)
+├── mcp/                    # gapt-mcp — all of GAPT as MCP tools (npm)
+├── caddy/                  # Caddy templates
 ├── poc/                    # M0 PoC artifacts
-└── scripts/                # 사용자/관리 스크립트
+└── scripts/                # user / admin scripts
 ```
 
-자세한 트리: [`docs/plan/00_master_plan.md`](docs/plan/00_master_plan.md) §0.8
+Full tree: [`docs/plan/00_master_plan.md`](docs/plan/00_master_plan.md) §0.8
 
 ---
 
-## 의존 자원 (1차)
+## Dependencies (primary)
 
-- **`geny-executor` 2.1.0+** (PyPI) — 에이전트 엔진
-- **Claude Code CLI** (`claude`) — 1차 LLM backend
-- **Sysbox runc** — 컨테이너 격리
-- **SeaweedFS** — 영속 파일 코어 (host FS는 *캐시만*)
+- **`geny-executor` 2.1.0+** (PyPI) — the agent engine
+- **Claude Code CLI** (`claude`) — the primary LLM backend
+- **Sysbox runc** — container isolation
+- **SeaweedFS** — the persistent-file core (host FS is *cache only*)
 - **PostgreSQL 16+**, **Redis 7+**, **Caddy 2+**
 
-자세한 결정 근거: [`docs/10_tech_stack_decisions.md`](docs/10_tech_stack_decisions.md)
+Full rationale: [`docs/10_tech_stack_decisions.md`](docs/10_tech_stack_decisions.md)
 
 ---
 
-## 시작하기
+## Getting started
 
 ### Self-host (M1-E4 — production-ready single VPS)
 
@@ -223,22 +225,22 @@ GAPT_TEST_POSTGRES_DSN="postgresql://gapt:gapt_dev_only@localhost:35432/gapt_tes
 
 ---
 
-## 라이선스
+## License
 
 [Apache License 2.0](LICENSE).
 
-코어는 *영구 OSS*. 클라우드 부가 서비스(M5 이후 옵션)는 별도 라인이지만 코어 OSS를 잠그지 않는다.
+The core is *permanently OSS*. Cloud add-ons (optional, post-M5) are a separate line but never lock down the OSS core.
 
 ---
 
-## 기여
+## Contributing
 
-[`CONTRIBUTING.md`](CONTRIBUTING.md). 모든 PR은 *plan/progress 카드를 참조*해야 한다 — cadence 규칙은 거기에.
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Every PR must *reference a plan/progress card* — the cadence rules live there.
 
 ---
 
-## 관련 프로젝트
+## Related projects
 
-- [gapt-mcp](mcp/) — GAPT 전체를 MCP 도구로 노출하는 npm 패키지 (이 레포의 `mcp/`)
-- [geny-executor](https://github.com/CocoRoF/geny-executor) — GAPT가 의존하는 21단계 에이전트 파이프라인 (Apache-2.0)
-- [Geny](https://github.com/CocoRoF/Geny) — GAPT의 *첫 어댑트 사례* (별개 호스트)
+- [gapt-mcp](mcp/) — npm package exposing all of GAPT as MCP tools (the `mcp/` of this repo)
+- [geny-executor](https://github.com/CocoRoF/geny-executor) — the 21-stage agent pipeline GAPT depends on (Apache-2.0)
+- [Geny](https://github.com/CocoRoF/Geny) — GAPT's *first adapt case* (separate host)

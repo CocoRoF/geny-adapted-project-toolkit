@@ -1,24 +1,24 @@
 # progress/
 
-각 cycle의 진행 기록이 여기 들어간다.
+The progress record for each cycle lives here.
 
-## 사용 규칙
+## Usage rules
 
-[`../plan/00_master_plan.md`](../plan/00_master_plan.md) §0.5 cycle 진행 흐름:
+Per the cycle flow in [`../plan/00_master_plan.md`](../plan/00_master_plan.md) §0.5:
 
-1. cycle 시작 시 → `m{n}/{cycle_id}.md` 파일 신규 생성 (Status: in_progress)
-2. 매 PR 머지 시점 → 같은 파일에 한 줄 이상 추가 (날짜 + PR 링크 + 한 줄 요약)
-3. cycle 종료 시 → 같은 파일 마지막에 *drift 절* 추가 (plan과 어떻게 달랐는가) + Status: done
+1. When a cycle starts → create a new `m{n}/{cycle_id}.md` file (Status: in_progress)
+2. On every PR merge → append at least one line to the same file (date + PR link + one-line summary)
+3. When a cycle ends → add a *drift section* at the bottom of the same file (how it differed from the plan) + Status: done
 
-## 현재 진행 중인 cycle
+## Current cycle in progress
 
-**M2 Phase A 완료** (assistant-side). 사용자 dogfood 대기.
-[`m2_serve_capability.md`](m2_serve_capability.md) §6 의 7단계
-시나리오 통과 후 → 원래 M2 outline (E1~E6) 재디테일화.
+**M2 Phase A complete** (assistant-side). Awaiting user dogfood.
+Once the 7-step scenario in [`m2_serve_capability.md`](m2_serve_capability.md) §6
+passes → re-detail the original M2 outline (E1–E6).
 
-## cycle 상태 인덱스
+## Cycle status index
 
-| ID | 상태 | progress 파일 |
+| ID | Status | Progress file |
 |---|---|---|
 | M0-P1 | done | [`m0/p1_monorepo_ci.md`](m0/p1_monorepo_ci.md) |
 | M0-P2 | done | [`m0/p2_isolation.md`](m0/p2_isolation.md) |
@@ -31,4 +31,4 @@
 | **M1.5** | done (assistant-side); user dogfood pending | [`m1_5_dogfood_readiness.md`](m1_5_dogfood_readiness.md) |
 | **M2 Phase A** (serve capability) | done (assistant-side); user dogfood pending | [`m2_serve_capability.md`](m2_serve_capability.md) |
 
-진입 조건은 [`../plan/dependencies.md`](../plan/dependencies.md).
+Entry conditions are in [`../plan/dependencies.md`](../plan/dependencies.md).

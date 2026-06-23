@@ -62,4 +62,4 @@ All env vars prefixed `GAPT_`. See `src/gapt_server/settings.py`. Examples:
 
 ## Plan ↔ code mapping
 
-This skeleton corresponds to [`docs/plan/m0/p1_monorepo_ci.md`](../docs/plan/m0/p1_monorepo_ci.md) cycle 2 (server/ 셋업). M1-E1 cycles 1.1~1.12 will populate the actual domains.
+This skeleton corresponds to [`docs/plan/m0/p1_monorepo_ci.md`](../docs/plan/m0/p1_monorepo_ci.md) cycle 2 (server/ setup). M1-E1 cycles 1.1~1.12 will populate the actual domains.

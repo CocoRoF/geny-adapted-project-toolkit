@@ -54,11 +54,11 @@ All ports bind to `127.0.0.1` on the host — nothing leaks to the network until
 |---|---|
 | `gapt-dev_postgres-data` | Postgres `/var/lib/postgresql/data` |
 | `gapt-dev_redis-data` | Redis AOF |
-| `gapt-dev_seaweed-data` | **영속 파일 코어** — workspace 데이터, audit cold archive, DB backups |
+| `gapt-dev_seaweed-data` | **persistent-file core** — workspace data, audit cold archive, DB backups |
 | `gapt-dev_caddy-data` | Caddy local state |
 | `gapt-dev_caddy-config` | Caddy autosaved config |
 
-per project memory: **영속 파일은 무조건 SeaweedFS. host FS는 캐시만**. The `seaweed-data` named volume is host-backed *only because dev runs on one machine* — in M4 multi-node it becomes a multi-volume SeaweedFS cluster.
+per project memory: **persistent files always go to SeaweedFS; the host FS is cache only**. The `seaweed-data` named volume is host-backed *only because dev runs on one machine* — in M4 multi-node it becomes a multi-volume SeaweedFS cluster.
 
 ## Credentials in this file
 
