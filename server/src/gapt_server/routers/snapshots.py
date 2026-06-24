@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from gapt_server.container import (
+    get_app_settings,
     get_audit_sink,
     get_container,
     get_db_session,
@@ -30,6 +31,7 @@ from gapt_server.domains import snapshots as snap_svc
 from gapt_server.domains.audit.sink import AuditEvent, AuditSink  # noqa: TC001
 from gapt_server.domains.auth import AdminPrincipal
 from gapt_server.routers.auth import get_current_user
+from gapt_server.settings import Settings  # noqa: TC001
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -174,6 +176,7 @@ async def create_snapshot(
     user: AdminPrincipal = Depends(get_current_user),  # noqa: B008
     container: "AppContainer" = Depends(get_container),  # noqa: B008
     audit_sink: AuditSink = Depends(get_audit_sink),  # noqa: B008
+    settings: Settings = Depends(get_app_settings),  # noqa: B008
 ) -> SnapshotResponse:
     ws = await _resolve_workspace(db, workspace_id=workspace_id, require_running=True)
     kind = _parse_kind(payload.kind)
@@ -187,6 +190,7 @@ async def create_snapshot(
             kind=kind,
             label=payload.label,
             include_ignored=payload.include_ignored,
+            bare_root=settings.workspace_bare_root,
             created_by=user.id,
         )
     except snap_svc.SnapshotError as exc:
@@ -269,9 +273,12 @@ async def restore_snapshot(
     snap = await _resolve_snapshot(db, snapshot_id)
     target_id = payload.target_workspace_id or snap.workspace_id
     ws = await _resolve_workspace(db, workspace_id=target_id, require_running=True)
-    sandbox = await _sandbox_for(container, ws)
     try:
-        result = await snap_svc.restore(db, sandbox=sandbox, snapshot=snap, clean=payload.clean)
+        # Host-side restore (works into a fresh/different workspace via the
+        # portable bundle) — needs the target's worktree path, not a sandbox.
+        result = await snap_svc.restore(
+            db, snapshot=snap, target_worktree_path=ws.worktree_path, clean=payload.clean
+        )
     except snap_svc.SnapshotError as exc:
         await _audit(audit_sink, action="snapshot.restore", actor=user.id,
                      outcome=enums.AuditOutcome.ERROR, snapshot_id=snap.id, code=exc.code)
