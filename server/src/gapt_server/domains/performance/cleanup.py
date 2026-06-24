@@ -191,10 +191,16 @@ def _is_orphan(
 
         if row.status == enums.WorkspaceStatus.ARCHIVED:
             return True
-        # Project-level backstop: the workspace status might still be
-        # RUNNING because the cascade failed on this row, but the
-        # project itself was archived → no point keeping the container.
-        return row.project_id in archived_project_ids
+        # A long-lived `gapt-ws-` container whose workspace row is still LIVE
+        # (not ARCHIVED) is in active use — it is NOT an orphan, even if its
+        # parent project is archived. Hosts (Geny) reuse one project for live
+        # agent-session + sandbox-tool-pack workspaces, and GAPT can auto-
+        # archive a momentarily-"empty" project; the old project-archive
+        # backstop then false-flagged live workspaces and "clean all" killed
+        # them. The genuine "archived project" path archives the workspace ROW
+        # (caught above) — the row status is the only trustworthy orphan signal
+        # for a running workspace.
+        return False
     if sample.summary.category == ContainerCategory.PROD:
         # Phase N.2.7 fix — prod compose stacks key on PROJECT_ID, not
         # environment_id (see sampler `_summary_from` for the deploy

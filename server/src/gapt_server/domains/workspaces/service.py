@@ -540,6 +540,15 @@ class WorkspaceService:
         them, archive + recreate.
         """
         project = await fetch_project_for(db, actor=actor, project_id=project_id)
+        # Creating a workspace under an archived project revives it: a project
+        # with a live workspace is not "empty/dead". Hosts (Geny) reuse one
+        # project for live session + sandbox-tool-pack workspaces, and GAPT can
+        # auto-archive a momentarily-empty project — leaving it archived made
+        # the orphan dashboard false-flag the new workspaces. Un-archive here so
+        # the project + its live workspaces stay out of the orphan bucket.
+        if project.archived_at is not None:
+            project.archived_at = None
+            await db.flush()
         name = name.strip()
         if not name:
             raise WorkspaceError("workspace.invalid_name", "name cannot be empty")
