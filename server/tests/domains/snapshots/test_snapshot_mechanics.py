@@ -146,6 +146,39 @@ def test_capture_auto_inits_non_git_workspace(tmp_path: Path) -> None:
     assert "file.txt" in files
 
 
+def test_portable_bundle_restores_into_a_fresh_repo(tmp_path: Path) -> None:
+    # Source workspace A: tracked + untracked + ignored artifact → snapshot.
+    A = tmp_path / "A"
+    _init_repo(A)
+    _make_changes(A)
+    cap = build_capture_script(include_ignored=True, workdir=str(A))
+    res = _sh(A, cap, {"SNAP_ID": "01PORTSNAP", "SNAP_MSG": "p", "SNAP_PARENT": _git(A, "rev-parse", "HEAD")})
+    assert res.returncode == 0, res.stderr
+    sha = res.stdout.strip().splitlines()[-1]
+
+    # Make a PORTABLE bundle of the snapshot ref (what capture does host-side).
+    bundle = tmp_path / "snap.bundle"
+    _git(A, "bundle", "create", str(bundle), "refs/snapshots/01PORTSNAP")
+    assert bundle.exists()
+
+    # Fresh, totally independent workspace B (no shared objects with A).
+    B = tmp_path / "B"
+    B.mkdir()
+    _git(B, "init", "-q")
+    # The commit is NOT present in B yet.
+    assert subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=B,
+                          env={**os.environ, **_ENV}).returncode != 0
+    # Restore from the bundle (what the host-side restore does).
+    _git(B, "fetch", str(bundle), "refs/snapshots/01PORTSNAP:refs/snapshots/01PORTSNAP")
+    _git(B, "reset", "--hard", sha)
+    _git(B, "clean", "-fd")
+
+    # B is byte-identical to A's snapshot — incl. the force-included artifact.
+    assert (B / "tracked.txt").read_text() == "v2"
+    assert (B / "new.txt").read_text() == "new"
+    assert (B / "build" / "artifact.bin").read_text() == "ARTIFACT"
+
+
 def test_parse_numstat() -> None:
     out = _parse_numstat("3\t1\ta.py\n-\t-\tbin.dat\n10\t0\tb.py\n")
     assert out == {"files": 3, "additions": 13, "deletions": 1}

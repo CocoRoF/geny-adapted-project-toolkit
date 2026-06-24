@@ -17,12 +17,18 @@ reserved ref.
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
 from gapt_server.agent.transcript import build_transcript
 from gapt_server.db import enums, models
+# Host-side git runner (the server has worktree + bare roots mounted) — used to
+# create/restore PORTABLE snapshot bundles so a snapshot can be restored into a
+# *fresh/different* workspace (disaster-recovery, host migration, fork), not just
+# the one it was captured in.
+from gapt_server.domains.workspaces.worktree import _run_git
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -227,6 +233,18 @@ async def _latest_for_workspace(
     ).scalar_one_or_none()
 
 
+def _bundle_root(bare_root: str) -> str:
+    # Persistent + server-accessible (same mount as the bare repos).
+    return os.path.join(bare_root, ".snapshots")
+
+
+async def _hg(args: list[str], *, timeout_s: float = _CAPTURE_TIMEOUT_S):
+    """Host-side git with ``safe.directory=*`` — the server (root) operates on
+    worktrees whose files are owned by the workspace user, so the ownership
+    guard must be relaxed (``_run_git`` already adds ``safe.bareRepository``)."""
+    return await _run_git(["-c", "safe.directory=*", *args], timeout_s=timeout_s)
+
+
 async def capture(
     db: "AsyncSession",
     *,
@@ -237,6 +255,7 @@ async def capture(
     label: str = "",
     include_ignored: bool | None = None,
     created_by: str | None = None,
+    bare_root: str | None = None,
 ) -> models.Snapshot:
     """Capture a snapshot of ``workspace``'s current state + agent activity.
 
@@ -316,6 +335,24 @@ async def capture(
             stats["turns"] = len(activity.get("turns", []))
             stats["tool_calls"] = sum(len(t.get("tool_uses", [])) for t in activity.get("turns", []))
 
+    # 4b. Portable bundle (host-side) — a self-contained git bundle of the
+    #     snapshot ref so it can be restored into ANY fresh workspace later.
+    #     Best-effort: if it fails, same-workspace restore still works.
+    if bare_root and workspace.worktree_path:
+        try:
+            root = _bundle_root(bare_root)
+            os.makedirs(root, exist_ok=True)
+            bpath = os.path.join(root, f"{snap_id}.bundle")
+            res = await _hg(
+                ["-C", workspace.worktree_path, "bundle", "create", bpath, git_ref]
+            )
+            if res.ok:
+                stats["bundle_path"] = bpath
+            else:
+                stats["bundle_error"] = res.stderr.strip()[:200]
+        except Exception as exc:  # noqa: BLE001 — never block capture on the bundle
+            stats["bundle_error"] = str(exc)[:200]
+
     # 5. Persist.
     snap = models.Snapshot(
         id=snap_id,
@@ -340,21 +377,50 @@ async def capture(
 async def restore(
     db: "AsyncSession",
     *,
-    sandbox: "WorkspaceSandbox",
     snapshot: models.Snapshot,
+    target_worktree_path: str,
     clean: bool = True,
 ) -> dict[str, Any]:
-    """Reset the workspace working tree to the snapshot's commit.
+    """Restore a snapshot into ``target_worktree_path`` (host-side git).
 
-    Artifacts that were force-included are tracked in the snapshot commit, so a
-    hard reset brings them back; ``clean`` removes files created after the
-    snapshot so the tree matches the checkpoint.
+    Works into ANY workspace — the one the snapshot was captured in, OR a fresh/
+    different one (disaster-recovery, host migration, fork):
+      1. ensure the target is a git repo (``git init`` if not),
+      2. if the snapshot commit isn't already present, fetch it from the
+         portable bundle (``stats.bundle_path``),
+      3. ``git reset --hard`` + (optionally) ``git clean -fd``.
+    Artifacts force-included at capture are tracked in the commit, so they come
+    back; ``clean`` removes anything created after the snapshot.
     """
-    script = build_restore_script(git_sha=snapshot.git_sha, clean=clean)
-    rc, out, err = await _sh(sandbox, script, timeout_s=_CAPTURE_TIMEOUT_S)
-    if rc != 0:
-        raise SnapshotError("snapshot.restore_failed", (err.strip() or out.strip())[:400])
-    return {"restored_to": snapshot.git_sha, "head": out.strip().splitlines()[-1] if out.strip() else ""}
+    wt = target_worktree_path
+    sha = snapshot.git_sha
+
+    if not (await _hg(["-C", wt, "rev-parse", "--git-dir"])).ok:
+        init = await _hg(["-C", wt, "init", "-q"])
+        if not init.ok:
+            raise SnapshotError("snapshot.restore_failed", init.stderr.strip()[:400])
+
+    if not (await _hg(["-C", wt, "cat-file", "-e", f"{sha}^{{commit}}"])).ok:
+        bundle_path = (snapshot.stats or {}).get("bundle_path")
+        if not bundle_path or not os.path.isfile(bundle_path):
+            raise SnapshotError(
+                "snapshot.restore_unavailable",
+                "the snapshot commit is not in this workspace and no portable "
+                "bundle is available to restore it from",
+            )
+        fetch = await _hg(
+            ["-C", wt, "fetch", bundle_path, f"{snapshot.git_ref}:{snapshot.git_ref}"]
+        )
+        if not fetch.ok:
+            raise SnapshotError("snapshot.restore_failed", fetch.stderr.strip()[:400])
+
+    reset = await _hg(["-C", wt, "reset", "--hard", sha])
+    if not reset.ok:
+        raise SnapshotError("snapshot.restore_failed", reset.stderr.strip()[:400])
+    if clean:
+        await _hg(["-C", wt, "clean", "-fd"])
+    head = await _hg(["-C", wt, "rev-parse", "HEAD"])
+    return {"restored_to": sha, "head": head.stdout.strip() if head.ok else ""}
 
 
 async def compute_diff(
@@ -391,6 +457,13 @@ async def delete(
                 timeout_s=_GIT_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — ref cleanup never blocks the delete
+            pass
+    # Remove the portable bundle file (best-effort).
+    bundle_path = (snapshot.stats or {}).get("bundle_path")
+    if bundle_path:
+        try:
+            os.remove(bundle_path)
+        except OSError:
             pass
     await db.delete(snapshot)
     await db.flush()
