@@ -39,17 +39,12 @@ GAPT is the **sandbox & DevOps layer** — where AI agents safely clone, edit, b
       ▼             ▼              ▼
  geny-executor  geny-avatar      GAPT
   (the engine)  (avatar editor)  (AI DevOps platform)  ← you are here
-      ▲
-      │ visualizes / drives the engine
-      │
- geny-executor-web (pipeline studio)
 ```
 
 | Project | What it is | Role in the stack |
 |---|---|---|
 | [**Geny**](https://github.com/CocoRoF/Geny) | Multi-agent VTuber + autonomous-worker platform | 🏛️ The product — consumes every project below |
 | [**geny-executor**](https://github.com/CocoRoF/geny-executor) | 21-stage, manifest-driven agent pipeline · PyPI · MIT | ⚙️ The engine everything runs on |
-| [**geny-executor-web**](https://github.com/CocoRoF/geny-executor-web) | Visual studio for the pipeline — React Flow + live WebSocket events | 🔬 See, inspect & run the engine |
 | [**GAPT**](https://github.com/CocoRoF/geny-adapted-project-toolkit) | Self-hosted AI DevOps platform — sandbox · edit · build · deploy | 🛠️ Where agents safely touch real repos |
 | [**geny-avatar**](https://github.com/CocoRoF/geny-avatar) | 2D live-avatar editor with AI texture generation | 🎭 Where Geny's faces are made |
 
@@ -278,7 +273,7 @@ The core is *permanently OSS*. Cloud add-ons (optional, post-M5) are a separate 
 ## Related projects
 
 Part of **the Geny ecosystem** — see [The Geny ecosystem](#-the-geny-ecosystem) above:
-[Geny](https://github.com/CocoRoF/Geny) · [geny-executor](https://github.com/CocoRoF/geny-executor) · [geny-executor-web](https://github.com/CocoRoF/geny-executor-web) · [geny-avatar](https://github.com/CocoRoF/geny-avatar)
+[Geny](https://github.com/CocoRoF/Geny) · [geny-executor](https://github.com/CocoRoF/geny-executor) · [geny-avatar](https://github.com/CocoRoF/geny-avatar)
 
 **Also:**
 
