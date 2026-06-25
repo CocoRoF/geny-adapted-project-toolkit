@@ -7,6 +7,9 @@
 
 > **M1-E4 complete (2026-05-24).** 350+ server tests · 89+ web tests · operator self-host ready (`compose/docker-compose.prod.yml`). Next: dogfood GAPT with GAPT itself + the first Geny adapt — operations guides at [`docs/operations/install.md`](docs/operations/install.md) and [`docs/operations/geny-adapt.md`](docs/operations/geny-adapt.md).
 
+<!-- 📸 IMAGE NEEDED: hero screenshot — the GAPT web console: project tree + Monaco editor + agent chat + terminal + live preview in one tab -->
+> 📸 **Image needed** — _hero screenshot: the GAPT web console — project tree, Monaco editor, agent chat, terminal, and live preview all in one browser tab._
+
 ---
 
 ## In one line
@@ -18,6 +21,39 @@ User → one browser tab → left-hand project tree (many external repos) → en
 ```
 
 Full vision: [`docs/00_overview.md`](docs/00_overview.md)
+
+---
+
+## 🌐 The Geny ecosystem
+
+GAPT is the **sandbox & DevOps layer** — where AI agents safely clone, edit, build, and deploy real repos. It runs on [geny-executor](https://github.com/CocoRoF/geny-executor) (the engine), and is wired into [**Geny**](https://github.com/CocoRoF/Geny), the product that ultimately uses every project below.
+
+<!-- 📸 IMAGE NEEDED: a polished ecosystem diagram to replace the ASCII map below -->
+
+```
+                  Geny — the product (uses everything below)
+                    │
+      ┌─────────────┼──────────────┐
+ agent engine    avatars      sandbox + deploy
+      │             │              │
+      ▼             ▼              ▼
+ geny-executor  geny-avatar      GAPT
+  (the engine)  (avatar editor)  (AI DevOps platform)  ← you are here
+      ▲
+      │ visualizes / drives the engine
+      │
+ geny-executor-web (pipeline studio)
+```
+
+| Project | What it is | Role in the stack |
+|---|---|---|
+| [**Geny**](https://github.com/CocoRoF/Geny) | Multi-agent VTuber + autonomous-worker platform | 🏛️ The product — consumes every project below |
+| [**geny-executor**](https://github.com/CocoRoF/geny-executor) | 21-stage, manifest-driven agent pipeline · PyPI · MIT | ⚙️ The engine everything runs on |
+| [**geny-executor-web**](https://github.com/CocoRoF/geny-executor-web) | Visual studio for the pipeline — React Flow + live WebSocket events | 🔬 See, inspect & run the engine |
+| [**GAPT**](https://github.com/CocoRoF/geny-adapted-project-toolkit) | Self-hosted AI DevOps platform — sandbox · edit · build · deploy | 🛠️ Where agents safely touch real repos |
+| [**geny-avatar**](https://github.com/CocoRoF/geny-avatar) | 2D live-avatar editor with AI texture generation | 🎭 Where Geny's faces are made |
+
+> **➡️ You are here: `GAPT`** — where agents safely edit, build & deploy real repos.
 
 ---
 
@@ -241,6 +277,11 @@ The core is *permanently OSS*. Cloud add-ons (optional, post-M5) are a separate 
 
 ## Related projects
 
+Part of **the Geny ecosystem** — see [The Geny ecosystem](#-the-geny-ecosystem) above:
+[Geny](https://github.com/CocoRoF/Geny) · [geny-executor](https://github.com/CocoRoF/geny-executor) · [geny-executor-web](https://github.com/CocoRoF/geny-executor-web) · [geny-avatar](https://github.com/CocoRoF/geny-avatar)
+
+**Also:**
+
 - [gapt-mcp](mcp/) — npm package exposing all of GAPT as MCP tools (the `mcp/` of this repo)
-- [geny-executor](https://github.com/CocoRoF/geny-executor) — the 21-stage agent pipeline GAPT depends on (Apache-2.0)
+- [geny-executor](https://github.com/CocoRoF/geny-executor) — the 21-stage agent pipeline GAPT runs on (MIT)
 - [Geny](https://github.com/CocoRoF/Geny) — GAPT's *first adapt case* (separate host)
