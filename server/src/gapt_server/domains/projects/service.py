@@ -35,6 +35,16 @@ if TYPE_CHECKING:
     from gapt_server.domains.auth import AdminPrincipal
 
 
+def _tombstone_slug(slug: str, project_id: str) -> str:
+    """Free a live slug held by a now-archived project by mangling that
+    row's copy of it. Appends the project's (unique) ULID so the result
+    stays globally unique and within the 120-char column (truncating the
+    base if needed). The archived row is preserved for audit/history."""
+    suffix = f"--archived-{project_id}"
+    base = slug[: 120 - len(suffix)]
+    return f"{base}{suffix}"
+
+
 class ProjectError(RuntimeError):
     """Domain error — carries a stable code suffix for the API layer."""
 
@@ -124,6 +134,28 @@ class ProjectService:
         git_auth_secret_ref: str | None = None,
         scaffold_preset_id: str | None = None,
     ) -> ProjectView:
+        # Slug lifecycle. The slug column is globally unique, but deleting
+        # a project in the panel only *soft-archives* it (DELETE → archive,
+        # archived_at set) — the row, and thus its slug, lingers. So a user
+        # who deletes a project and then (often via a Geny agent) recreates
+        # it by the same name would 409 forever, while the archived copy is
+        # hidden from the list with no unarchive tool: a dead end. When the
+        # requested slug is held by an ARCHIVED project, tombstone that
+        # row's slug to free the name for a fresh project (history kept). An
+        # ACTIVE collision still 409s — that's a real, live conflict.
+        existing = (
+            await db.execute(
+                select(models.Project).where(models.Project.slug == slug)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            if existing.archived_at is None:
+                raise ProjectError(
+                    "project.slug_taken", f"slug={slug!r} already exists"
+                )
+            existing.slug = _tombstone_slug(existing.slug, existing.id)
+            await db.flush()
+
         project = models.Project(
             id=new_ulid(),
             slug=slug,
