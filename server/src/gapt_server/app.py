@@ -145,6 +145,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reconciler_task = _asyncio.create_task(reconcile_loop(), name="gapt-net-reconciler")
 
+    # Workspace idle reaper — stops RUNNING workspaces with no activity
+    # for `sandbox_idle_pause_s`, freeing the active-workspace cap + host
+    # resources (idle gapt-ws containers otherwise run forever). Daemon
+    # task; cancelled on shutdown.
+    from gapt_server.domains.workspaces.reaper import (  # noqa: PLC0415
+        reaper_loop as _ws_reaper_loop,
+    )
+
+    workspace_reaper_task = _asyncio.create_task(
+        _ws_reaper_loop(container, settings), name="workspace-idle-reaper"
+    )
+
     # Phase N.2.7 — Caddy route reconciler. Periodic safety-net loop
     # that re-runs `run_boot_resync` every few minutes so any drift
     # between Caddy's in-memory routes and the DB's expected set
@@ -285,6 +297,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await reconciler_task
                 except BaseException:
                     pass
+                workspace_reaper_task.cancel()
+                try:
+                    await workspace_reaper_task
+                except BaseException:
+                    pass
                 if caddy_reconciler_task is not None:
                     caddy_reconciler_task.cancel()
                     try:
@@ -300,6 +317,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reconciler_task.cancel()
         try:
             await reconciler_task
+        except BaseException:
+            pass
+        workspace_reaper_task.cancel()
+        try:
+            await workspace_reaper_task
         except BaseException:
             pass
         if caddy_reconciler_task is not None:

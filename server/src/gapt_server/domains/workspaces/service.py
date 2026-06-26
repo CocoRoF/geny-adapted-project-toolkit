@@ -30,7 +30,7 @@ import os
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -1503,6 +1503,63 @@ class WorkspaceService:
         )
         sel = await _selection_views_for(db, workspace_id=row.id)
         return _view(row, sel)
+
+    async def reap_idle_workspaces(self, *, idle_seconds: int) -> int:
+        """Stop workspaces that have been RUNNING with no activity for
+        longer than ``idle_seconds``.
+
+        Idle ``gapt-ws-<wid>`` containers otherwise run indefinitely and
+        keep occupying the active-workspace cap (which counts CREATING +
+        RUNNING) plus host RAM/CPU. Transitioning them to STOPPED frees a
+        cap slot and the container while keeping the workspace row (the
+        user can start it again on demand). Returns the number stopped.
+        No-op without a DB or when ``idle_seconds <= 0``."""
+        if self._session_factory is None or idle_seconds <= 0:
+            return 0
+        cutoff = _now() - timedelta(seconds=idle_seconds)
+        reaped = 0
+        async with self._session_factory() as db:
+            stmt = select(models.Workspace).where(
+                models.Workspace.status == enums.WorkspaceStatus.RUNNING,
+                models.Workspace.last_activity_at < cutoff,
+            )
+            rows = list((await db.execute(stmt)).scalars().all())
+            for row in rows:
+                # Idempotent stop — swallow a swept sandbox; the row's
+                # "now stopped" transition is still valid.
+                try:
+                    await self._sandbox_for(
+                        db, row, action="stop", swallow_missing=True
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "workspace.reap.stop_failed",
+                        workspace_id=row.id,
+                        exc_info=True,
+                    )
+                    continue
+                row.status = enums.WorkspaceStatus.STOPPED
+                row.last_activity_at = _now()
+                await db.flush()
+                await self._audit.log(
+                    AuditEvent(
+                        action=AuditAction.WORKSPACE_STOP,
+                        actor_type=enums.AuditActorType.SYSTEM,
+                        outcome=enums.AuditOutcome.OK,
+                        scope={
+                            "project_id": row.project_id,
+                            "workspace_id": row.id,
+                        },
+                        payload={"reason": "idle", "idle_seconds": idle_seconds},
+                    )
+                )
+                reaped += 1
+            await db.commit()
+        if reaped:
+            logger.info(
+                "workspace.reap.swept", stopped=reaped, idle_seconds=idle_seconds
+            )
+        return reaped
 
     async def start(
         self, db: AsyncSession, *, actor: AdminPrincipal, workspace_id: str

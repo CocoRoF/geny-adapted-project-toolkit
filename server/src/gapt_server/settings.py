@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # resources bounded. Counts rows with status IN (CREATING, RUNNING).
     # Stopped/paused/failed/archived are excluded since they don't hold
     # an active container. Override via `GAPT_MAX_ACTIVE_SANDBOXES`.
-    max_active_sandboxes: int = 6
+    max_active_sandboxes: int = 30
 
     # Phase E.1 — GPU policy for workspace sandboxes (`gapt-ws-<wid>`
     # containers, NOT the agent sandbox `gapt-<id>` series). Passed
